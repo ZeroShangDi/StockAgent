@@ -367,6 +367,18 @@ export interface StrategyStockConfig {
   note?: string
 }
 
+export interface StrategyTransitionRule {
+  rule_id: string
+  enabled: boolean
+  target_pool_id: string
+  target_pool_name?: string
+  source_pool_ids: string[]
+  source_pool_names?: string[]
+  mode: 'move' | 'copy'
+  cooldown_days: number
+  note?: string
+}
+
 /** 策略类型信息（服务端返回） */
 export interface StrategyTypeInfo {
   type: string

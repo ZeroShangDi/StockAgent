@@ -337,6 +337,85 @@ async def _normalize_support_resistance_config(ts_code: str, config: Dict[str, A
     return normalized
 
 
+async def _normalize_transition_rules(
+    user_id: str,
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    transition_rules = params.get("transition_rules")
+    if transition_rules is None:
+        return params
+
+    if not isinstance(transition_rules, list):
+        raise HTTPException(status_code=400, detail="transition_rules 必须为数组")
+
+    normalized_rules: List[Dict[str, Any]] = []
+    pool_cache: Dict[str, Dict[str, Any]] = {}
+
+    async def get_pool(pool_id: str) -> Dict[str, Any]:
+        if pool_id not in pool_cache:
+            pool = await mongo_manager.find_one(
+                "stock_pools",
+                {"pool_id": pool_id, "user_id": user_id},
+                projection={"pool_id": 1, "name": 1, "user_id": 1},
+            )
+            if not pool:
+                raise HTTPException(status_code=400, detail=f"股池 {pool_id} 不存在或无权限访问")
+            pool_cache[pool_id] = pool
+        return pool_cache[pool_id]
+
+    for raw_rule in transition_rules:
+        if not isinstance(raw_rule, dict):
+            raise HTTPException(status_code=400, detail="transition_rules 中存在无效规则")
+
+        target_pool_id = str(raw_rule.get("target_pool_id", "")).strip()
+        if not target_pool_id:
+            raise HTTPException(status_code=400, detail="自动流转规则必须选择目标股池")
+
+        target_pool = await get_pool(target_pool_id)
+
+        source_pool_ids_raw = raw_rule.get("source_pool_ids") or []
+        if not isinstance(source_pool_ids_raw, list):
+            raise HTTPException(status_code=400, detail="source_pool_ids 必须为数组")
+
+        source_pool_ids: List[str] = []
+        source_pool_names: List[str] = []
+        seen_source_ids = set()
+        for item in source_pool_ids_raw:
+            pool_id = str(item or "").strip()
+            if not pool_id or pool_id in seen_source_ids or pool_id == target_pool_id:
+                continue
+            source_pool = await get_pool(pool_id)
+            seen_source_ids.add(pool_id)
+            source_pool_ids.append(pool_id)
+            source_pool_names.append(str(source_pool.get("name") or pool_id))
+
+        mode = str(raw_rule.get("mode", "move") or "move").strip().lower()
+        if mode not in {"move", "copy"}:
+            raise HTTPException(status_code=400, detail="自动流转模式只支持 move 或 copy")
+
+        cooldown_days_raw = raw_rule.get("cooldown_days", 1)
+        try:
+            cooldown_days = max(1, int(cooldown_days_raw))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="cooldown_days 必须为大于等于 1 的整数") from exc
+
+        normalized_rules.append({
+            "rule_id": str(raw_rule.get("rule_id") or uuid.uuid4().hex),
+            "enabled": bool(raw_rule.get("enabled", True)),
+            "target_pool_id": target_pool_id,
+            "target_pool_name": str(target_pool.get("name") or target_pool_id),
+            "source_pool_ids": source_pool_ids,
+            "source_pool_names": source_pool_names,
+            "mode": mode,
+            "cooldown_days": cooldown_days,
+            "note": str(raw_rule.get("note", "") or "").strip(),
+        })
+
+    normalized_params = dict(params)
+    normalized_params["transition_rules"] = normalized_rules
+    return normalized_params
+
+
 async def _validate_stock_exists(ts_code: str) -> dict:
     stock = await mongo_manager.find_one(
         "stock_basic",
@@ -474,6 +553,9 @@ async def update_strategy_params(
     updated_params = dict(data.params)
     if "stock_configs" in current_params and "stock_configs" not in updated_params:
         updated_params["stock_configs"] = current_params["stock_configs"]
+    if "transition_rules" in current_params and "transition_rules" not in updated_params:
+        updated_params["transition_rules"] = current_params["transition_rules"]
+    updated_params = await _normalize_transition_rules(admin.user_id, updated_params)
     
     # 更新参数
     await mongo_manager.update_one(

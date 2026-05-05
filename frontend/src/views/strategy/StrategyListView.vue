@@ -11,7 +11,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Refresh, Edit } from '@element-plus/icons-vue'
-import { subscriptionApi, stockApi } from '@/api'
+import { subscriptionApi, stockApi, stockPickerApi } from '@/api'
 import { useUserStore } from '@/stores/user'
 import { StrategyType } from '@/api/types'
 import type {
@@ -21,7 +21,9 @@ import type {
   StockInfoBrief,
   StrategyStockConfig,
   StrategyStockPoint,
+  StrategyTransitionRule,
 } from '@/api/types'
+import type { StockPoolSummary } from '@/api/modules/stock-picker'
 
 // ==================== 状态 ====================
 
@@ -49,6 +51,9 @@ const editParamsDialogVisible = ref(false)
 const editingStrategyType = ref<string>('')
 const editingParams = ref<Record<string, unknown>>({})
 const savingParams = ref(false)
+const availablePools = ref<StockPoolSummary[]>([])
+const poolLoading = ref(false)
+const editingTransitionRules = ref<StrategyTransitionRule[]>([])
 
 // 单股撑压线配置弹窗
 const stockConfigDialogVisible = ref(false)
@@ -63,6 +68,11 @@ const trendTypeOptions = [
   { label: '下降趋势', value: 'downtrend' },
   { label: '盘整趋势', value: 'range' },
   { label: '自定义', value: 'custom' },
+]
+
+const transitionModeOptions = [
+  { label: '移动到目标池', value: 'move' },
+  { label: '复制到目标池', value: 'copy' },
 ]
 
 // ==================== 方法 ====================
@@ -180,6 +190,54 @@ function getStockConfigSummary(strategyType: string, tsCode: string): string {
   return `${parts.join(' / ')} 已配置`
 }
 
+function createTransitionRule(): StrategyTransitionRule {
+  const defaultPool = availablePools.value[0]
+  return {
+    rule_id: crypto.randomUUID().replace(/-/g, ''),
+    enabled: true,
+    target_pool_id: defaultPool?.pool_id || '',
+    target_pool_name: defaultPool?.name || '',
+    source_pool_ids: [],
+    source_pool_names: [],
+    mode: 'move',
+    cooldown_days: 1,
+    note: '',
+  }
+}
+
+function cloneTransitionRule(rule?: Partial<StrategyTransitionRule>): StrategyTransitionRule {
+  return {
+    rule_id: rule?.rule_id || crypto.randomUUID().replace(/-/g, ''),
+    enabled: rule?.enabled ?? true,
+    target_pool_id: rule?.target_pool_id || '',
+    target_pool_name: rule?.target_pool_name || '',
+    source_pool_ids: [...(rule?.source_pool_ids || [])],
+    source_pool_names: [...(rule?.source_pool_names || [])],
+    mode: rule?.mode === 'copy' ? 'copy' : 'move',
+    cooldown_days: Number(rule?.cooldown_days || 1),
+    note: rule?.note || '',
+  }
+}
+
+function getTransitionRules(strategyType: string): StrategyTransitionRule[] {
+  const params = getSubscription(strategyType)?.params as Record<string, unknown> | undefined
+  const rules = params?.transition_rules
+  if (!Array.isArray(rules)) {
+    return []
+  }
+  return rules.map((rule) => cloneTransitionRule(rule as Partial<StrategyTransitionRule>))
+}
+
+function getTransitionSummary(strategyType: string): string {
+  const rules = getTransitionRules(strategyType).filter(rule => rule.enabled && rule.target_pool_name)
+  if (rules.length === 0) {
+    return '未配置自动流转'
+  }
+  const poolNames = rules.map(rule => rule.target_pool_name || rule.target_pool_id).filter(Boolean)
+  const preview = poolNames.slice(0, 2).join('、')
+  return rules.length > 2 ? `${preview} 等 ${rules.length} 条规则` : preview
+}
+
 /** 打开添加个股弹窗 */
 function openAddStockDialog(strategyType: string): void {
   currentStrategyType.value = strategyType
@@ -275,13 +333,27 @@ function toggleExpand(strategyType: string): void {
 // ==================== 管理员功能 ====================
 
 /** 打开编辑参数弹窗（管理员） */
-function openEditParamsDialog(strategyType: string): void {
+async function ensurePoolsLoaded(): Promise<void> {
+  if (availablePools.value.length > 0) return
+  poolLoading.value = true
+  try {
+    const response = await stockPickerApi.listPools()
+    availablePools.value = response.items || []
+  } finally {
+    poolLoading.value = false
+  }
+}
+
+/** 打开编辑参数弹窗（管理员） */
+async function openEditParamsDialog(strategyType: string): Promise<void> {
   const sub = getSubscription(strategyType)
   if (!sub) return
   
+  await ensurePoolsLoaded()
   editingStrategyType.value = strategyType
   // 复制当前参数
   editingParams.value = { ...sub.params }
+  editingTransitionRules.value = getTransitionRules(strategyType)
   editParamsDialogVisible.value = true
 }
 
@@ -294,6 +366,22 @@ async function saveParams(): Promise<void> {
   
   savingParams.value = true
   try {
+    editingParams.value.transition_rules = editingTransitionRules.value.map((rule) => {
+      const targetPool = availablePools.value.find((pool) => pool.pool_id === rule.target_pool_id)
+      const sourcePools = availablePools.value.filter((pool) => rule.source_pool_ids.includes(pool.pool_id))
+      return {
+        rule_id: rule.rule_id,
+        enabled: rule.enabled,
+        target_pool_id: rule.target_pool_id,
+        target_pool_name: targetPool?.name || rule.target_pool_name || '',
+        source_pool_ids: rule.source_pool_ids,
+        source_pool_names: sourcePools.map((pool) => pool.name),
+        mode: rule.mode,
+        cooldown_days: Math.max(1, Number(rule.cooldown_days || 1)),
+        note: rule.note || '',
+      }
+    })
+
     await subscriptionApi.updateStrategyParams(
       editingStrategyType.value,
       editingParams.value
@@ -328,6 +416,14 @@ function normalizePoint(point: StrategyStockPoint): StrategyStockPoint {
     date: point.date,
     price: point.price === null || point.price === undefined || point.price === 0 ? null : Number(point.price),
   }
+}
+
+function addTransitionRule(): void {
+  editingTransitionRules.value = [...editingTransitionRules.value, createTransitionRule()]
+}
+
+function removeTransitionRule(ruleId: string): void {
+  editingTransitionRules.value = editingTransitionRules.value.filter((rule) => rule.rule_id !== ruleId)
 }
 
 function getBooleanParamValue(key: string, defaultValue: boolean | string | number): boolean {
@@ -508,6 +604,18 @@ onMounted(async () => {
                   {{ getSubscription(st.type)?.params[param.key] ?? param.default }}
                 </span>
               </div>
+            </div>
+          </div>
+
+          <div class="params-section transition-section">
+            <div class="section-header">
+              <h4 class="section-title">自动流转</h4>
+            </div>
+            <div class="param-item transition-summary-item">
+              <span class="param-label">规则概览</span>
+              <span class="param-value transition-summary-text">
+                {{ getTransitionSummary(st.type) }}
+              </span>
             </div>
           </div>
           
@@ -828,6 +936,110 @@ onMounted(async () => {
             />
           </div>
         </div>
+
+        <div class="transition-rules-block">
+          <div class="section-header">
+            <h4 class="section-title">自动流转规则</h4>
+            <el-button
+              type="primary"
+              size="small"
+              plain
+              :disabled="poolLoading || availablePools.length === 0"
+              @click="addTransitionRule"
+            >
+              新增规则
+            </el-button>
+          </div>
+
+          <p v-if="availablePools.length === 0" class="empty-hint">
+            当前还没有可用股池，请先到“股池管理”创建股池后再配置自动流转。
+          </p>
+
+          <div v-else-if="editingTransitionRules.length === 0" class="empty-hint">
+            当前未配置自动流转规则，预警触发后只会发送通知，不会自动进入股池。
+          </div>
+
+          <div
+            v-for="(rule, index) in editingTransitionRules"
+            :key="rule.rule_id"
+            class="transition-rule-card"
+          >
+            <div class="transition-rule-header">
+              <strong>规则 {{ index + 1 }}</strong>
+              <el-button link type="danger" @click="removeTransitionRule(rule.rule_id)">删除</el-button>
+            </div>
+
+            <div class="params-form-grid transition-grid">
+              <div class="param-form-item">
+                <label class="param-form-label">是否启用</label>
+                <el-switch v-model="rule.enabled" active-text="启用" inactive-text="关闭" />
+              </div>
+
+              <div class="param-form-item">
+                <label class="param-form-label">流转模式</label>
+                <el-select v-model="rule.mode">
+                  <el-option
+                    v-for="option in transitionModeOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </div>
+
+              <div class="param-form-item">
+                <label class="param-form-label">目标股池</label>
+                <el-select v-model="rule.target_pool_id" placeholder="请选择目标股池">
+                  <el-option
+                    v-for="pool in availablePools"
+                    :key="pool.pool_id"
+                    :label="`${pool.name} (${pool.pool_type})`"
+                    :value="pool.pool_id"
+                  />
+                </el-select>
+              </div>
+
+              <div class="param-form-item">
+                <label class="param-form-label">来源股池（可选）</label>
+                <el-select
+                  v-model="rule.source_pool_ids"
+                  multiple
+                  collapse-tags
+                  collapse-tags-tooltip
+                  placeholder="不限制来源池时可留空"
+                >
+                  <el-option
+                    v-for="pool in availablePools.filter((pool) => pool.pool_id !== rule.target_pool_id)"
+                    :key="pool.pool_id"
+                    :label="`${pool.name} (${pool.pool_type})`"
+                    :value="pool.pool_id"
+                  />
+                </el-select>
+              </div>
+
+              <div class="param-form-item">
+                <label class="param-form-label">冷却天数</label>
+                <el-input-number
+                  v-model="rule.cooldown_days"
+                  :min="1"
+                  :step="1"
+                  :precision="0"
+                  controls-position="right"
+                />
+              </div>
+
+              <div class="param-form-item transition-note-item">
+                <label class="param-form-label">备注</label>
+                <el-input
+                  v-model="rule.note"
+                  type="textarea"
+                  :rows="2"
+                  placeholder="可选，用于说明这条自动流转规则的用途"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       
       <template #footer>
@@ -954,6 +1166,10 @@ onMounted(async () => {
   @apply mb-4;
 }
 
+.transition-section {
+  @apply mt-2;
+}
+
 .section-title {
   @apply text-sm font-medium flex items-center;
   color: var(--text-secondary);
@@ -976,6 +1192,15 @@ onMounted(async () => {
 .param-value {
   @apply text-sm font-medium;
   color: var(--text-primary);
+}
+
+.transition-summary-item {
+  @apply mt-2;
+}
+
+.transition-summary-text {
+  @apply text-right;
+  max-width: 220px;
 }
 
 /* 股票区域 */
@@ -1094,6 +1319,47 @@ onMounted(async () => {
   @apply space-y-4;
 }
 
+.transition-rules-block {
+  @apply mt-6 space-y-4;
+}
+
+.transition-rule-card {
+  @apply rounded-lg p-4 space-y-4;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-light);
+}
+
+.transition-rule-header {
+  @apply flex items-center justify-between;
+  color: var(--text-primary);
+}
+
+.transition-grid {
+  @apply grid gap-4;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.transition-grid .param-form-item {
+  @apply flex-col items-start;
+}
+
+.transition-grid :deep(.el-select),
+.transition-grid :deep(.el-input-number),
+.transition-grid :deep(.el-switch) {
+  width: 100%;
+}
+
+.transition-note-item {
+  grid-column: 1 / -1;
+  @apply items-start;
+}
+
+.transition-note-item :deep(.el-textarea),
+.transition-note-item :deep(.el-select),
+.transition-note-item :deep(.el-input-number) {
+  width: 100%;
+}
+
 .param-form-item {
   @apply flex items-center justify-between gap-4;
 }
@@ -1151,8 +1417,13 @@ onMounted(async () => {
   }
 
   .stock-config-form-grid,
-  .line-points-grid {
+  .line-points-grid,
+  .transition-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transition-summary-text {
+    max-width: none;
   }
 }
 </style>

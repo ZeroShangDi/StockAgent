@@ -323,8 +323,7 @@ class ListenerNode(BaseNode):
                 self.logger.info(
                     f"[poll] Sending alert: {alert.ts_code} - {alert.trigger_reason}"
                 )
-                result = await notification_manager.send_alert(alert)
-                self.logger.info(f"[poll] Alert send result: {result}")
+                await self._process_alert(alert)
     
     async def _fetch_limit_prices_if_needed(self) -> None:
         """
@@ -538,6 +537,320 @@ class ListenerNode(BaseNode):
                 )
         
         return all_alerts
+
+    async def _process_alert(self, alert: StrategyAlert) -> None:
+        subscription = next(
+            (sub for sub in self._subscriptions if sub.subscription_id == alert.subscription_id),
+            None,
+        )
+        if not subscription:
+            self.logger.warning(
+                f"[poll] Unable to find subscription for alert {alert.alert_id} ({alert.subscription_id})"
+            )
+            return
+
+        event_id = uuid.uuid4().hex
+        event_doc = {
+            "event_id": event_id,
+            "alert_id": alert.alert_id,
+            "trace_id": alert.trace_id,
+            "subscription_id": alert.subscription_id,
+            "strategy_id": alert.strategy_id,
+            "strategy_name": alert.strategy_name,
+            "strategy_type": subscription.strategy_type.value,
+            "ts_code": alert.ts_code,
+            "stock_name": alert.stock_name,
+            "trigger_price": alert.trigger_price,
+            "trigger_reason": alert.trigger_reason,
+            "extra_data": alert.extra_data,
+            "triggered_at": alert.triggered_at,
+            "notification_sent": False,
+            "transition_results": [],
+        }
+        await mongo_manager.insert_one("listener_trigger_events", event_doc)
+
+        notification_sent = await notification_manager.send_alert(alert)
+        transition_results = await self._execute_transition_rules(
+            subscription=subscription,
+            alert=alert,
+            event_id=event_id,
+        )
+
+        await mongo_manager.update_one(
+            "listener_trigger_events",
+            {"event_id": event_id},
+            {
+                "$set": {
+                    "notification_sent": notification_sent,
+                    "transition_results": transition_results,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        self.logger.info(
+            f"[poll] Alert processed: notification_sent={notification_sent}, "
+            f"transitions={len(transition_results)}"
+        )
+
+    async def _execute_transition_rules(
+        self,
+        subscription: StrategySubscription,
+        alert: StrategyAlert,
+        event_id: str,
+    ) -> List[Dict[str, Any]]:
+        rules = subscription.params.get("transition_rules") or []
+        if not isinstance(rules, list) or not rules:
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for raw_rule in rules:
+            if not isinstance(raw_rule, dict):
+                continue
+            result = await self._apply_transition_rule(
+                subscription=subscription,
+                alert=alert,
+                event_id=event_id,
+                rule=raw_rule,
+            )
+            if result:
+                results.append(result)
+        return results
+
+    async def _apply_transition_rule(
+        self,
+        subscription: StrategySubscription,
+        alert: StrategyAlert,
+        event_id: str,
+        rule: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        rule_id = str(rule.get("rule_id") or uuid.uuid4().hex)
+        if not rule.get("enabled", True):
+            return None
+
+        target_pool_id = str(rule.get("target_pool_id", "")).strip()
+        if not target_pool_id:
+            return {
+                "rule_id": rule_id,
+                "status": "failed",
+                "reason": "未配置目标股池",
+            }
+
+        cooldown_days = max(1, int(rule.get("cooldown_days", 1) or 1))
+        if await self._is_transition_in_cooldown(rule_id, alert.ts_code, cooldown_days):
+            result = {
+                "rule_id": rule_id,
+                "status": "skipped",
+                "reason": f"{cooldown_days} 天冷却期内已流转",
+                "target_pool_id": target_pool_id,
+            }
+            await self._write_transition_log(
+                alert=alert,
+                subscription=subscription,
+                event_id=event_id,
+                rule=rule,
+                status=result["status"],
+                reason=result["reason"],
+                from_pool_ids=[],
+                to_pool_id=target_pool_id,
+            )
+            return result
+
+        target_pool = await mongo_manager.find_one("stock_pools", {"pool_id": target_pool_id})
+        if not target_pool:
+            result = {
+                "rule_id": rule_id,
+                "status": "failed",
+                "reason": "目标股池不存在",
+                "target_pool_id": target_pool_id,
+            }
+            await self._write_transition_log(
+                alert=alert,
+                subscription=subscription,
+                event_id=event_id,
+                rule=rule,
+                status=result["status"],
+                reason=result["reason"],
+                from_pool_ids=[],
+                to_pool_id=target_pool_id,
+            )
+            return result
+
+        stock_basic = await mongo_manager.find_one(
+            "stock_basic",
+            {"ts_code": alert.ts_code},
+            projection={"ts_code": 1, "symbol": 1, "name": 1},
+        )
+        stock_name = (stock_basic or {}).get("name") or alert.stock_name or alert.ts_code
+        stock_code = (stock_basic or {}).get("symbol") or alert.ts_code.split(".")[0]
+
+        now = datetime.utcnow()
+        transition_date = date.today().strftime("%Y%m%d")
+        mode = str(rule.get("mode", "move") or "move").strip().lower()
+        source_pool_ids = [
+            str(pool_id).strip()
+            for pool_id in (rule.get("source_pool_ids") or [])
+            if str(pool_id).strip() and str(pool_id).strip() != target_pool_id
+        ]
+
+        removed_from: List[str] = []
+        if mode == "move" and source_pool_ids:
+            source_pools = await mongo_manager.find_many(
+                "stock_pools",
+                {"pool_id": {"$in": source_pool_ids}},
+            )
+            for pool in source_pools:
+                stocks = pool.get("stocks", [])
+                filtered_stocks = [
+                    item for item in stocks
+                    if str(item.get("ts_code", "")).upper() != alert.ts_code.upper()
+                ]
+                if len(filtered_stocks) == len(stocks):
+                    continue
+                removed_from.append(str(pool.get("pool_id")))
+                await mongo_manager.update_one(
+                    "stock_pools",
+                    {"pool_id": pool.get("pool_id")},
+                    {
+                        "$set": {
+                            "stocks": filtered_stocks,
+                            "updated_at": now,
+                        }
+                    },
+                )
+
+        target_stocks = list(target_pool.get("stocks", []))
+        existing_index = next(
+            (
+                index for index, item in enumerate(target_stocks)
+                if str(item.get("ts_code", "")).upper() == alert.ts_code.upper()
+            ),
+            None,
+        )
+        stock_payload = {
+            "ts_code": alert.ts_code,
+            "code": stock_code,
+            "name": stock_name,
+            "status": "active",
+            "source_module": "listener_transition",
+            "source_query": alert.trigger_reason,
+            "source_type": "listener_alert",
+            "source_strategy": subscription.strategy_type.value,
+            "source_event_id": event_id,
+            "operator_type": "auto",
+            "transition_rule_id": rule_id,
+            "last_transition_at": now,
+            "entered_at": now,
+            "added_at": now,
+        }
+
+        target_changed = False
+        if existing_index is None:
+            target_stocks.append(stock_payload)
+            target_changed = True
+        else:
+            existing_item = dict(target_stocks[existing_index])
+            stock_payload["entered_at"] = existing_item.get("entered_at") or existing_item.get("added_at") or now
+            stock_payload["added_at"] = existing_item.get("added_at") or existing_item.get("entered_at") or now
+            target_stocks[existing_index] = {**existing_item, **stock_payload}
+            target_changed = True
+
+        if target_changed:
+            await mongo_manager.update_one(
+                "stock_pools",
+                {"pool_id": target_pool_id},
+                {
+                    "$set": {
+                        "stocks": target_stocks,
+                        "updated_at": now,
+                    }
+                },
+            )
+
+        status = "moved" if removed_from else ("copied" if existing_index is None else "updated")
+        reason = (
+            f"已自动流转到 {target_pool.get('name', target_pool_id)}"
+            + (f"，并从 {len(removed_from)} 个来源池移出" if removed_from else "")
+        )
+
+        await self._write_transition_log(
+            alert=alert,
+            subscription=subscription,
+            event_id=event_id,
+            rule=rule,
+            status=status,
+            reason=reason,
+            from_pool_ids=removed_from,
+            to_pool_id=target_pool_id,
+        )
+
+        return {
+            "rule_id": rule_id,
+            "status": status,
+            "reason": reason,
+            "target_pool_id": target_pool_id,
+            "target_pool_name": target_pool.get("name"),
+            "from_pool_ids": removed_from,
+            "transition_date": transition_date,
+        }
+
+    async def _is_transition_in_cooldown(
+        self,
+        rule_id: str,
+        ts_code: str,
+        cooldown_days: int,
+    ) -> bool:
+        records = await mongo_manager.find_many(
+            "pool_transition_logs",
+            {
+                "rule_id": rule_id,
+                "ts_code": ts_code,
+                "status": {"$in": ["moved", "copied", "updated"]},
+            },
+            sort=[("created_at", -1)],
+            limit=1,
+        )
+        if not records:
+            return False
+
+        last_time = records[0].get("created_at")
+        if not isinstance(last_time, datetime):
+            return False
+        return (datetime.utcnow().date() - last_time.date()).days < cooldown_days
+
+    async def _write_transition_log(
+        self,
+        alert: StrategyAlert,
+        subscription: StrategySubscription,
+        event_id: str,
+        rule: Dict[str, Any],
+        status: str,
+        reason: str,
+        from_pool_ids: List[str],
+        to_pool_id: str,
+    ) -> None:
+        await mongo_manager.insert_one(
+            "pool_transition_logs",
+            {
+                "transition_id": uuid.uuid4().hex,
+                "event_id": event_id,
+                "rule_id": str(rule.get("rule_id") or ""),
+                "subscription_id": subscription.subscription_id,
+                "strategy_id": subscription.strategy_id,
+                "strategy_type": subscription.strategy_type.value,
+                "ts_code": alert.ts_code,
+                "stock_name": alert.stock_name,
+                "action_type": str(rule.get("mode", "move") or "move"),
+                "from_pool_ids": from_pool_ids,
+                "to_pool_id": to_pool_id,
+                "operator_type": "auto",
+                "status": status,
+                "reason": reason,
+                "transition_date": date.today().strftime("%Y%m%d"),
+                "trigger_reason": alert.trigger_reason,
+                "trigger_price": alert.trigger_price,
+                "cooldown_days": max(1, int(rule.get("cooldown_days", 1) or 1)),
+            },
+        )
     
     # ==================== 实时市场数据 ====================
     

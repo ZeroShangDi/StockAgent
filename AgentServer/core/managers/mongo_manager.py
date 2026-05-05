@@ -325,6 +325,23 @@ class MongoManager(BaseManager):
             IndexModel([("pool_type", ASCENDING)]),
             IndexModel([("updated_at", DESCENDING)]),
         ])
+
+        # 监听触发事件
+        await self._safe_create_indexes("listener_trigger_events", [
+            IndexModel([("event_id", ASCENDING)], unique=True),
+            IndexModel([("strategy_id", ASCENDING)]),
+            IndexModel([("ts_code", ASCENDING)]),
+            IndexModel([("triggered_at", DESCENDING)]),
+        ])
+
+        # 股池流转日志
+        await self._safe_create_indexes("pool_transition_logs", [
+            IndexModel([("transition_id", ASCENDING)], unique=True),
+            IndexModel([("event_id", ASCENDING)]),
+            IndexModel([("rule_id", ASCENDING), ("ts_code", ASCENDING), ("created_at", DESCENDING)]),
+            IndexModel([("to_pool_id", ASCENDING)]),
+            IndexModel([("transition_date", DESCENDING)]),
+        ])
         
         # 新闻表
         await self._safe_create_indexes("news", [
