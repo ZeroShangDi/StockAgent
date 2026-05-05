@@ -37,6 +37,7 @@ import {
   Moon,
   Promotion,
   Document,
+  WarningFilled,
 } from '@element-plus/icons-vue'
 import { useAuth } from '@/hooks'
 import { useUserStore, useTaskStore, useThemeStore } from '@/stores'
@@ -77,6 +78,7 @@ const menuItems = [
   { path: '/analysis', icon: DataAnalysis, title: '分析任务' },
   { path: '/watchlist', icon: Star, title: '自选股' },
   { path: '/strategies', icon: TrendCharts, title: '市场监听' },
+  { path: '/system-status', icon: WarningFilled, title: '能力状态' },
   { path: '/settings', icon: Setting, title: '设置' },
 ]
 

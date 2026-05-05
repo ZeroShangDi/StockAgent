@@ -9,7 +9,7 @@
  * - 查看详情
  */
 
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { 
   ElMessage, 
   ElSkeleton, 
@@ -22,7 +22,7 @@ import {
   ElCollapseItem,
 } from 'element-plus'
 import { reportApi } from '@/api'
-import type { ReportListItem, ReportDetail, ReportSection } from '@/api/modules/report'
+import type { ReportListItem, ReportDetail } from '@/api/modules/report'
 
 // ==================== 状态 ====================
 
@@ -47,18 +47,6 @@ const showDetail = ref(false)
 const currentReport = ref<ReportDetail | null>(null)
 
 // ==================== 计算属性 ====================
-
-const totalPages = computed(() => Math.ceil(total.value / pageSize.value))
-
-const typeLabel = computed(() => ({
-  morning: '早报',
-  noon: '午报',
-}))
-
-const typeColor = computed(() => ({
-  morning: '#FF9800',
-  noon: '#2196F3',
-}))
 
 // ==================== 方法 ====================
 
@@ -132,6 +120,10 @@ function formatReportDate(dateStr: string) {
   const parts = dateStr.split('-')
   if (parts.length !== 3) return dateStr
   return `${parts[1]}月${parts[2]}日`
+}
+
+function getTypeColor(type: 'morning' | 'noon') {
+  return type === 'morning' ? '#FF9800' : '#2196F3'
 }
 
 function getImportanceIcon(importance: string) {
@@ -253,7 +245,7 @@ onMounted(() => {
           <div class="card-header">
             <div class="header-left">
               <ElTag 
-                :color="typeColor[report.type]" 
+                :color="getTypeColor(report.type)" 
                 effect="dark" 
                 size="small"
                 class="type-tag"

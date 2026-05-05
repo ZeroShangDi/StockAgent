@@ -149,6 +149,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/settings/SettingsView.vue'),
         meta: { title: '设置' },
       },
+      {
+        path: 'system-status',
+        name: 'SystemStatus',
+        component: () => import('@/views/system/SystemStatusView.vue'),
+        meta: { title: '能力状态' },
+      },
     ],
   },
   

@@ -351,3 +351,92 @@ export interface StrategyTypeInfo {
   description: string
   param_schema: StrategyParamDef[]
 }
+
+// ==================== 系统状态 ====================
+
+export type SystemStatusLevel = 'available' | 'degraded' | 'unavailable'
+
+export interface SystemDataSourceInterfaceStatus {
+  key: string
+  name: string
+  status: SystemStatusLevel
+  reason: string
+  description: string
+}
+
+export interface SystemStatusItem {
+  key: string
+  name: string
+  status: SystemStatusLevel
+  reason: string
+  endpoint?: string | null
+  details: Record<string, unknown> & {
+    priority?: number
+    description?: string
+    interfaces?: SystemDataSourceInterfaceStatus[]
+  }
+}
+
+export interface SystemDatasetStatus extends SystemStatusItem {
+  count: number
+  latest_value?: string | null
+}
+
+export interface SystemStatusSummary {
+  available: number
+  degraded: number
+  unavailable: number
+}
+
+export interface SystemStatusReport {
+  generated_at: string
+  summary: SystemStatusSummary
+  nodes: Record<string, number>
+  services: SystemStatusItem[]
+  data_sources: SystemStatusItem[]
+  datasets: SystemDatasetStatus[]
+  features: SystemStatusItem[]
+}
+
+export interface SystemStatusOverview {
+  generated_at: string
+  summary: SystemStatusSummary
+  nodes: Record<string, number>
+}
+
+export interface SystemStatusSectionResponse {
+  section: 'services' | 'data_sources' | 'datasets' | 'features'
+  generated_at: string
+  items: SystemStatusItem[] | SystemDatasetStatus[]
+  metadata?: Record<string, unknown>
+}
+
+export interface SystemDataSourceMatrixAdapter {
+  key: string
+  name: string
+  priority?: number
+  description?: string
+}
+
+export interface SystemDataSourceMatrixCell {
+  source_key: string
+  source_name: string
+  status: SystemStatusLevel
+  reason: string
+}
+
+export interface SystemDataSourceMatrixRow {
+  key: string
+  name: string
+  description: string
+  current_source?: string | null
+  current_source_has_data?: boolean
+  current_source_count?: number
+  interface_key: string
+  cells: SystemDataSourceMatrixCell[]
+}
+
+export interface SystemDataSourceMatrix {
+  adapters: SystemDataSourceMatrixAdapter[]
+  rows: SystemDataSourceMatrixRow[]
+}
