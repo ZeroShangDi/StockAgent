@@ -26,11 +26,12 @@
 """
 
 from typing import Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from core.base import BaseCollector
 from core.settings import settings
 from core.managers import data_source_manager, mongo_manager
+from .focus_universe import get_focus_stock_codes
 
 
 def _clean_daily_basic_record(record: Dict) -> Dict:
@@ -139,67 +140,107 @@ class DailyBasicCollector(BaseCollector):
     async def collect(self) -> Dict[str, Any]:
         """执行采集"""
         latest_trade_date, _ = await data_source_manager.get_latest_trade_date()
+        focus_mode = await self._should_use_focus_mode()
+        sync_marker = self._get_sync_marker(focus_mode)
         
         if not latest_trade_date:
             return {"count": 0, "message": "Cannot get latest trade date"}
         
-        if await mongo_manager.is_synced(self.name, latest_trade_date):
+        if await mongo_manager.is_synced(sync_marker, latest_trade_date):
             self.logger.info(f"Daily basic {latest_trade_date} already synced, skipping")
             return {"count": 0, "message": f"Already synced {latest_trade_date}", "skipped": True}
         
-        # 使用基类方法确定同步范围
-        sync_info = await self._determine_sync_range(latest_trade_date)
+        sync_info = await self._determine_sync_range_for(sync_marker, latest_trade_date)
         
         if sync_info is None:
             return {"count": 0, "message": f"Already synced {latest_trade_date}", "skipped": True}
         
         start_date, end_date, is_history_sync = sync_info
-        sync_type_desc = "历史同步" if is_history_sync else "增量同步"
-        
-        # 使用基类方法获取交易日列表
-        trade_dates = await self._get_trade_dates(start_date, end_date)
-        
-        if not trade_dates:
-            return {"count": 0, "message": "No trade dates found in range"}
-        
-        self.logger.info(f"[{sync_type_desc}] Syncing daily_basic: {start_date} -> {end_date} ({len(trade_dates)} dates)")
-        
+        sync_type_desc = "重点股同步" if focus_mode else ("历史同步" if is_history_sync else "增量同步")
+
         total_count = 0
-        
-        async def collect_single_date(trade_date: str) -> int:
-            """采集单个日期的数据"""
-            nonlocal total_count
-            
-            records, _ = await data_source_manager.get_daily_basic(trade_date=trade_date)
-            
-            if records:
-                cleaned_records = []
-                for record in records:
-                    cleaned = _clean_daily_basic_record(record)
-                    cleaned["updated_at"] = datetime.utcnow()
-                    cleaned_records.append(cleaned)
-                
-                # 直接写入（避免内存问题）
-                count = await self._write_buffer(
-                    buffer=cleaned_records,
-                    collection="daily_basic",
-                    key_fields=["ts_code", "trade_date"],
+
+        if focus_mode:
+            focus_codes = await get_focus_stock_codes()
+            if not focus_codes:
+                return {"count": 0, "message": "Focus stock sync enabled, but no watchlist/subscription stocks found"}
+
+            self.logger.info(
+                f"[{sync_type_desc}] Syncing daily_basic: {start_date} -> {end_date} "
+                f"({len(focus_codes)} focus stocks)"
+            )
+
+            async def collect_single_stock(ts_code: str) -> int:
+                nonlocal total_count
+                records, source = await data_source_manager.get_daily_basic(
+                    ts_code=ts_code,
+                    start_date=start_date,
+                    end_date=end_date,
                 )
-                total_count += count
-                return count
-            return 0
-        
-        # 使用基类并行采集方法（带失败重试）
-        result = await self._parallel_collect(
-            items=trade_dates,
-            collect_func=collect_single_date,
-            max_concurrent=self.MAX_CONCURRENT,
-            retry_failures=True,
-        )
+                if records:
+                    cleaned_records = []
+                    for record in records:
+                        cleaned = _clean_daily_basic_record(record)
+                        cleaned["updated_at"] = datetime.utcnow()
+                        cleaned_records.append(cleaned)
+                    count = await self._write_buffer(
+                        buffer=cleaned_records,
+                        collection="daily_basic",
+                        key_fields=["ts_code", "trade_date"],
+                    )
+                    total_count += count
+                    self.logger.info(
+                        f"Focus daily_basic {ts_code}: {len(records)} rows from {source or 'unknown'}, synced={count}"
+                    )
+                    return count
+                return 0
+
+            result = await self._parallel_collect(
+                items=focus_codes,
+                collect_func=collect_single_stock,
+                max_concurrent=self.MAX_CONCURRENT,
+                retry_failures=True,
+            )
+        else:
+            trade_dates = await self._get_trade_dates(start_date, end_date)
+
+            if not trade_dates:
+                return {"count": 0, "message": "No trade dates found in range"}
+
+            self.logger.info(f"[{sync_type_desc}] Syncing daily_basic: {start_date} -> {end_date} ({len(trade_dates)} dates)")
+
+            async def collect_single_date(trade_date: str) -> int:
+                """采集单个日期的数据"""
+                nonlocal total_count
+
+                records, _ = await data_source_manager.get_daily_basic(trade_date=trade_date)
+
+                if records:
+                    cleaned_records = []
+                    for record in records:
+                        cleaned = _clean_daily_basic_record(record)
+                        cleaned["updated_at"] = datetime.utcnow()
+                        cleaned_records.append(cleaned)
+
+                    count = await self._write_buffer(
+                        buffer=cleaned_records,
+                        collection="daily_basic",
+                        key_fields=["ts_code", "trade_date"],
+                    )
+                    total_count += count
+                    return count
+                return 0
+
+            result = await self._parallel_collect(
+                items=trade_dates,
+                collect_func=collect_single_date,
+                max_concurrent=self.MAX_CONCURRENT,
+                retry_failures=True,
+            )
         
         # 记录同步完成
         await mongo_manager.record_sync(
-            sync_type=self.name,
+            sync_type=sync_marker,
             sync_date=end_date,
             count=total_count,
         )
@@ -211,5 +252,45 @@ class DailyBasicCollector(BaseCollector):
             "sync_type": sync_type_desc,
             "success_dates": result["success"],
             "failed_dates": result["failed"],
-            "message": f"[{sync_type_desc}] Synced {total_count} records ({result['success']}/{result['total']} dates)",
+            "message": f"[{sync_type_desc}] Synced {total_count} records ({result['success']}/{result['total']} items)",
         }
+
+    async def _should_use_focus_mode(self) -> bool:
+        """是否启用重点股票同步模式。"""
+        if settings.data_sync.focus_stocks_only:
+            return True
+
+        has_tushare = data_source_manager.get_adapter("tushare") is not None
+        has_coze = data_source_manager.get_adapter("coze") is not None
+        return has_coze and not has_tushare
+
+    def _get_sync_marker(self, focus_mode: bool) -> str:
+        return f"{self.name}_focus" if focus_mode else self.name
+
+    async def _determine_sync_range_for(
+        self,
+        sync_type: str,
+        latest_trade_date: str,
+    ) -> tuple[str, str, bool] | None:
+        last_sync_date = await mongo_manager.get_last_sync_date(sync_type)
+
+        if last_sync_date is None:
+            self.logger.info(f"First sync ({sync_type}), starting from {self.HISTORY_START_DATE}")
+            return (self.HISTORY_START_DATE, latest_trade_date, True)
+
+        if last_sync_date >= latest_trade_date:
+            return None
+
+        last_sync_dt = datetime.strptime(last_sync_date, "%Y%m%d")
+        latest_dt = datetime.strptime(latest_trade_date, "%Y%m%d")
+        days_diff = (latest_dt - last_sync_dt).days
+
+        is_history_sync = days_diff > self.HISTORY_SYNC_DAYS_THRESHOLD
+        next_day = (last_sync_dt + timedelta(days=1)).strftime("%Y%m%d")
+
+        sync_type_desc = "历史" if is_history_sync else "增量"
+        self.logger.info(
+            f"{sync_type_desc}同步({sync_type}): last_sync={last_sync_date}, "
+            f"syncing {next_day} -> {latest_trade_date} ({days_diff} days)"
+        )
+        return (next_day, latest_trade_date, is_history_sync)

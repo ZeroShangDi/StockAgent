@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 from core.base import BaseCollector
 from core.settings import settings
-from core.managers import tushare_manager, mongo_manager
+from core.managers import data_source_manager, mongo_manager
 
 
 class StockDailyCollector(BaseCollector):
@@ -66,7 +66,12 @@ class StockDailyCollector(BaseCollector):
     async def collect(self) -> Dict[str, Any]:
         """执行采集"""
         # 获取最新交易日
-        latest_trade_date = await tushare_manager.get_latest_trade_date()
+        latest_trade_date, date_source = await data_source_manager.get_latest_trade_date()
+        if not latest_trade_date:
+            return {"count": 0, "message": "Cannot determine latest trade date"}
+
+        if date_source:
+            self.logger.info(f"Latest trade date resolved by {date_source}: {latest_trade_date}")
         
         # 检查是否已同步
         if await mongo_manager.is_synced(self.name, latest_trade_date):
@@ -125,7 +130,7 @@ class StockDailyCollector(BaseCollector):
             
             try:
                 t1 = time.time()
-                records = await tushare_manager.get_daily(
+                records, data_source = await data_source_manager.get_daily(
                     ts_code=ts_code_str,
                     start_date=start_date,
                     end_date=end_date,
@@ -134,7 +139,11 @@ class StockDailyCollector(BaseCollector):
                 
                 if records:
                     buffer.extend(records)
-                    self.logger.info(f"  Batch {batch_start}-{batch_end}: {len(records)} rows, API={t2-t1:.2f}s")
+                    source_desc = data_source or "unknown"
+                    self.logger.info(
+                        f"  Batch {batch_start}-{batch_end}: "
+                        f"{len(records)} rows from {source_desc}, API={t2-t1:.2f}s"
+                    )
                     
             except Exception as e:
                 failed_count += len(batch)

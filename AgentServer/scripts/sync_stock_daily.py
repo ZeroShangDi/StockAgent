@@ -44,74 +44,25 @@ async def sync_stock_daily_for_date(trade_date: str, batch_size: int = 500) -> d
     print(f"Syncing stock_daily for {trade_date}")
     print(f"{'='*60}")
     
-    # 获取所有股票列表
-    stock_list = await mongo_manager.find_many(
-        "stock_basic",
-        {"list_status": "L"},
-        projection={"ts_code": 1},
+    # 增量同步按交易日整市场抓取，避免按股票循环触发 Tushare 限流
+    records, source = await data_source_manager.get_daily(trade_date=trade_date)
+
+    if not records:
+        print(f"  No data returned for {trade_date}")
+        return {"date": trade_date, "count": 0, "status": "no_data"}
+
+    result = await mongo_manager.bulk_upsert(
+        collection="stock_daily",
+        documents=records,
+        key_fields=["ts_code", "trade_date"],
     )
-    
-    if not stock_list:
-        # 如果没有 stock_basic，直接用 daily 接口按日期获取
-        print("No stock_basic found, fetching all stocks for the date...")
-        records, _ = await data_source_manager.get_daily(trade_date=trade_date)
-        
-        if not records:
-            print(f"  No data returned for {trade_date}")
-            return {"date": trade_date, "count": 0, "status": "no_data"}
-        
-        # 批量写入
-        result = await mongo_manager.bulk_upsert(
-            collection="stock_daily",
-            documents=records,
-            key_fields=["ts_code", "trade_date"],
-        )
-        
-        count = result.get("upserted", 0) + result.get("modified", 0)
-        print(f"  Synced {count} records (upserted={result.get('upserted', 0)}, modified={result.get('modified', 0)})")
-        return {"date": trade_date, "count": count, "status": "ok"}
-    
-    # 有 stock_basic，按批次获取
-    ts_codes = [s["ts_code"] for s in stock_list]
-    total_count = len(ts_codes)
-    total_synced = 0
-    
-    print(f"Found {total_count} stocks, processing in batches of {batch_size}...")
-    
-    for i in range(0, total_count, batch_size):
-        batch_codes = ts_codes[i:i + batch_size]
-        batch_end = min(i + batch_size, total_count)
-        
-        print(f"  Processing {i+1}-{batch_end}/{total_count}...", end=" ")
-        
-        # 调用 API (批量获取每个股票)
-        records = []
-        for code in batch_codes:
-            batch_records, _ = await data_source_manager.get_daily(
-                ts_code=code,
-                start_date=trade_date,
-                end_date=trade_date,
-            )
-            if batch_records:
-                records.extend(batch_records)
-        
-        if not records:
-            print("no data")
-            continue
-        
-        # 批量写入
-        result = await mongo_manager.bulk_upsert(
-            collection="stock_daily",
-            documents=records,
-            key_fields=["ts_code", "trade_date"],
-        )
-        
-        count = result.get("upserted", 0) + result.get("modified", 0)
-        total_synced += count
-        print(f"{len(records)} rows, synced {count}")
-    
-    print(f"\nTotal synced for {trade_date}: {total_synced} records")
-    return {"date": trade_date, "count": total_synced, "status": "ok"}
+
+    count = result.get("upserted", 0) + result.get("modified", 0)
+    print(
+        f"  Synced {count} records from {source or 'unknown'} "
+        f"(upserted={result.get('upserted', 0)}, modified={result.get('modified', 0)})"
+    )
+    return {"date": trade_date, "count": count, "status": "ok", "source": source}
 
 
 async def sync_index_daily_for_date(trade_date: str) -> dict:
