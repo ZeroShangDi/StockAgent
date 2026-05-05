@@ -330,6 +330,14 @@ export interface AddStockResponse {
   watch_list: string[]
 }
 
+export interface BatchAddStockResponse {
+  success: boolean
+  message: string
+  watch_list: string[]
+  added: string[]
+  skipped: string[]
+}
+
 /** 切换订阅状态响应 */
 export interface ToggleSubscriptionResponse {
   strategy_type: string

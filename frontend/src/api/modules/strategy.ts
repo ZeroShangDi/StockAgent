@@ -14,6 +14,7 @@ import type {
   CreateTaskResponse,
   StrategySubscription,
   AddStockResponse,
+  BatchAddStockResponse,
   ToggleSubscriptionResponse,
   StrategyTypeInfo,
   StrategyStockConfig,
@@ -95,6 +96,17 @@ export const subscriptionApi = {
   addStockToStrategy(strategyType: string, tsCode: string): Promise<AddStockResponse> {
     return api.post(`/strategy/subscriptions/${strategyType}/stocks`, { 
       ts_code: tsCode.toUpperCase() 
+    })
+  },
+
+  /**
+   * 批量向策略添加个股
+   * @param strategyType 策略类型
+   * @param tsCodes 股票代码列表
+   */
+  batchAddStocksToStrategy(strategyType: string, tsCodes: string[]): Promise<BatchAddStockResponse> {
+    return api.post(`/strategy/subscriptions/${strategyType}/stocks/batch`, {
+      ts_codes: tsCodes.map((code) => code.toUpperCase()),
     })
   },
 

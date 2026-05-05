@@ -10,6 +10,7 @@
 import asyncio
 import logging
 import uuid
+import re
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -171,11 +172,25 @@ class AddStockRequest(BaseModel):
     ts_code: str = Field(..., pattern=r"^\d{6}\.(SH|SZ|BJ)$")
 
 
+class BatchAddStocksRequest(BaseModel):
+    """批量添加股票请求"""
+    ts_codes: List[str] = Field(..., min_length=1, description="股票代码列表")
+
+
 class AddStockResponse(BaseModel):
     """添加股票响应"""
     success: bool
     message: str
     watch_list: List[str]
+
+
+class BatchAddStockResponse(BaseModel):
+    """批量添加股票响应"""
+    success: bool
+    message: str
+    watch_list: List[str]
+    added: List[str]
+    skipped: List[str]
 
 
 class UpdateStockConfigRequest(BaseModel):
@@ -320,6 +335,16 @@ async def _normalize_support_resistance_config(ts_code: str, config: Dict[str, A
         )
 
     return normalized
+
+
+async def _validate_stock_exists(ts_code: str) -> dict:
+    stock = await mongo_manager.find_one(
+        "stock_basic",
+        {"ts_code": ts_code},
+    )
+    if not stock:
+        raise HTTPException(status_code=400, detail=f"股票 {ts_code} 不存在")
+    return stock
 
 
 async def _ensure_strategy_exists(strategy_type: str) -> dict:
@@ -550,13 +575,7 @@ async def add_stock_to_strategy(
         )
     
     # 验证股票是否存在
-    stock = await mongo_manager.find_one(
-        "stock_basic",
-        {"ts_code": ts_code},
-    )
-    
-    if not stock:
-        raise HTTPException(status_code=400, detail=f"股票 {ts_code} 不存在")
+    stock = await _validate_stock_exists(ts_code)
     
     # 添加到 watch_list
     watch_list.append(ts_code)
@@ -580,6 +599,81 @@ async def add_stock_to_strategy(
         success=True,
         message=f"已添加 {stock_name}({ts_code})" + ("，请继续配置撑压线点位" if strategy_type == StrategyType.SUPPORT_RESISTANCE.value else ""),
         watch_list=watch_list,
+    )
+
+
+@router.post("/{strategy_type}/stocks/batch", response_model=BatchAddStockResponse)
+async def batch_add_stocks_to_strategy(
+    strategy_type: str = Path(...),
+    data: BatchAddStocksRequest = Body(...),
+):
+    """
+    批量向策略添加个股（所有用户可用）
+
+    - 自动去重
+    - 跳过已经存在的股票
+    - 验证股票是否存在
+    """
+    if strategy_type not in IMPLEMENTED_STRATEGY_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"策略类型 '{strategy_type}' 不存在"
+        )
+
+    normalized_codes: List[str] = []
+    seen_codes = set()
+    for raw_code in data.ts_codes:
+        ts_code = str(raw_code or "").strip().upper()
+        if not ts_code:
+            continue
+        if not re.match(r"^\d{6}\.(SH|SZ|BJ)$", ts_code):
+            continue
+        if ts_code in seen_codes:
+            continue
+        seen_codes.add(ts_code)
+        normalized_codes.append(ts_code)
+
+    if not normalized_codes:
+        raise HTTPException(status_code=400, detail="请至少提供一只有效股票")
+
+    record = await _ensure_strategy_exists(strategy_type)
+    watch_list: List[str] = list(record.get("watch_list", []))
+    added: List[str] = []
+    skipped: List[str] = []
+
+    for ts_code in normalized_codes:
+        if ts_code in watch_list:
+            skipped.append(ts_code)
+            continue
+        await _validate_stock_exists(ts_code)
+        watch_list.append(ts_code)
+        added.append(ts_code)
+
+    if added:
+        await mongo_manager.update_one(
+            "strategy_subscriptions",
+            {"strategy_type": strategy_type},
+            {
+                "$set": {
+                    "watch_list": watch_list,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        asyncio.create_task(_notify_listeners_refresh(strategy_type))
+
+    message = f"已添加 {len(added)} 只股票"
+    if skipped:
+        message += f"，跳过 {len(skipped)} 只已存在股票"
+    if strategy_type == StrategyType.SUPPORT_RESISTANCE.value and added:
+        message += "。请后续逐只配置撑压线点位"
+
+    return BatchAddStockResponse(
+        success=bool(added),
+        message=message,
+        watch_list=watch_list,
+        added=added,
+        skipped=skipped,
     )
 
 

@@ -41,12 +41,23 @@
               <p class="detail-desc">{{ activePool.description || '暂无备注' }}</p>
             </div>
             <div class="detail-meta">
+              <el-button
+                type="primary"
+                plain
+                size="small"
+                :disabled="selectedPoolStocks.length === 0"
+                @click="openBatchDialog"
+              >
+                批量加入监听
+              </el-button>
               <span>股票数 {{ activePool.stock_count }}</span>
+              <span v-if="selectedPoolStocks.length > 0">已勾选 {{ selectedPoolStocks.length }} 只</span>
               <span v-if="activePool.updated_at">更新于 {{ formatDateTime(activePool.updated_at) }}</span>
             </div>
           </header>
 
-          <el-table :data="activePool.stocks" stripe>
+          <el-table :data="activePool.stocks" stripe @selection-change="handleSelectionChange">
+            <el-table-column type="selection" width="52" />
             <el-table-column prop="code" label="代码" width="120" />
             <el-table-column prop="ts_code" label="TS 代码" width="150" />
             <el-table-column prop="name" label="名称" width="140" />
@@ -63,19 +74,82 @@
         </template>
       </section>
     </section>
+
+    <el-dialog
+      v-model="batchDialogVisible"
+      title="批量加入策略监听"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <div class="dialog-body">
+        <div class="batch-summary-card">
+          <strong>已选股票</strong>
+          <span>{{ selectedPoolStocks.length }} 只</span>
+        </div>
+
+        <div class="field-block">
+          <label>监听策略</label>
+          <el-select
+            v-model="selectedStrategyType"
+            class="dialog-select"
+            placeholder="请选择策略"
+            :loading="strategyTypeLoading"
+          >
+            <el-option
+              v-for="item in strategyTypes"
+              :key="item.type"
+              :label="item.name"
+              :value="item.type"
+            >
+              <div class="strategy-option">
+                <span>{{ item.name }}</span>
+                <small>{{ item.description }}</small>
+              </div>
+            </el-option>
+          </el-select>
+        </div>
+
+        <p v-if="selectedStrategyType === 'support_resistance'" class="batch-hint">
+          撑压线策略批量加入后，还需要到市场监听页面逐只补充点位配置。
+        </p>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="batchDialogVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="batchAdding"
+            :disabled="!selectedStrategyType"
+            @click="handleBatchAddStrategy"
+          >
+            确认加入
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
 
-import { stockPickerApi } from '@/api'
+import { stockPickerApi, subscriptionApi } from '@/api'
 import type { StockPoolDetail, StockPoolSummary } from '@/api/modules/stock-picker'
+import type { StockPoolStock } from '@/api/modules/stock-picker'
+import type { StrategyTypeInfo } from '@/api/types'
 
 const loading = ref(false)
 const pools = ref<StockPoolSummary[]>([])
 const activePoolId = ref('')
 const activePool = ref<StockPoolDetail | null>(null)
+const selectedPoolStocks = ref<StockPoolStock[]>([])
+const batchDialogVisible = ref(false)
+const strategyTypes = ref<StrategyTypeInfo[]>([])
+const strategyTypeLoading = ref(false)
+const batchAdding = ref(false)
+const selectedStrategyType = ref('')
 
 function formatDateTime(value: string): string {
   const date = new Date(value)
@@ -102,6 +176,58 @@ async function loadPools(): Promise<void> {
 async function selectPool(poolId: string): Promise<void> {
   activePoolId.value = poolId
   activePool.value = await stockPickerApi.getPoolDetail(poolId)
+  selectedPoolStocks.value = []
+}
+
+function handleSelectionChange(rows: StockPoolStock[]): void {
+  selectedPoolStocks.value = rows
+}
+
+async function ensureStrategyTypesLoaded(): Promise<void> {
+  if (strategyTypes.value.length > 0) return
+
+  strategyTypeLoading.value = true
+  try {
+    strategyTypes.value = await subscriptionApi.getStrategyTypes()
+    if (!selectedStrategyType.value && strategyTypes.value.length > 0) {
+      selectedStrategyType.value = strategyTypes.value[0].type
+    }
+  } finally {
+    strategyTypeLoading.value = false
+  }
+}
+
+async function openBatchDialog(): Promise<void> {
+  if (selectedPoolStocks.value.length === 0) {
+    ElMessage.warning('请先勾选要加入监听的股票')
+    return
+  }
+
+  await ensureStrategyTypesLoaded()
+  batchDialogVisible.value = true
+}
+
+async function handleBatchAddStrategy(): Promise<void> {
+  if (!selectedStrategyType.value) {
+    ElMessage.warning('请选择监听策略')
+    return
+  }
+
+  batchAdding.value = true
+  try {
+    const response = await subscriptionApi.batchAddStocksToStrategy(
+      selectedStrategyType.value,
+      selectedPoolStocks.value.map((item) => item.ts_code),
+    )
+    if (response.added.length > 0) {
+      ElMessage.success(response.message)
+    } else {
+      ElMessage.warning(response.message)
+    }
+    batchDialogVisible.value = false
+  } finally {
+    batchAdding.value = false
+  }
 }
 
 loadPools()
@@ -203,6 +329,61 @@ h2 {
   display: grid;
   gap: 6px;
   text-align: right;
+}
+
+.dialog-body {
+  display: grid;
+  gap: 18px;
+}
+
+.batch-summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.08);
+  color: #0f172a;
+}
+
+.field-block {
+  display: grid;
+  gap: 8px;
+
+  label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #0f172a;
+  }
+}
+
+.dialog-select {
+  width: 100%;
+}
+
+.strategy-option {
+  display: grid;
+  gap: 4px;
+
+  small {
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}
+
+.batch-hint {
+  margin: 0;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
 }
 
 .empty-state {

@@ -60,6 +60,8 @@ const isCollapsed = ref(false)
 const activeMenu = computed(() => {
   const path = route.path
   if (path.startsWith('/analysis')) return '/analysis'
+  if (path.startsWith('/stock-picker')) return '/stock-picker'
+  if (path.startsWith('/stock-pools')) return '/stock-pools'
   if (path.startsWith('/stock')) return '/analysis'
   if (path.startsWith('/strategies')) return '/strategies'
   return path
@@ -77,7 +79,9 @@ const menuSections = [
       { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
       { path: '/market-weather', icon: Sunny, title: '市场晴雨表' },
       { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
+      { path: '/watchlist', icon: Star, title: '自选股' },
       { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
+      { path: '/strategies', icon: TrendCharts, title: '市场监听' },
     ],
   },
   {
@@ -87,8 +91,6 @@ const menuSections = [
       { path: '/market', icon: Histogram, title: '行情分析' },
       { path: '/sector-strategy', icon: TrendCharts, title: '板块分析' },
       { path: '/hot-news', icon: Promotion, title: '热点追踪' },
-      { path: '/watchlist', icon: Star, title: '自选股' },
-      { path: '/strategies', icon: TrendCharts, title: '市场监听' },
     ],
   },
   {

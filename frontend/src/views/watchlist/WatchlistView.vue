@@ -4,10 +4,10 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useMarketStore } from '@/stores/market'
 import { useTask } from '@/hooks'
-import { stockApi } from '@/api'
-import { ElMessage, ElDialog, ElAutocomplete, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus'
-import { Plus, Delete, Search, ArrowUp, ArrowDown, TrendCharts, View, Sort, Refresh, Star, Loading } from '@element-plus/icons-vue'
-import type { StockQuote, StockBasic } from '@/api/types'
+import { stockApi, subscriptionApi } from '@/api'
+import { ElMessage, ElDialog, ElAutocomplete, ElDropdown, ElDropdownMenu, ElDropdownItem, ElCheckbox, ElSelect, ElOption } from 'element-plus'
+import { Plus, Delete, Search, ArrowUp, ArrowDown, TrendCharts, View, Sort, Refresh, Star, Loading, Bell } from '@element-plus/icons-vue'
+import type { StockQuote, StockBasic, StrategyTypeInfo } from '@/api/types'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -26,6 +26,7 @@ const sortBy = ref<'default' | 'pct_chg_asc' | 'pct_chg_desc' | 'vol_desc'>('def
 
 // 悬停行
 const hoveredRow = ref<string | null>(null)
+const selectedWatchlist = ref<string[]>([])
 
 // 价格闪烁动画
 const flashingPrices = ref<Set<string>>(new Set())
@@ -67,11 +68,22 @@ const filteredWatchlist = computed(() => {
   return list
 })
 
+const selectedCount = computed(() => selectedWatchlist.value.length)
+const visibleSelectedCount = computed(() => filteredWatchlist.value.filter(code => selectedWatchlist.value.includes(code)).length)
+const allVisibleSelected = computed(() => filteredWatchlist.value.length > 0 && visibleSelectedCount.value === filteredWatchlist.value.length)
+const visibleSelectionIndeterminate = computed(() => visibleSelectedCount.value > 0 && visibleSelectedCount.value < filteredWatchlist.value.length)
+
 // 添加股票弹窗
 const addDialogVisible = ref(false)
 const searchKeyword = ref('')
 const selectedStock = ref<StockBasic | null>(null)
 const isAdding = ref(false)
+
+const batchDialogVisible = ref(false)
+const strategyTypes = ref<StrategyTypeInfo[]>([])
+const strategyTypeLoading = ref(false)
+const batchAdding = ref(false)
+const selectedStrategyType = ref('')
 
 // ==================== 生命周期 ====================
 
@@ -109,6 +121,33 @@ async function refreshQuotes() {
       triggerPriceFlash(q.ts_code)
     }
   })
+}
+
+function isSelected(tsCode: string): boolean {
+  return selectedWatchlist.value.includes(tsCode)
+}
+
+function toggleRowSelection(tsCode: string, checked: boolean): void {
+  if (checked) {
+    if (!selectedWatchlist.value.includes(tsCode)) {
+      selectedWatchlist.value = [...selectedWatchlist.value, tsCode]
+    }
+    return
+  }
+
+  selectedWatchlist.value = selectedWatchlist.value.filter(code => code !== tsCode)
+}
+
+function toggleSelectAll(checked: boolean): void {
+  if (checked) {
+    const merged = new Set(selectedWatchlist.value)
+    filteredWatchlist.value.forEach(code => merged.add(code))
+    selectedWatchlist.value = Array.from(merged)
+    return
+  }
+
+  const visibleCodes = new Set(filteredWatchlist.value)
+  selectedWatchlist.value = selectedWatchlist.value.filter(code => !visibleCodes.has(code))
 }
 
 // 价格闪烁动画
@@ -156,6 +195,7 @@ async function removeFromWatchlist(e: Event, tsCode: string) {
   e.stopPropagation()
   await userStore.removeFromWatchlist(tsCode)
   quotes.value.delete(tsCode)
+  selectedWatchlist.value = selectedWatchlist.value.filter(code => code !== tsCode)
   ElMessage.success('已移除')
 }
 
@@ -232,6 +272,53 @@ async function handleAddStock(): Promise<void> {
   }
 }
 
+async function ensureStrategyTypesLoaded(): Promise<void> {
+  if (strategyTypes.value.length > 0) return
+
+  strategyTypeLoading.value = true
+  try {
+    strategyTypes.value = await subscriptionApi.getStrategyTypes()
+    if (!selectedStrategyType.value && strategyTypes.value.length > 0) {
+      selectedStrategyType.value = strategyTypes.value[0].type
+    }
+  } finally {
+    strategyTypeLoading.value = false
+  }
+}
+
+async function openBatchDialog(): Promise<void> {
+  if (selectedWatchlist.value.length === 0) {
+    ElMessage.warning('请先勾选要加入监听的股票')
+    return
+  }
+
+  await ensureStrategyTypesLoaded()
+  batchDialogVisible.value = true
+}
+
+async function handleBatchAddStrategy(): Promise<void> {
+  if (!selectedStrategyType.value) {
+    ElMessage.warning('请选择监听策略')
+    return
+  }
+
+  batchAdding.value = true
+  try {
+    const response = await subscriptionApi.batchAddStocksToStrategy(
+      selectedStrategyType.value,
+      selectedWatchlist.value,
+    )
+    if (response.added.length > 0) {
+      ElMessage.success(response.message)
+    } else {
+      ElMessage.warning(response.message)
+    }
+    batchDialogVisible.value = false
+  } finally {
+    batchAdding.value = false
+  }
+}
+
 // 排序选项
 const sortOptions = [
   { label: '默认排序', value: 'default' },
@@ -255,6 +342,7 @@ function getSortLabel(): string {
           <h1>自选股</h1>
         </div>
         <span class="stock-count">{{ filteredWatchlist.length }} 只股票</span>
+        <span v-if="selectedCount > 0" class="selected-count">已勾选 {{ selectedCount }} 只</span>
       </div>
     </header>
     
@@ -294,6 +382,11 @@ function getSortLabel(): string {
       </div>
       
       <div class="toolbar-right">
+        <button class="monitor-btn" :disabled="selectedCount === 0" @click="openBatchDialog">
+          <ElIcon><Bell /></ElIcon>
+          <span>批量监听</span>
+        </button>
+
         <!-- 刷新 -->
         <button class="icon-btn" @click="refreshQuotes" title="刷新行情">
           <ElIcon><Refresh /></ElIcon>
@@ -332,6 +425,13 @@ function getSortLabel(): string {
       <div v-else-if="filteredWatchlist.length > 0" class="stock-list">
         <!-- 表头 -->
         <div class="list-header">
+          <div class="col col-select">
+            <ElCheckbox
+              :model-value="allVisibleSelected"
+              :indeterminate="visibleSelectionIndeterminate"
+              @change="(checked: string | number | boolean) => toggleSelectAll(Boolean(checked))"
+            />
+          </div>
           <div class="col col-name">股票</div>
           <div class="col col-price">最新价</div>
           <div class="col col-change">涨跌幅</div>
@@ -351,6 +451,13 @@ function getSortLabel(): string {
           @mouseleave="hoveredRow = null"
           @click="router.push(`/stock/${tsCode}`)"
         >
+          <div class="col col-select select-cell" @click.stop>
+            <ElCheckbox
+              :model-value="isSelected(tsCode)"
+              @change="(checked: string | number | boolean) => toggleRowSelection(tsCode, Boolean(checked))"
+            />
+          </div>
+
           <!-- 股票名称 -->
           <div class="col col-name">
             <div class="stock-info">
@@ -438,6 +545,61 @@ function getSortLabel(): string {
         </button>
       </div>
     </div>
+
+    <ElDialog
+      v-model="batchDialogVisible"
+      title="批量加入策略监听"
+      width="480px"
+      :close-on-click-modal="false"
+      class="add-dialog"
+    >
+      <div class="dialog-body">
+        <div class="batch-summary-card">
+          <strong>已选股票</strong>
+          <span>{{ selectedCount }} 只</span>
+        </div>
+
+        <div class="search-section">
+          <label>监听策略</label>
+          <ElSelect
+            v-model="selectedStrategyType"
+            class="dialog-select"
+            placeholder="请选择策略"
+            :loading="strategyTypeLoading"
+          >
+            <ElOption
+              v-for="item in strategyTypes"
+              :key="item.type"
+              :label="item.name"
+              :value="item.type"
+            >
+              <div class="strategy-option">
+                <span>{{ item.name }}</span>
+                <small>{{ item.description }}</small>
+              </div>
+            </ElOption>
+          </ElSelect>
+        </div>
+
+        <p v-if="selectedStrategyType === 'support_resistance'" class="batch-hint">
+          撑压线策略批量加入后，还需要到市场监听页面逐只补充点位配置。
+        </p>
+      </div>
+
+      <template #footer>
+        <div class="dialog-actions">
+          <button class="btn-cancel" @click="batchDialogVisible = false">取消</button>
+          <button
+            class="btn-confirm"
+            :disabled="!selectedStrategyType || batchAdding"
+            @click="handleBatchAddStrategy"
+          >
+            <Loading v-if="batchAdding" class="spinning" />
+            <span>{{ batchAdding ? '加入中...' : '确认加入' }}</span>
+          </button>
+        </div>
+      </template>
+    </ElDialog>
     
     <!-- 添加股票弹窗 -->
     <ElDialog
@@ -534,6 +696,7 @@ $color-primary: #3b82f6;
   display: flex;
   align-items: baseline;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
 .title-section {
@@ -559,6 +722,14 @@ $color-primary: #3b82f6;
   font-size: 14px;
   color: var(--text-tertiary);
   background: var(--bg-tertiary);
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.selected-count {
+  font-size: 14px;
+  color: #1d4ed8;
+  background: rgba(59, 130, 246, 0.1);
   padding: 4px 12px;
   border-radius: 12px;
 }
@@ -642,6 +813,31 @@ $color-primary: #3b82f6;
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.monitor-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  border-radius: 10px;
+  color: #0369a1;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover:not(:disabled) {
+    background: rgba(14, 165, 233, 0.18);
+    transform: translateY(-1px);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 
 .icon-btn {
@@ -785,12 +981,22 @@ $color-primary: #3b82f6;
 }
 
 .col {
+  &.col-select {
+    width: 48px;
+    display: flex;
+    justify-content: center;
+    flex: none;
+  }
   &.col-name { flex: 2; min-width: 180px; }
   &.col-price { flex: 1; min-width: 100px; text-align: right; }
   &.col-change { flex: 1; min-width: 120px; display: flex; justify-content: center; }
   &.col-vol { flex: 1; min-width: 100px; text-align: right; }
   &.col-amount { flex: 1; min-width: 100px; text-align: right; }
   &.col-actions { width: 120px; display: flex; justify-content: flex-end; }
+}
+
+.select-cell {
+  cursor: default;
 }
 
 // 股票名称
@@ -1093,6 +1299,40 @@ $color-primary: #3b82f6;
   }
 }
 
+.dialog-select {
+  width: 100%;
+}
+
+.batch-summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  border-radius: 12px;
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--text-primary);
+}
+
+.strategy-option {
+  display: grid;
+  gap: 4px;
+
+  small {
+    color: var(--text-tertiary);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}
+
+.batch-hint {
+  margin: 14px 0 0;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .suggestion-item {
   display: flex;
   justify-content: space-between;
@@ -1234,6 +1474,10 @@ $color-primary: #3b82f6;
   .toolbar-left {
     flex-wrap: wrap;
   }
+
+  .toolbar-right {
+    flex-wrap: wrap;
+  }
   
   .search-box {
     min-width: 100%;
@@ -1256,6 +1500,7 @@ $color-primary: #3b82f6;
   }
   
   .col {
+    &.col-select { width: 40px; }
     &.col-name { flex: 1; min-width: 120px; }
     &.col-price { min-width: auto; }
     &.col-change { min-width: auto; }
