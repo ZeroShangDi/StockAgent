@@ -201,6 +201,39 @@ export interface SectorScatterResult {
   zones: ScatterZone[]
 }
 
+export interface MarketWeatherSignal {
+  做不做: string
+  做多少: number
+  做什么: string
+  说明: string
+}
+
+export interface MarketWeatherRecord {
+  trade_date: string
+  display_trade_date: string
+  source: string
+  indicator: Record<string, any>
+  signal: MarketWeatherSignal
+  temperature_index: number
+  limit_premium_factor: number
+  trend_factor: number
+  volume_factor: number
+  breadth_factor: number
+  momentum_factor: number
+}
+
+export interface MarketWeatherHistoryResult {
+  history: MarketWeatherRecord[]
+}
+
+export interface MarketWeatherSyncResult {
+  requested: number
+  success: number
+  skipped: number
+  failed: number
+  errors: { trade_date: string; error: string }[]
+}
+
 export const marketApi = {
   /**
    * 获取最新市场数据
@@ -257,6 +290,24 @@ export const marketApi = {
    */
   getSectorScatter: (tradeDate?: string) =>
     api.get<SectorScatterResult>('/market/sector-scatter', { params: { trade_date: tradeDate } }),
+
+  /**
+   * 获取最新市场晴雨表
+   */
+  getMarketWeatherLatest: () =>
+    api.get<MarketWeatherRecord>('/market/weather/latest'),
+
+  /**
+   * 获取市场晴雨表历史
+   */
+  getMarketWeatherHistory: (days: number = 30) =>
+    api.get<MarketWeatherHistoryResult>('/market/weather/history', { params: { days } }),
+
+  /**
+   * 同步市场晴雨表历史
+   */
+  syncMarketWeather: (days: number = 30, overwrite: boolean = false) =>
+    api.post<MarketWeatherSyncResult>('/market/weather/sync', null, { params: { days, overwrite } }),
 
   // ==================== 热点新闻 ====================
 

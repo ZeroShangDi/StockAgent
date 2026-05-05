@@ -304,6 +304,12 @@ class MongoManager(BaseManager):
             IndexModel([("trade_date", DESCENDING)], unique=True),
             IndexModel([("cycle", ASCENDING)]),
         ])
+
+        # 市场晴雨表日表
+        await self._safe_create_indexes("market_weather_daily", [
+            IndexModel([("trade_date", DESCENDING)], unique=True),
+            IndexModel([("temperature_index", DESCENDING)]),
+        ])
         
         # 新闻表
         await self._safe_create_indexes("news", [

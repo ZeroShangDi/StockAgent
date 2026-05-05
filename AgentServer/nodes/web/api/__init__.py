@@ -11,6 +11,7 @@ from .subscription import router as subscription_router
 from .backtest import router as backtest_router
 from .report import router as report_router
 from .system import router as system_router
+from .market_weather import router as market_weather_router
 
 __all__ = [
     "auth_router",
@@ -22,4 +23,5 @@ __all__ = [
     "backtest_router",
     "report_router",
     "system_router",
+    "market_weather_router",
 ]

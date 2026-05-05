@@ -17,7 +17,7 @@ from core.managers import (
     mongo_manager,
 )
 
-from .api import auth_router, user_router, task_router, stock_router, market_router, subscription_router, backtest_router, report_router, system_router
+from .api import auth_router, user_router, task_router, stock_router, market_router, subscription_router, backtest_router, report_router, system_router, market_weather_router
 from .websocket import websocket_router
 
 
@@ -96,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(task_router, prefix="/api/v1/tasks", tags=["任务"])
     app.include_router(stock_router, prefix="/api/v1/stocks", tags=["股票"])
     app.include_router(market_router, prefix="/api/v1", tags=["市场分析"])
+    app.include_router(market_weather_router, prefix="/api/v1", tags=["市场晴雨表"])
     app.include_router(subscription_router, prefix="/api/v1/strategy/subscriptions", tags=["策略订阅"])
     app.include_router(backtest_router, prefix="/api/v1", tags=["量化回测"])
     app.include_router(report_router, prefix="/api/v1/reports", tags=["报告回顾"])

@@ -70,6 +70,7 @@ const activeTaskCount = computed(() => taskStore.activeTaskCount)
 const menuItems = [
   { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
   { path: '/market', icon: Histogram, title: '行情分析' },
+  { path: '/market-weather', icon: Histogram, title: '市场晴雨表' },
   { path: '/sector-strategy', icon: TrendCharts, title: '板块分析' },
   { path: '/hot-news', icon: Promotion, title: '热点追踪' },
   { path: '/reports', icon: Document, title: '报告回顾' },

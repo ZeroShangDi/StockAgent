@@ -162,6 +162,7 @@ class CozeSettings(BaseSettings):
     api_base: str = "https://api.coze.cn"
     workflow_id: str = "7635993821533487155"
     space_id: str = "7492401860964810793"
+    market_indicator_workflow_id: str = "7587701552685629494"
     app_id: Optional[str] = None
     bot_id: Optional[str] = None
     timeout: float = 30.0
