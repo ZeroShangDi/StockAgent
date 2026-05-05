@@ -310,6 +310,21 @@ class MongoManager(BaseManager):
             IndexModel([("trade_date", DESCENDING)], unique=True),
             IndexModel([("temperature_index", DESCENDING)]),
         ])
+
+        # 一句话选股查询记录
+        await self._safe_create_indexes("stock_picker_runs", [
+            IndexModel([("run_id", ASCENDING)], unique=True),
+            IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)]),
+        ])
+
+        # 股池
+        await self._safe_create_indexes("stock_pools", [
+            IndexModel([("pool_id", ASCENDING)], unique=True),
+            IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("pool_type", ASCENDING)]),
+            IndexModel([("updated_at", DESCENDING)]),
+        ])
         
         # 新闻表
         await self._safe_create_indexes("news", [

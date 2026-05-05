@@ -78,6 +78,7 @@ const menuItems = [
   { path: '/factor-selection', icon: DataAnalysis, title: '因子选股' },
   { path: '/analysis', icon: DataAnalysis, title: '分析任务' },
   { path: '/watchlist', icon: Star, title: '自选股' },
+  { path: '/stock-picker', icon: DataAnalysis, title: '一句话选股' },
   { path: '/strategies', icon: TrendCharts, title: '市场监听' },
   { path: '/system-status', icon: WarningFilled, title: '能力状态' },
   { path: '/settings', icon: Setting, title: '设置' },
