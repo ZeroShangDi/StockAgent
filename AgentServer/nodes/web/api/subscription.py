@@ -44,34 +44,28 @@ STRATEGY_META = {
         "name": "5日线低吸",
         "description": "当价格触及5日均线时提醒，适合低吸策略",
         "default_params": {
-            "touch_range": 2,
-            "max_break_pct": 3,
-            "require_stabilize": False,
+            "touch_range": 2.0,
+            "stable_periods": 2,
         },
         "param_schema": [
-            {"key": "touch_range", "label": "触及范围 (%)", "type": "number", "default": 2},
-            {"key": "max_break_pct", "label": "最大跌破 (%)", "type": "number", "default": 3},
-            {"key": "require_stabilize", "label": "需要企稳", "type": "boolean", "default": False},
+            {"key": "touch_range", "label": "触及范围 (%)", "type": "float", "default": 2.0},
+            {"key": "stable_periods", "label": "企稳周期数", "type": "number", "default": 2},
         ],
     },
     StrategyType.LIMIT_OPEN.value: {
         "name": "涨跌停打开",
         "description": "涨停或跌停打开时提醒，适合打板策略",
-        "default_params": {
-            "open_threshold": 2,
-        },
-        "param_schema": [
-            {"key": "open_threshold", "label": "开板阈值 (%)", "type": "number", "default": 2},
-        ],
+        "default_params": {},
+        "param_schema": [],
     },
     StrategyType.PRICE_CHANGE.value: {
         "name": "涨跌幅阈值",
         "description": "涨跌幅超过阈值时提醒",
         "default_params": {
-            "change_threshold": 5,
+            "threshold": 5.0,
         },
         "param_schema": [
-            {"key": "change_threshold", "label": "涨跌阈值 (%)", "type": "number", "default": 5},
+            {"key": "threshold", "label": "涨跌阈值 (%)", "type": "float", "default": 5.0},
         ],
     },
 }

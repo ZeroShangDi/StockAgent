@@ -150,3 +150,31 @@ class BaseStrategy(ABC):
             trigger_reason=reason,
             extra_data=extra_data or {},
         )
+
+    def _get_numeric_param(
+        self,
+        params: Dict[str, Any],
+        primary_key: str,
+        default: float,
+        *aliases: str,
+    ) -> float:
+        """读取数值参数，兼容历史字段名。"""
+        for key in (primary_key, *aliases):
+            value = params.get(key)
+            if value is None:
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return float(default)
+
+    def _normalize_percent_value(self, value: float) -> float:
+        """
+        将百分比参数统一转换为小数。
+
+        兼容两种输入方式：
+        - 0.02 表示 2%
+        - 2 表示 2%
+        """
+        return value / 100 if value > 1 else value

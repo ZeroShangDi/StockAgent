@@ -69,12 +69,13 @@ class NotificationManager(BaseManager):
         """健康检查"""
         return self._initialized
     
-    async def send_alert(self, alert: StrategyAlert) -> bool:
+    async def send_alert(self, alert: StrategyAlert, dry_run: bool = False) -> bool:
         """
         发送策略预警消息
         
         Args:
             alert: 预警对象
+            dry_run: 仅构建并记录消息，不实际发送
             
         Returns:
             是否发送成功
@@ -83,6 +84,13 @@ class NotificationManager(BaseManager):
             f"[NOTIFY] send_alert called: ts_code={alert.ts_code}, "
             f"strategy={alert.strategy_name}, reason={alert.trigger_reason[:30]}..."
         )
+        
+        text_content = self.preview_alert(alert)
+        if dry_run:
+            self.logger.info(
+                f"[NOTIFY] Dry-run alert preview generated successfully, length={len(text_content)}"
+            )
+            return True
         
         if not self._config.enabled:
             self.logger.warning("[NOTIFY] Notification disabled (config.enabled=False)")
@@ -105,7 +113,6 @@ class NotificationManager(BaseManager):
                     return False
         
         # 构建消息（使用纯文本格式，兼容性更好）
-        text_content = self._build_alert_text(alert)
         self.logger.info(f"[NOTIFY] Sending text message, length={len(text_content)}")
         
         success = await self.send_text(text_content)
@@ -118,6 +125,10 @@ class NotificationManager(BaseManager):
             self.logger.error(f"[NOTIFY] Failed to send alert: {alert.ts_code}")
         
         return success
+
+    def preview_alert(self, alert: StrategyAlert) -> str:
+        """生成策略预警的文本预览，用于本地验证或 dry-run。"""
+        return self._build_alert_text(alert)
     
     async def send_markdown(
         self, 

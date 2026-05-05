@@ -8,7 +8,7 @@ Listener 节点
 """
 
 import asyncio
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Iterable
 from datetime import datetime, date, time
 import uuid
 import logging
@@ -248,7 +248,7 @@ class ListenerNode(BaseNode):
         await self._fetch_limit_prices_if_needed()
         
         # 2. 获取三大指数实时行情
-        index_quotes = await data_source_manager.get_realtime_index_quotes()
+        index_quotes, index_source = await data_source_manager.get_realtime_index_quotes()
         
         # 3. 获取需要监听的股票列表
         watch_codes = self._get_all_watch_codes()
@@ -263,10 +263,17 @@ class ListenerNode(BaseNode):
         
         # 4. 获取实时行情 (分批获取，每批50只)
         self.logger.info(f"[poll] Fetching realtime quotes for {len(watch_codes)} stocks...")
-        quotes = await data_source_manager.get_realtime_quotes(watch_codes, batch_size=50)
+        quotes, quote_source = await data_source_manager.get_realtime_quotes(
+            watch_codes,
+            batch_size=50,
+        )
         if not quotes:
             self.logger.warning("Failed to get realtime quotes")
             return
+        
+        self.logger.info(
+            f"[poll] Quote sources: stocks={quote_source or '-'}, indexes={index_source or '-'}"
+        )
         
         # 5. 构建市场快照
         self._previous_snapshot = self._current_snapshot
@@ -339,7 +346,7 @@ class ListenerNode(BaseNode):
         self.logger.info(f"Fetching limit prices for {today}...")
         
         try:
-            limit_data = await data_source_manager.get_stk_limit(trade_date=today)
+            limit_data, limit_source = await data_source_manager.get_stk_limit(trade_date=today)
             
             if limit_data:
                 original_count = len(limit_data)
@@ -371,7 +378,8 @@ class ListenerNode(BaseNode):
                 self._last_limit_fetch_date = today
                 self.logger.info(
                     f"Loaded {len(self._limit_stocks)} limit prices "
-                    f"(original={original_count}, filtered_not_in_db={filtered_count}, st={st_count})"
+                    f"(source={limit_source or '-'}, original={original_count}, "
+                    f"filtered_not_in_db={filtered_count}, st={st_count})"
                 )
             else:
                 self.logger.warning("No limit price data returned")
@@ -411,7 +419,10 @@ class ListenerNode(BaseNode):
         
         return list(watch_set)
     
-    def _build_snapshot(self, quotes: List[Dict[str, Any]]) -> MarketSnapshot:
+    def _build_snapshot(
+        self,
+        quotes: Dict[str, Dict[str, Any]] | List[Dict[str, Any]],
+    ) -> MarketSnapshot:
         """
         构建市场快照
         
@@ -423,17 +434,25 @@ class ListenerNode(BaseNode):
         """
         snapshot = MarketSnapshot()
         
+        quote_items: Iterable[Dict[str, Any]]
+        if isinstance(quotes, dict):
+            quote_items = quotes.values()
+        else:
+            quote_items = quotes
+        
+        quote_list = list(quote_items)
+        
         # 调试日志：查看输入数据
-        self.logger.info(f"[build_snapshot] Input quotes count: {len(quotes)}")
-        if quotes and len(quotes) > 0:
-            sample = quotes[0]
+        self.logger.info(f"[build_snapshot] Input quotes count: {len(quote_list)}")
+        if quote_list:
+            sample = quote_list[0]
             self.logger.info(f"[build_snapshot] Sample quote keys: {list(sample.keys())[:10]}")
         
         up_count = 0
         down_count = 0
         no_ts_code_count = 0
         
-        for quote in quotes:
+        for quote in quote_list:
             # ts_code 可能是大写或小写
             ts_code = quote.get("ts_code") or quote.get("TS_CODE", "")
             if not ts_code:

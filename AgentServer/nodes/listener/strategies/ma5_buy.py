@@ -89,8 +89,12 @@ class MA5BuyStrategy(BaseStrategy):
         alerts = []
         
         # 获取参数
-        touch_range = subscription.params.get("touch_range", 0.02)
-        stable_periods = subscription.params.get("stable_periods", 2)
+        touch_range = self._normalize_percent_value(
+            self._get_numeric_param(subscription.params, "touch_range", 0.02)
+        )
+        stable_periods = int(
+            self._get_numeric_param(subscription.params, "stable_periods", 2.0)
+        )
         once_per_day = subscription.params.get("once_per_day", True)
         
         # 确保缓存数据是今天的

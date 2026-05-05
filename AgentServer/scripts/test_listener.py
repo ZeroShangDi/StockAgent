@@ -9,11 +9,13 @@ Listener 节点测试脚本
 使用方式:
     cd AgentServer
     python scripts/test_listener.py
+    python scripts/test_listener.py --notify-dry-run --skip-db --skip-data-source
 """
 
 import asyncio
 import sys
 import os
+import argparse
 
 # 添加项目根目录到 path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,27 +25,19 @@ from core.managers import mongo_manager, data_source_manager
 from core.managers.notification_manager import notification_manager
 from core.protocols import (
     StrategySubscription,
-    StrategyAlert,
     MarketSnapshot,
     StrategyType,
 )
 from nodes.listener.strategies import PriceChangeStrategy, MA5BuyStrategy
 
 
-async def test_create_subscription():
-    """测试创建策略订阅配置"""
-    print("\n=== 1. 测试创建策略订阅 ===")
-    
-    await mongo_manager.initialize()
-    
-    # 创建一个 "涨幅超过 3%" 的策略订阅
-    # 注意: watch_list 必须明确指定股票代码，空列表不会触发任何监听
-    # 如需全市场监听，必须包含 "ALL" 标识
-    subscription = StrategySubscription(
+def build_price_change_subscription() -> StrategySubscription:
+    """构造涨跌幅策略订阅"""
+    return StrategySubscription(
         strategy_id="test_price_change_3pct",
         strategy_name="涨幅超过3%预警",
         strategy_type=StrategyType.PRICE_CHANGE,
-        watch_list=["000001.SZ", "600000.SH", "000815.SZ"],  # 指定个股
+        watch_list=["000001.SZ", "600000.SH", "000815.SZ"],
         params={
             "threshold": 3.0,
             "direction": "both",
@@ -52,26 +46,35 @@ async def test_create_subscription():
         is_active=True,
         user_id="test_user",
     )
+
+
+async def test_create_subscription(persist: bool = True):
+    """测试创建策略订阅配置"""
+    print("\n=== 1. 测试创建策略订阅 ===")
+    subscription = build_price_change_subscription()
     
-    # 存储到 MongoDB
-    await mongo_manager.update_one(
-        "strategy_subscriptions",
-        {"strategy_id": subscription.strategy_id},
-        {"$set": subscription.model_dump(mode="json")},
-        upsert=True,
-    )
+    if persist:
+        await mongo_manager.initialize()
+        await mongo_manager.update_one(
+            "strategy_subscriptions",
+            {"strategy_id": subscription.strategy_id},
+            {"$set": subscription.model_dump(mode="json")},
+            upsert=True,
+        )
     
     print(f"✓ 创建订阅: {subscription.strategy_name}")
     print(f"  策略ID: {subscription.strategy_id}")
     print(f"  监听股票: {subscription.watch_list}")
     print(f"  阈值: {subscription.params.get('threshold')}%")
     
-    # 验证存储
-    record = await mongo_manager.find_one(
-        "strategy_subscriptions",
-        {"strategy_id": subscription.strategy_id},
-    )
-    print(f"✓ 存储验证: {record is not None}")
+    if persist:
+        record = await mongo_manager.find_one(
+            "strategy_subscriptions",
+            {"strategy_id": subscription.strategy_id},
+        )
+        print(f"✓ 存储验证: {record is not None}")
+    else:
+        print("✓ 跳过 MongoDB 持久化，使用内存订阅继续验证")
     
     return subscription
 
@@ -130,22 +133,34 @@ async def test_price_change_strategy(subscription: StrategySubscription):
     return alerts
 
 
-async def test_notification(alerts: list):
+async def test_notification(alerts: list, dry_run: bool = False):
     """测试企业微信通知推送"""
     print("\n=== 3. 测试企业微信通知 ===")
+    if not alerts:
+        print("⚠ 没有可发送的预警，跳过通知测试")
+        return
     
     await notification_manager.initialize()
+    alert = alerts[0]
+    preview = notification_manager.preview_alert(alert)
+    
+    print("预警内容预览:")
+    print("-" * 40)
+    print(preview)
+    print("-" * 40)
+    
+    if dry_run:
+        success = await notification_manager.send_alert(alert, dry_run=True)
+        print(f"✓ dry-run 通知验证: {'成功' if success else '失败'}")
+        return
     
     if not notification_manager._config.is_configured:
-        print("⚠ 未配置 NOTIFY_WECOM_WEBHOOK，跳过通知测试")
+        print("⚠ 未配置 NOTIFY_WECOM_WEBHOOK，已完成预览验证")
         print("  请在 .env 中设置: NOTIFY_WECOM_WEBHOOK=https://qyapi.weixin.qq.com/...")
         return
     
-    # 发送第一个预警
-    if alerts:
-        alert = alerts[0]
-        success = await notification_manager.send_alert(alert)
-        print(f"✓ 发送预警: {alert.stock_name} -> {'成功' if success else '失败'}")
+    success = await notification_manager.send_alert(alert)
+    print(f"✓ 发送预警: {alert.stock_name} -> {'成功' if success else '失败'}")
 
 
 async def test_ma5_buy_strategy():
@@ -159,21 +174,12 @@ async def test_ma5_buy_strategy():
         strategy_type=StrategyType.MA5_BUY,
         watch_list=["000001.SZ", "600000.SH"],
         params={
-            "ma_period": 5,         # 均线周期
-            "touch_range": 0.02,    # 触及范围 ±2%
-            "max_break_pct": 0.03,  # 最大跌破 3%
-            "require_stabilize": True,  # 需要企稳信号
+            "touch_range": 2.0,      # 触及范围 ±2%
+            "stable_periods": 2,     # 连续两个轮询周期站稳
+            "once_per_day": True,
         },
         is_active=True,
         user_id="test_user",
-    )
-    
-    # 存储到 MongoDB
-    await mongo_manager.update_one(
-        "strategy_subscriptions",
-        {"strategy_id": subscription.strategy_id},
-        {"$set": subscription.model_dump(mode="json")},
-        upsert=True,
     )
     
     print(f"✓ 创建5日线低吸订阅: {subscription.strategy_name}")
@@ -196,7 +202,8 @@ async def test_ma5_buy_strategy():
     }
     
     # 模拟缓存数据 (正常情况从 MongoDB 获取)
-    strategy._stock_cache["000001.SZ"] = {
+    strategy._cache_date = datetime.now().strftime("%Y%m%d")
+    strategy._stock_data["000001.SZ"] = {
         "ma5": 10.0,        # 5日均线
         "prev_close": 10.3,  # 昨收在 MA5 上方
     }
@@ -248,7 +255,7 @@ async def test_data_source_apis():
         print("  注意: 此接口可能需要较高权限")
 
 
-async def main():
+async def main(skip_db: bool, skip_data_source: bool, notify_dry_run: bool):
     """主测试流程"""
     print("=" * 50)
     print("Listener 节点测试")
@@ -256,19 +263,23 @@ async def main():
     
     try:
         # 1. 测试创建订阅
-        subscription = await test_create_subscription()
+        subscription = await test_create_subscription(persist=not skip_db)
         
         # 2. 测试策略识别
         alerts = await test_price_change_strategy(subscription)
         
         # 3. 测试通知推送
-        await test_notification(alerts)
+        await test_notification(alerts, dry_run=notify_dry_run)
         
         # 4. 测试5日线低吸策略
         await test_ma5_buy_strategy()
         
         # 5. 测试数据源接口
-        await test_data_source_apis()
+        if skip_data_source:
+            print("\n=== 5. 测试数据源实时接口 ===")
+            print("⚠ 已按参数跳过数据源接口测试")
+        else:
+            await test_data_source_apis()
         
         print("\n" + "=" * 50)
         print("✓ 所有测试完成!")
@@ -276,7 +287,7 @@ async def main():
         
         print("\n启动 Listener 节点:")
         print("  cd AgentServer")
-        print("  $env:NODE_TYPE='listener'; python main.py")
+        print("  NODE_TYPE=listener python main.py")
         
     except Exception as e:
         print(f"\n✗ 测试失败: {e}")
@@ -290,4 +301,27 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="验证 Listener 节点主链路")
+    parser.add_argument(
+        "--skip-db",
+        action="store_true",
+        help="跳过 MongoDB 持久化验证，仅使用内存订阅",
+    )
+    parser.add_argument(
+        "--skip-data-source",
+        action="store_true",
+        help="跳过实时数据源接口验证",
+    )
+    parser.add_argument(
+        "--notify-dry-run",
+        action="store_true",
+        help="通知只做 dry-run 预览，不实际调用企业微信 Webhook",
+    )
+    args = parser.parse_args()
+    asyncio.run(
+        main(
+            skip_db=args.skip_db,
+            skip_data_source=args.skip_data_source,
+            notify_dry_run=args.notify_dry_run,
+        )
+    )

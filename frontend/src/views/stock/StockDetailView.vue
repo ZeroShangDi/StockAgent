@@ -11,7 +11,7 @@ import {
   ArrowLeft, Star, StarFilled, TrendCharts, Bell, Document, 
   Histogram, Clock, ArrowUp, ArrowDown, Refresh
 } from '@element-plus/icons-vue'
-import type { StockQuote, StrategySubscription, StockDaily } from '@/api/types'
+import type { StockQuote, StrategySubscription, StockDaily, StrategyTypeInfo } from '@/api/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -62,11 +62,14 @@ const isSubscribedToAny = computed(() => subscribedStrategyIds.value.size > 0)
 async function loadSubscriptions(): Promise<void> {
   loadingSubscriptions.value = true
   try {
-    const subs = await subscriptionApi.getSubscriptions({ is_active: true })
-    activeSubscriptions.value = subs
+    const [strategyTypes, existingSubs] = await Promise.all([
+      subscriptionApi.getStrategyTypes(),
+      subscriptionApi.getSubscriptions({ is_active: true }),
+    ])
+    activeSubscriptions.value = await ensureSubscriptions(strategyTypes, existingSubs)
     
     const subscribedTypes = new Set<string>()
-    for (const sub of subs) {
+    for (const sub of activeSubscriptions.value) {
       if (sub.watch_list.includes(tsCode.value)) {
         subscribedTypes.add(sub.strategy_type)
       }
@@ -77,6 +80,29 @@ async function loadSubscriptions(): Promise<void> {
   } finally {
     loadingSubscriptions.value = false
   }
+}
+
+async function ensureSubscriptions(
+  strategyTypes: StrategyTypeInfo[],
+  existingSubs: StrategySubscription[],
+): Promise<StrategySubscription[]> {
+  const existingMap = new Map(existingSubs.map(sub => [sub.strategy_type, sub]))
+  const missingTypes = strategyTypes
+    .map(item => item.type)
+    .filter(type => !existingMap.has(type))
+
+  if (missingTypes.length === 0) {
+    return existingSubs
+  }
+
+  const hydratedSubs = await Promise.all(
+    missingTypes.map(type => subscriptionApi.getSubscriptionByType(type))
+  )
+  const allSubs = [...existingSubs, ...hydratedSubs].filter(sub => sub.is_active)
+
+  return strategyTypes
+    .map(item => allSubs.find(sub => sub.strategy_type === item.type))
+    .filter((sub): sub is StrategySubscription => Boolean(sub))
 }
 
 function openSubscribeDialog(): void {

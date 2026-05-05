@@ -59,7 +59,12 @@ class PriceChangeStrategy(BaseStrategy):
         alerts = []
         
         # 获取参数
-        threshold = subscription.params.get("threshold", 3.0)
+        threshold = self._get_numeric_param(
+            subscription.params,
+            "threshold",
+            3.0,
+            "change_threshold",
+        )
         direction = subscription.params.get("direction", "both")
         once_per_day = subscription.params.get("once_per_day", True)
         

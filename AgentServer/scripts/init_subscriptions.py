@@ -26,23 +26,23 @@ STRATEGIES = [
         "strategy_type": StrategyType.MA5_BUY.value,
         "strategy_name": "5日线低吸",
         "params": {
-            "touch_range": 2,
-            "max_break_pct": 3,
-            "require_stabilize": False,
+            "touch_range": 2.0,
+            "stable_periods": 2,
+            "once_per_day": True,
         },
     },
     {
         "strategy_type": StrategyType.LIMIT_OPEN.value,
         "strategy_name": "涨跌停打开",
-        "params": {
-            "open_threshold": 2,
-        },
+        "params": {},
     },
     {
         "strategy_type": StrategyType.PRICE_CHANGE.value,
         "strategy_name": "涨跌幅阈值",
         "params": {
-            "change_threshold": 5,
+            "threshold": 5.0,
+            "direction": "both",
+            "once_per_day": True,
         },
     },
 ]
@@ -178,7 +178,7 @@ async def main():
         await init_strategies()
         await show_current_state()
     finally:
-        await mongo_manager.close()
+        await mongo_manager.shutdown()
 
 
 if __name__ == "__main__":
