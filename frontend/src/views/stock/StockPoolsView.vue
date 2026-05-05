@@ -41,15 +41,34 @@
               <p class="detail-desc">{{ activePool.description || '暂无备注' }}</p>
             </div>
             <div class="detail-meta">
-              <el-button
-                type="primary"
-                plain
-                size="small"
-                :disabled="selectedPoolStocks.length === 0"
-                @click="openBatchDialog"
-              >
-                批量加入监听
-              </el-button>
+              <div class="detail-actions">
+                <el-button
+                  type="primary"
+                  plain
+                  size="small"
+                  :disabled="selectedPoolStocks.length === 0"
+                  @click="openBatchDialog"
+                >
+                  批量加入监听
+                </el-button>
+                <el-button
+                  type="danger"
+                  plain
+                  size="small"
+                  :disabled="selectedPoolStocks.length === 0"
+                  @click="handleRemoveSelectedStocks"
+                >
+                  移除已选股票
+                </el-button>
+                <el-button
+                  type="danger"
+                  size="small"
+                  :disabled="!activePool"
+                  @click="handleDeletePool"
+                >
+                  删除股池
+                </el-button>
+              </div>
               <span>股票数 {{ activePool.stock_count }}</span>
               <span v-if="selectedPoolStocks.length > 0">已勾选 {{ selectedPoolStocks.length }} 只</span>
               <span v-if="activePool.updated_at">更新于 {{ formatDateTime(activePool.updated_at) }}</span>
@@ -133,7 +152,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { stockPickerApi, subscriptionApi } from '@/api'
 import type { StockPoolDetail, StockPoolSummary } from '@/api/modules/stock-picker'
@@ -228,6 +247,64 @@ async function handleBatchAddStrategy(): Promise<void> {
   } finally {
     batchAdding.value = false
   }
+}
+
+async function handleRemoveSelectedStocks(): Promise<void> {
+  if (!activePool.value || selectedPoolStocks.value.length === 0) {
+    ElMessage.warning('请先勾选要移除的股票')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确认从股池“${activePool.value.name}”中移除已勾选的 ${selectedPoolStocks.value.length} 只股票吗？`,
+      '移除股票确认',
+      {
+        type: 'warning',
+        confirmButtonText: '确认移除',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+
+  const response = await stockPickerApi.removeStocksFromPool(
+    activePool.value.pool_id,
+    selectedPoolStocks.value.map((item) => item.ts_code),
+  )
+  ElMessage.success(response.message)
+  await selectPool(activePool.value.pool_id)
+  await loadPools()
+}
+
+async function handleDeletePool(): Promise<void> {
+  if (!activePool.value) {
+    ElMessage.warning('当前没有可删除的股池')
+    return
+  }
+
+  const deletingPool = activePool.value
+  try {
+    await ElMessageBox.confirm(
+      `确认删除股池“${deletingPool.name}”吗？删除后池内股票记录也会一并移除。`,
+      '删除股池确认',
+      {
+        type: 'warning',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+
+  const response = await stockPickerApi.deletePool(deletingPool.pool_id)
+  ElMessage.success(response.message)
+  activePoolId.value = ''
+  activePool.value = null
+  selectedPoolStocks.value = []
+  await loadPools()
 }
 
 loadPools()
@@ -331,6 +408,13 @@ h2 {
   text-align: right;
 }
 
+.detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .dialog-body {
   display: grid;
   gap: 18px;
@@ -401,6 +485,10 @@ h2 {
 
   .detail-meta {
     text-align: left;
+  }
+
+  .detail-actions {
+    justify-content: flex-start;
   }
 }
 </style>

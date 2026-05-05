@@ -5,7 +5,7 @@ import { useUserStore } from '@/stores/user'
 import { useMarketStore } from '@/stores/market'
 import { useTask } from '@/hooks'
 import { stockApi, subscriptionApi } from '@/api'
-import { ElMessage, ElDialog, ElAutocomplete, ElDropdown, ElDropdownMenu, ElDropdownItem, ElCheckbox, ElSelect, ElOption } from 'element-plus'
+import { ElMessage, ElMessageBox, ElDialog, ElAutocomplete, ElDropdown, ElDropdownMenu, ElDropdownItem, ElCheckbox, ElSelect, ElOption } from 'element-plus'
 import { Plus, Delete, Search, ArrowUp, ArrowDown, TrendCharts, View, Sort, Refresh, Star, Loading, Bell } from '@element-plus/icons-vue'
 import type { StockQuote, StockBasic, StrategyTypeInfo } from '@/api/types'
 
@@ -193,7 +193,11 @@ function formatAmount(amount?: number): string {
 
 async function removeFromWatchlist(e: Event, tsCode: string) {
   e.stopPropagation()
-  await userStore.removeFromWatchlist(tsCode)
+  const success = await userStore.removeFromWatchlist(tsCode)
+  if (!success) {
+    ElMessage.error('移除失败')
+    return
+  }
   quotes.value.delete(tsCode)
   selectedWatchlist.value = selectedWatchlist.value.filter(code => code !== tsCode)
   ElMessage.success('已移除')
@@ -319,6 +323,41 @@ async function handleBatchAddStrategy(): Promise<void> {
   }
 }
 
+async function handleBatchRemove(): Promise<void> {
+  if (selectedWatchlist.value.length === 0) {
+    ElMessage.warning('请先勾选要移除的股票')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确认从自选股中移除已勾选的 ${selectedWatchlist.value.length} 只股票吗？`,
+      '批量移除确认',
+      {
+        type: 'warning',
+        confirmButtonText: '确认移除',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+
+  const results = await Promise.all(selectedWatchlist.value.map((tsCode) => userStore.removeFromWatchlist(tsCode)))
+  const removedCodes = selectedWatchlist.value.filter((_, index) => results[index])
+  const failedCount = results.length - removedCodes.length
+
+  removedCodes.forEach((code) => quotes.value.delete(code))
+  selectedWatchlist.value = []
+
+  if (removedCodes.length > 0) {
+    ElMessage.success(`已移除 ${removedCodes.length} 只股票${failedCount > 0 ? `，失败 ${failedCount} 只` : ''}`)
+    return
+  }
+
+  ElMessage.error('批量移除失败')
+}
+
 // 排序选项
 const sortOptions = [
   { label: '默认排序', value: 'default' },
@@ -385,6 +424,11 @@ function getSortLabel(): string {
         <button class="monitor-btn" :disabled="selectedCount === 0" @click="openBatchDialog">
           <ElIcon><Bell /></ElIcon>
           <span>批量监听</span>
+        </button>
+
+        <button class="danger-btn" :disabled="selectedCount === 0" @click="handleBatchRemove">
+          <ElIcon><Delete /></ElIcon>
+          <span>批量移除</span>
         </button>
 
         <!-- 刷新 -->
@@ -831,6 +875,31 @@ $color-primary: #3b82f6;
 
   &:hover:not(:disabled) {
     background: rgba(14, 165, 233, 0.18);
+    transform: translateY(-1px);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.danger-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.16);
+  border-radius: 10px;
+  color: #b91c1c;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.16);
     transform: translateY(-1px);
   }
 

@@ -74,6 +74,12 @@ export interface AddStocksToPoolResult {
   pool: StockPoolSummary
 }
 
+export interface RemoveStocksFromPoolResult {
+  message: string
+  removed: number
+  pool: StockPoolSummary
+}
+
 export const stockPickerApi = {
   query(input: string): Promise<StockPickerQueryResult> {
     return api.post('/stock-picker/query', { input })
@@ -93,6 +99,16 @@ export const stockPickerApi = {
 
   addStocksToPool(poolId: string, data: AddStocksToPoolRequest): Promise<AddStocksToPoolResult> {
     return api.post(`/stock-picker/pools/${poolId}/stocks`, data)
+  },
+
+  removeStocksFromPool(poolId: string, tsCodes: string[]): Promise<RemoveStocksFromPoolResult> {
+    return api.delete(`/stock-picker/pools/${poolId}/stocks`, {
+      data: { ts_codes: tsCodes },
+    })
+  },
+
+  deletePool(poolId: string): Promise<{ message: string; pool_id: string }> {
+    return api.delete(`/stock-picker/pools/${poolId}`)
   },
 }
 

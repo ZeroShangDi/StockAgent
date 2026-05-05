@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel, Field
 
 from core.managers import mongo_manager
@@ -40,6 +40,10 @@ class StockPoolAddRequest(BaseModel):
     source_run_id: Optional[str] = None
     source_query: Optional[str] = None
     source_module: str = "one_line_picker"
+
+
+class StockPoolRemoveRequest(BaseModel):
+    ts_codes: List[str] = Field(..., min_length=1, description="待移除的股票代码列表")
 
 
 def _pool_summary(pool: Dict[str, Any]) -> Dict[str, Any]:
@@ -163,5 +167,58 @@ async def add_stocks_to_pool(
     return {
         "message": f"已加入 {added} 只股票",
         "added": added,
+        "pool": _pool_summary(updated_pool or pool),
+    }
+
+
+@router.delete("/pools/{pool_id}")
+async def delete_stock_pool(
+    pool_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    pool = await mongo_manager.find_one("stock_pools", {"pool_id": pool_id, "user_id": user_id})
+    if not pool:
+        raise HTTPException(status_code=404, detail="股池不存在")
+
+    await mongo_manager.delete_one("stock_pools", {"pool_id": pool_id, "user_id": user_id})
+    return {
+        "message": f"已删除股池 {pool.get('name', pool_id)}",
+        "pool_id": pool_id,
+    }
+
+
+@router.delete("/pools/{pool_id}/stocks")
+async def remove_stocks_from_pool(
+    pool_id: str,
+    body: StockPoolRemoveRequest = Body(...),
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    pool = await mongo_manager.find_one("stock_pools", {"pool_id": pool_id, "user_id": user_id})
+    if not pool:
+        raise HTTPException(status_code=404, detail="股池不存在")
+
+    if not body.ts_codes:
+        raise HTTPException(status_code=400, detail="至少选择一只股票")
+
+    remove_set = {str(code or "").strip().upper() for code in body.ts_codes if str(code or "").strip()}
+    existing_stocks = pool.get("stocks", [])
+    filtered_stocks = [item for item in existing_stocks if str(item.get("ts_code", "")).upper() not in remove_set]
+    removed = len(existing_stocks) - len(filtered_stocks)
+
+    await mongo_manager.update_one(
+        "stock_pools",
+        {"pool_id": pool_id, "user_id": user_id},
+        {
+            "$set": {
+                "stocks": filtered_stocks,
+                "updated_at": datetime.now(UTC),
+            }
+        },
+    )
+
+    updated_pool = await mongo_manager.find_one("stock_pools", {"pool_id": pool_id, "user_id": user_id})
+    return {
+        "message": f"已移除 {removed} 只股票",
+        "removed": removed,
         "pool": _pool_summary(updated_pool or pool),
     }
