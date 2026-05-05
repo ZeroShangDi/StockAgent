@@ -63,6 +63,7 @@ const activeMenu = computed(() => {
   if (path.startsWith('/analysis')) return '/analysis'
   if (path.startsWith('/stock-picker')) return '/stock-picker'
   if (path.startsWith('/stock-pools')) return '/stock-pools'
+  if (path.startsWith('/kline-practice')) return '/kline-practice'
   if (path.startsWith('/stock')) return '/analysis'
   if (path.startsWith('/strategies')) return '/strategies'
   return path

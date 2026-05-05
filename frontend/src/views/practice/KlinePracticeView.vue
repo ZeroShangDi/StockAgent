@@ -1,274 +1,298 @@
 <template>
   <div class="practice-page">
-    <section class="hero-card">
-      <div>
-        <p class="eyebrow">Blind K-Line Practice</p>
-        <h1>盘感练习</h1>
-        <p class="description">
-          从本地历史日线中随机抽取一段样本，隐藏股票身份，只按已揭示的 K 线逐步决策，练买点、卖点和持仓节奏。
-        </p>
-      </div>
-      <div class="hero-actions">
-        <el-button
-          :loading="starting"
-          :disabled="loading || stepping || finishing || tradingAction !== ''"
-          type="primary"
-          @click="startSession(false)"
-        >
-          {{ session ? '重新开一局' : '开始练习' }}
-        </el-button>
-        <el-button
-          v-if="session"
-          :loading="loading"
-          :disabled="starting || stepping || finishing || tradingAction !== ''"
-          @click="loadLatestSession"
-        >
-          刷新状态
-        </el-button>
-      </div>
-    </section>
+    <section class="studio-shell">
+      <header class="studio-topbar">
+        <div class="title-stack">
+          <p class="eyebrow">Blind K-Line Studio</p>
+          <div class="title-row">
+            <h1>盘感练习</h1>
+            <el-tag :type="session?.is_revealed ? 'success' : 'info'">
+              {{ session?.is_revealed ? '已揭晓' : '双盲进行中' }}
+            </el-tag>
+            <el-tag v-if="session" effect="plain">{{ session.label }}</el-tag>
+          </div>
+        </div>
 
-    <section v-if="!session" class="empty-card">
-      <el-empty description="还没有进行中的练习，点上面的按钮直接开一局。">
-        <el-button
-          :loading="starting"
-          :disabled="loading || stepping || finishing || tradingAction !== ''"
-          type="primary"
-          @click="startSession(false)"
-        >
-          开始首局练习
-        </el-button>
-      </el-empty>
-    </section>
+        <div class="topbar-actions">
+          <div class="mode-switch">
+            <el-button size="small" disabled>沉浸模式</el-button>
+            <el-button type="primary" plain size="small" @click="goClassic">经典模式</el-button>
+          </div>
+          <el-button
+            :loading="starting"
+            :disabled="actionBusy"
+            type="primary"
+            @click="startSession(true)"
+          >
+            新开一局
+          </el-button>
+          <el-button
+            v-if="session"
+            :loading="finishing"
+            :disabled="!session || session.status !== 'active' || actionBusy"
+            type="danger"
+            plain
+            @click="finishSession"
+          >
+            揭晓答案
+          </el-button>
+          <el-button
+            :disabled="actionBusy"
+            @click="detailsVisible = true"
+          >
+            详情
+          </el-button>
+        </div>
+      </header>
 
-    <template v-else>
-      <section class="summary-grid">
-        <article class="metric-card">
-          <span class="metric-label">练习编号</span>
-          <strong>{{ session.label }}</strong>
-          <small>{{ session.is_revealed ? '已揭晓样本' : '双盲进行中' }}</small>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">推进进度</span>
-          <strong>{{ session.step }} / {{ session.total_steps }}</strong>
-          <small>当前显示到 {{ session.current_trade_date || '--' }}</small>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">总资产</span>
-          <strong>{{ formatCurrency(session.equity) }}</strong>
-          <small>初始资金 {{ formatCurrency(session.initial_capital) }}</small>
-        </article>
-        <article class="metric-card" :class="pnlClass(session.total_return_pct)">
-          <span class="metric-label">总收益率</span>
-          <strong>{{ formatPct(session.total_return_pct) }}</strong>
-          <small>已实现 {{ formatCurrency(session.realized_pnl) }}</small>
-        </article>
+      <section v-if="!session" class="empty-shell">
+        <el-empty description="还没有进行中的练习，开始一局就能进入沉浸模式。">
+          <el-button
+            :loading="starting"
+            :disabled="actionBusy"
+            type="primary"
+            @click="startSession(false)"
+          >
+            开始练习
+          </el-button>
+        </el-empty>
       </section>
 
-      <section class="workbench-grid">
-        <article class="chart-card">
-          <header class="section-header">
-            <div>
-              <h2>样本走势</h2>
-              <p>看得到过去，看不到未来；每次只多揭示一点。</p>
+      <template v-else>
+        <section class="status-ribbon">
+          <article class="status-pill">
+            <span>当前价</span>
+            <strong>{{ session.latest_close ? session.latest_close.toFixed(2) : '--' }}</strong>
+            <small>{{ session.current_trade_date || '--' }}</small>
+          </article>
+          <article class="status-pill" :class="pnlClass(currentPositionReturnPct)">
+            <span>当前操作盈亏</span>
+            <strong>{{ formatPct(currentPositionReturnPct) }}</strong>
+            <small>{{ session.position_shares > 0 ? `${session.position_shares} 股持仓` : '当前空仓' }}</small>
+          </article>
+          <article class="status-pill" :class="pnlClass(session.total_return_pct)">
+            <span>总盈亏</span>
+            <strong>{{ formatPct(session.total_return_pct) }}</strong>
+            <small>{{ session.position_shares > 0 ? '含浮动盈亏' : '已全部落袋' }}</small>
+          </article>
+          <article class="status-pill">
+            <span>进度</span>
+            <strong>{{ session.step }} / {{ session.total_steps }}</strong>
+            <div class="progress-line">
+              <div class="progress-fill" :style="{ width: `${progressPct}%` }"></div>
             </div>
-            <div class="chart-actions">
-              <el-button
-                :disabled="!session.can_step || loading"
-                :loading="stepping"
-                type="primary"
-                @click="stepSession(1)"
-              >
-                下一根
-              </el-button>
-              <el-button
-                :disabled="!session.can_step || loading"
-                :loading="stepping"
-                @click="stepSession(5)"
-              >
-                快进 5 根
-              </el-button>
-              <el-button
-                :disabled="session.status !== 'active' || loading"
-                :loading="finishing"
-                type="danger"
-                plain
-                @click="finishSession"
-              >
-                揭晓答案
-              </el-button>
-            </div>
-          </header>
+          </article>
+        </section>
+
+        <section class="action-ribbon">
+          <div class="allocation-switch">
+            <span class="action-label">仓位</span>
+            <el-radio-group v-model="tradeAllocation" size="small">
+              <el-radio-button :label="1">满仓</el-radio-button>
+              <el-radio-button :label="0.5">半仓</el-radio-button>
+              <el-radio-button :label="0.25">轻仓</el-radio-button>
+            </el-radio-group>
+          </div>
+
+          <div class="action-cluster">
+            <el-button
+              :disabled="!session.can_step || actionBusy"
+              :loading="stepping"
+              type="primary"
+              @click="stepSession(1)"
+            >
+              下一根
+              <span class="shortcut-hint">Space</span>
+            </el-button>
+            <el-button
+              :disabled="!session.can_step || actionBusy"
+              :loading="stepping"
+              @click="stepSession(5)"
+            >
+              快进 5 根
+              <span class="shortcut-hint">Shift+Space</span>
+            </el-button>
+            <el-button
+              :disabled="!session.can_buy || actionBusy"
+              :loading="tradingAction === `buy-${tradeAllocation}`"
+              type="success"
+              @click="trade('buy', tradeAllocation)"
+            >
+              买入
+              <span class="shortcut-hint">B</span>
+            </el-button>
+            <el-button
+              :disabled="!session.can_sell || actionBusy"
+              :loading="tradingAction === `sell-${tradeAllocation}`"
+              type="warning"
+              @click="trade('sell', tradeAllocation)"
+            >
+              卖出
+              <span class="shortcut-hint">S</span>
+            </el-button>
+            <el-button
+              :disabled="!session.can_sell || actionBusy"
+              :loading="tradingAction === 'close-1'"
+              type="danger"
+              @click="trade('close', 1)"
+            >
+              平仓
+              <span class="shortcut-hint">C</span>
+            </el-button>
+          </div>
+        </section>
+
+        <section class="chart-shell">
           <div class="chart-stage">
             <StockChart
               :key="session.session_id"
               :data="session.visible_candles"
               :ts-code="session.label"
               :preserve-zoom="true"
+              :initial-zoom-start="0"
+              :initial-zoom-end="100"
             />
           </div>
-        </article>
+        </section>
 
-        <article class="control-card">
-          <header class="section-header compact">
-            <div>
-              <h2>交易面板</h2>
-              <p>默认按当前收盘价成交，买卖遵循 100 股整数倍。</p>
-            </div>
-          </header>
+        <footer class="shortcut-bar">
+          <span>快捷键</span>
+          <span>Space 下一根</span>
+          <span>Shift+Space 快进 5 根</span>
+          <span>B 买入</span>
+          <span>S 卖出</span>
+          <span>C 平仓</span>
+          <span>N 新开一局</span>
+          <span>R 揭晓</span>
+          <span>D 详情</span>
+        </footer>
+      </template>
+    </section>
 
-          <div class="position-grid">
-            <div class="position-item">
+    <el-drawer
+      v-model="detailsVisible"
+      size="460px"
+      title="练习详情"
+      append-to-body
+      destroy-on-close
+    >
+      <template v-if="session">
+        <section class="drawer-section">
+          <div class="drawer-grid">
+            <div class="drawer-card">
               <span>可用资金</span>
               <strong>{{ formatCurrency(session.cash) }}</strong>
             </div>
-            <div class="position-item">
+            <div class="drawer-card">
               <span>持仓股数</span>
               <strong>{{ session.position_shares }}</strong>
             </div>
-            <div class="position-item">
+            <div class="drawer-card">
               <span>持仓成本</span>
               <strong>{{ session.avg_cost ? session.avg_cost.toFixed(2) : '--' }}</strong>
             </div>
-            <div class="position-item" :class="pnlClass(session.unrealized_pnl)">
-              <span>浮动盈亏</span>
-              <strong>{{ formatCurrency(session.unrealized_pnl) }}</strong>
+            <div class="drawer-card">
+              <span>已实现盈亏</span>
+              <strong :class="pnlClass(session.realized_pnl)">{{ formatCurrency(session.realized_pnl) }}</strong>
             </div>
           </div>
+        </section>
 
-          <div class="spotlight-card">
-            <span>当前价格</span>
-            <strong>{{ session.latest_close ? session.latest_close.toFixed(2) : '--' }}</strong>
-            <small>{{ session.current_trade_date || '等待样本' }}</small>
-          </div>
-
-          <div class="trade-group">
-            <span class="group-title">买入仓位</span>
-            <div class="button-row">
-              <el-button
-                v-for="pct in [0.25, 0.5, 1]"
-                :key="`buy-${pct}`"
-                :disabled="!session.can_buy || loading"
-                :loading="tradingAction === `buy-${pct}`"
-                type="success"
-                plain
-                @click="trade('buy', pct)"
-              >
-                买入 {{ Math.round(pct * 100) }}%
-              </el-button>
+        <section v-if="session.is_revealed && session.reveal" class="drawer-section">
+          <header class="drawer-header">
+            <h3>样本揭晓</h3>
+          </header>
+          <div class="drawer-grid">
+            <div class="drawer-card wide">
+              <span>真实股票</span>
+              <strong>{{ session.reveal.name }}（{{ session.reveal.ts_code }}）</strong>
+            </div>
+            <div class="drawer-card">
+              <span>所属行业</span>
+              <strong>{{ session.reveal.industry || '未知' }}</strong>
+            </div>
+            <div class="drawer-card">
+              <span>市场板块</span>
+              <strong>{{ session.reveal.market || '未知' }}</strong>
+            </div>
+            <div class="drawer-card wide">
+              <span>练习区间</span>
+              <strong>{{ session.reveal.segment_start_date }} ~ {{ session.reveal.segment_end_date }}</strong>
             </div>
           </div>
+        </section>
 
-          <div class="trade-group">
-            <span class="group-title">卖出仓位</span>
-            <div class="button-row">
-              <el-button
-                v-for="pct in [0.25, 0.5, 1]"
-                :key="`sell-${pct}`"
-                :disabled="!session.can_sell || loading"
-                :loading="tradingAction === `sell-${pct}`"
-                type="warning"
-                plain
-                @click="trade('sell', pct)"
-              >
-                卖出 {{ Math.round(pct * 100) }}%
-              </el-button>
-            </div>
+        <section class="drawer-section">
+          <header class="drawer-header">
+            <h3>交易记录</h3>
+            <span>{{ session.trades.length }} 笔</span>
+          </header>
+          <div class="table-scroll">
+            <el-table :data="session.trades.slice().reverse()" stripe empty-text="还没有交易记录">
+              <el-table-column prop="trade_date" label="日期" width="110" />
+              <el-table-column label="动作" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="tagType(row.action)">{{ actionLabel(row.action) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="shares" label="股数" width="90" />
+              <el-table-column prop="price" label="价格" width="90">
+                <template #default="{ row }">{{ row.price.toFixed(2) }}</template>
+              </el-table-column>
+              <el-table-column prop="realized_pnl" label="盈亏" width="110">
+                <template #default="{ row }">
+                  <span :class="pnlClass(row.realized_pnl)">{{ formatCurrency(row.realized_pnl) }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
           </div>
-
-          <el-button
-            class="full-width"
-            :disabled="!session.can_sell || loading"
-            :loading="tradingAction === 'close-1'"
-            type="danger"
-            @click="trade('close', 1)"
-          >
-            一键平仓
-          </el-button>
-        </article>
-      </section>
-
-      <section v-if="session.is_revealed && session.reveal" class="reveal-card">
-        <header class="section-header">
-          <div>
-            <h2>样本揭晓</h2>
-            <p>这一局结束后再看真实股票与练习区间。</p>
-          </div>
-          <el-tag type="success">已揭晓</el-tag>
-        </header>
-        <div class="reveal-grid">
-          <div>
-            <span>真实股票</span>
-            <strong>{{ session.reveal.name }}（{{ session.reveal.ts_code }}）</strong>
-          </div>
-          <div>
-            <span>所属行业</span>
-            <strong>{{ session.reveal.industry || '未知' }}</strong>
-          </div>
-          <div>
-            <span>市场板块</span>
-            <strong>{{ session.reveal.market || '未知' }}</strong>
-          </div>
-          <div>
-            <span>练习区间</span>
-            <strong>{{ session.reveal.segment_start_date }} ~ {{ session.reveal.segment_end_date }}</strong>
-          </div>
-        </div>
-      </section>
-
-      <section class="table-card">
-        <header class="section-header">
-          <div>
-            <h2>交易记录</h2>
-            <p>每一笔决策都记录下来，方便复盘自己的节奏和错误。</p>
-          </div>
-          <span class="meta">{{ session.trades.length }} 笔</span>
-        </header>
-        <div class="table-scroll">
-          <el-table :data="session.trades.slice().reverse()" stripe empty-text="还没有交易记录">
-            <el-table-column prop="trade_date" label="日期" width="120" />
-            <el-table-column label="动作" width="110">
-              <template #default="{ row }">
-                <el-tag :type="tagType(row.action)">{{ actionLabel(row.action) }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="shares" label="股数" width="100" />
-            <el-table-column prop="price" label="价格" width="100">
-              <template #default="{ row }">{{ row.price.toFixed(2) }}</template>
-            </el-table-column>
-            <el-table-column prop="amount" label="成交额" width="120">
-              <template #default="{ row }">{{ formatCurrency(row.amount) }}</template>
-            </el-table-column>
-            <el-table-column prop="realized_pnl" label="已实现盈亏" width="130">
-              <template #default="{ row }">
-                <span :class="pnlClass(row.realized_pnl)">{{ formatCurrency(row.realized_pnl) }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="note" label="备注" min-width="180">
-              <template #default="{ row }">{{ row.note || '--' }}</template>
-            </el-table-column>
-          </el-table>
-        </div>
-      </section>
-    </template>
+        </section>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
-import { practiceApi, type PracticeSessionState, type PracticeTradeRequest } from '@/api'
 import StockChart from '@/components/charts/StockChart.vue'
+import { usePracticeSession } from './usePracticeSession'
 
-const session = ref<PracticeSessionState | null>(null)
-const loading = ref(false)
-const starting = ref(false)
-const stepping = ref(false)
-const finishing = ref(false)
-const tradingAction = ref('')
+const router = useRouter()
+const detailsVisible = ref(false)
+const tradeAllocation = ref<0.25 | 0.5 | 1>(1)
+const {
+  session,
+  starting,
+  stepping,
+  finishing,
+  tradingAction,
+  actionBusy,
+  loadLatestSession,
+  startSession,
+  stepSession,
+  trade,
+  finishSession,
+} = usePracticeSession()
 
-const hasActiveSession = computed(() => session.value?.status === 'active')
+const currentPositionReturnPct = computed(() => {
+  if (!session.value || session.value.position_shares <= 0 || !session.value.avg_cost || !session.value.latest_close) {
+    return 0
+  }
+  return ((session.value.latest_close - session.value.avg_cost) / session.value.avg_cost) * 100
+})
+
+const progressPct = computed(() => {
+  if (!session.value || session.value.total_steps <= 0) {
+    return 0
+  }
+  return (session.value.step / session.value.total_steps) * 100
+})
+
+function goClassic(): void {
+  router.push('/kline-practice/classic')
+}
 
 function formatCurrency(value: number): string {
   return `${value >= 0 ? '' : '-'}¥${Math.abs(value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
@@ -299,306 +323,284 @@ function tagType(action: string): 'success' | 'warning' | 'danger' | 'info' {
   return 'danger'
 }
 
-async function loadLatestSession(): Promise<void> {
-  loading.value = true
-  try {
-    session.value = await practiceApi.getLatestSession()
-  } catch {
-    session.value = null
-  } finally {
-    loading.value = false
-  }
+function canHandleKey(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null
+  if (!target) return true
+  const tagName = target.tagName
+  return tagName !== 'INPUT' && tagName !== 'TEXTAREA' && !target.isContentEditable
 }
 
-async function startSession(forceConfirm = true): Promise<void> {
-  if (forceConfirm && hasActiveSession.value) {
-    try {
-      await ElMessageBox.confirm(
-        '开始新的一局会自动结束当前练习并平掉剩余持仓，确定继续吗？',
-        '重新开局确认',
-        {
-          type: 'warning',
-          confirmButtonText: '继续',
-          cancelButtonText: '取消',
-        },
-      )
-    } catch {
-      return
-    }
-  }
-
-  starting.value = true
-  try {
-    session.value = await practiceApi.startSession({})
-    ElMessage.success('新的练习样本已就绪')
-  } catch {
-    ElMessage.error('重开失败，请稍后重试')
-    await loadLatestSession()
-  } finally {
-    starting.value = false
-  }
-}
-
-async function stepSession(steps: number): Promise<void> {
-  if (!session.value) return
-  stepping.value = true
-  try {
-    session.value = await practiceApi.stepSession(session.value.session_id, steps)
-    if (session.value.status === 'completed') {
-      ElMessage.success('练习样本已走完，结果已揭晓')
-    }
-  } finally {
-    stepping.value = false
-  }
-}
-
-async function trade(action: PracticeTradeRequest['action'], allocationPct: number): Promise<void> {
-  if (!session.value) return
-  tradingAction.value = `${action}-${allocationPct}`
-  try {
-    session.value = await practiceApi.trade(session.value.session_id, {
-      action,
-      allocation_pct: allocationPct,
-    })
-    ElMessage.success(`${actionLabel(action)}操作已记录`)
-  } finally {
-    tradingAction.value = ''
-  }
-}
-
-async function finishSession(): Promise<void> {
-  if (!session.value) return
-  try {
-    await ElMessageBox.confirm(
-      '结束后会立即揭晓真实股票，并对剩余持仓自动平仓。确定结束本局吗？',
-      '结束练习',
-      {
-        type: 'warning',
-        confirmButtonText: '结束并揭晓',
-        cancelButtonText: '继续练习',
-      },
-    )
-  } catch {
+async function handleKeydown(event: KeyboardEvent): Promise<void> {
+  if (!canHandleKey(event) || actionBusy.value) {
     return
   }
 
-  finishing.value = true
-  try {
-    session.value = await practiceApi.finishSession(session.value.session_id)
-    ElMessage.success('本局练习已结束')
-  } finally {
-    finishing.value = false
+  if (event.code === 'Space') {
+    event.preventDefault()
+    await stepSession(event.shiftKey ? 5 : 1)
+    return
+  }
+
+  const key = event.key.toLowerCase()
+  if (key === 'arrowright') {
+    event.preventDefault()
+    await stepSession(1)
+    return
+  }
+  if (key === 'b' && session.value?.can_buy) {
+    event.preventDefault()
+    await trade('buy', tradeAllocation.value)
+    return
+  }
+  if (key === 's' && session.value?.can_sell) {
+    event.preventDefault()
+    await trade('sell', tradeAllocation.value)
+    return
+  }
+  if (key === 'c' && session.value?.can_sell) {
+    event.preventDefault()
+    await trade('close', 1)
+    return
+  }
+  if (key === 'n') {
+    event.preventDefault()
+    await startSession(true)
+    return
+  }
+  if (key === 'r' && session.value?.status === 'active') {
+    event.preventDefault()
+    await finishSession()
+    return
+  }
+  if (key === 'd') {
+    event.preventDefault()
+    detailsVisible.value = !detailsVisible.value
   }
 }
 
 onMounted(async () => {
   await loadLatestSession()
+  window.addEventListener('keydown', handleKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
 })
 </script>
 
 <style scoped lang="scss">
 .practice-page {
+  padding: 1rem;
+}
+
+.studio-shell {
   display: grid;
-  gap: 20px;
-  padding: 1.5rem;
-}
-
-.hero-card,
-.metric-card,
-.chart-card,
-.control-card,
-.table-card,
-.reveal-card,
-.empty-card {
-  background: var(--el-bg-color-overlay);
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 20px;
-  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.06);
-}
-
-.hero-card {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 28px 30px;
+  gap: 12px;
+  min-height: calc(100vh - 150px);
+  padding: 16px;
+  border-radius: 24px;
   background:
-    radial-gradient(circle at top left, rgba(56, 189, 248, 0.18), transparent 34%),
-    radial-gradient(circle at right center, rgba(14, 165, 233, 0.16), transparent 28%),
-    linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 64, 175, 0.9));
-  color: #f8fafc;
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 26%),
+    linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 0.92));
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.08);
 }
 
-.hero-card > * {
+.studio-topbar,
+.status-ribbon,
+.action-ribbon,
+.chart-shell,
+.shortcut-bar,
+.empty-shell {
+  min-width: 0;
+}
+
+.studio-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.title-stack,
+.topbar-actions {
   min-width: 0;
 }
 
 .eyebrow {
-  margin: 0 0 10px;
-  letter-spacing: 0.16em;
+  margin: 0 0 6px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  font-size: 12px;
-  opacity: 0.7;
+  font-size: 11px;
+  color: #64748b;
 }
 
-.hero-card h1,
-.section-header h2 {
-  margin: 0;
-}
-
-.description {
-  max-width: 720px;
-  margin: 12px 0 0;
-  color: rgba(226, 232, 240, 0.88);
-  line-height: 1.7;
-}
-
-.hero-actions {
+.title-row {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  flex-shrink: 0;
-}
-
-.summary-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.metric-card {
-  display: grid;
-  gap: 8px;
-  padding: 20px 22px;
-}
-
-.metric-card strong {
-  font-size: 28px;
-  line-height: 1.1;
-}
-
-.metric-card small,
-.metric-label,
-.position-item span,
-.spotlight-card span,
-.group-title,
-.meta,
-.reveal-grid span {
-  color: var(--el-text-color-secondary);
-}
-
-.workbench-grid {
-  display: grid;
-  gap: 20px;
-  grid-template-columns: minmax(0, 1.8fr) minmax(320px, 0.9fr);
-}
-
-.workbench-grid > * {
-  min-width: 0;
-}
-
-.chart-card,
-.control-card,
-.table-card,
-.reveal-card {
-  padding: 22px;
-  overflow: hidden;
-}
-
-.section-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.section-header p {
-  margin: 6px 0 0;
-  color: var(--el-text-color-secondary);
-}
-
-.section-header.compact {
-  margin-bottom: 14px;
-}
-
-.chart-actions {
-  display: flex;
+  align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
 
+.title-row h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.mode-switch {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.status-ribbon {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.status-pill,
+.drawer-card {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.status-pill span,
+.drawer-card span,
+.drawer-header span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.status-pill strong,
+.drawer-card strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.status-pill small {
+  display: block;
+  margin-top: 6px;
+  color: #94a3b8;
+}
+
+.progress-line {
+  margin-top: 8px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0ea5e9, #2563eb);
+}
+
+.action-ribbon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.allocation-switch,
+.action-cluster {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.action-label {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.shortcut-hint {
+  margin-left: 6px;
+  font-size: 11px;
+  color: inherit;
+  opacity: 0.72;
+}
+
+.chart-shell {
+  min-height: 0;
+  flex: 1;
+  padding: 12px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
 .chart-stage {
   min-width: 0;
-  overflow: hidden;
-  min-height: 520px;
+  min-height: calc(100vh - 360px);
 }
 
 .chart-stage :deep(.stock-chart) {
-  height: 520px;
-  min-height: 520px;
+  height: calc(100vh - 360px);
+  min-height: 420px;
 }
 
-.control-card {
-  display: grid;
-  gap: 18px;
-  align-content: start;
+.shortcut-bar {
+  display: flex;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  padding: 0 4px;
+  color: #64748b;
+  font-size: 12px;
 }
 
-.position-grid {
+.empty-shell {
   display: grid;
+  place-items: center;
+  min-height: calc(100vh - 280px);
+  padding: 16px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px dashed rgba(148, 163, 184, 0.26);
+}
+
+.drawer-section + .drawer-section {
+  margin-top: 18px;
+}
+
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.drawer-header h3 {
+  margin: 0;
+}
+
+.drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.position-item,
-.spotlight-card {
-  padding: 16px 18px;
-  border-radius: 16px;
-  background: var(--el-fill-color-extra-light);
-}
-
-.position-item strong,
-.spotlight-card strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 22px;
-}
-
-.spotlight-card {
-  background:
-    linear-gradient(145deg, rgba(59, 130, 246, 0.14), rgba(14, 165, 233, 0.06)),
-    var(--el-fill-color-extra-light);
-}
-
-.trade-group {
-  display: grid;
-  gap: 10px;
-}
-
-.button-row {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.full-width {
-  width: 100%;
-}
-
-.empty-card {
-  padding: 28px;
-}
-
-.reveal-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.reveal-grid strong {
-  display: block;
-  margin-top: 6px;
-  font-size: 18px;
+.drawer-card.wide {
+  grid-column: 1 / -1;
 }
 
 .table-scroll {
@@ -607,7 +609,7 @@ onMounted(async () => {
 }
 
 .table-scroll :deep(.el-table) {
-  min-width: 760px;
+  min-width: 520px;
 }
 
 .is-profit {
@@ -618,26 +620,43 @@ onMounted(async () => {
   color: #089981;
 }
 
-@media (max-width: 1280px) {
-  .summary-grid,
-  .reveal-grid {
+@media (max-width: 1180px) {
+  .status-ribbon {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .workbench-grid {
-    grid-template-columns: 1fr;
+  .action-ribbon,
+  .studio-topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+
+  .chart-stage {
+    min-height: calc(100vh - 470px);
+  }
+
+  .chart-stage :deep(.stock-chart) {
+    height: calc(100vh - 470px);
   }
 }
 
-@media (max-width: 900px) {
-  .hero-card,
-  .section-header {
-    flex-direction: column;
+@media (max-width: 768px) {
+  .practice-page {
+    padding: 0.75rem;
   }
 
-  .hero-actions {
-    width: 100%;
-    flex-wrap: wrap;
+  .studio-shell {
+    padding: 12px;
+    min-height: auto;
+  }
+
+  .status-ribbon,
+  .drawer-grid {
+    grid-template-columns: 1fr;
   }
 
   .chart-stage {
@@ -647,13 +666,6 @@ onMounted(async () => {
   .chart-stage :deep(.stock-chart) {
     height: 420px;
     min-height: 420px;
-  }
-
-  .summary-grid,
-  .position-grid,
-  .button-row,
-  .reveal-grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>

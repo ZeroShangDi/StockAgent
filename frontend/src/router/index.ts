@@ -139,6 +139,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/practice/KlinePracticeView.vue'),
         meta: { title: '盘感练习' },
       },
+      {
+        path: 'kline-practice/classic',
+        name: 'KlinePracticeClassic',
+        component: () => import('@/views/practice/KlinePracticeClassicView.vue'),
+        meta: { title: '盘感练习（经典）' },
+      },
       
       // 策略
       {

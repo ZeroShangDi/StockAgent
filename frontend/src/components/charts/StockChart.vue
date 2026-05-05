@@ -31,6 +31,8 @@ const props = defineProps<{
   data: StockDaily[]
   tsCode: string
   preserveZoom?: boolean
+  initialZoomStart?: number
+  initialZoomEnd?: number
 }>()
 
 const themeStore = useThemeStore()
@@ -114,9 +116,13 @@ const option = computed(() => {
   const ma5 = calculateMA(sortedData, 5)
   const ma10 = calculateMA(sortedData, 10)
   const ma20 = calculateMA(sortedData, 20)
+  const defaultZoom = {
+    start: props.initialZoomStart ?? 70,
+    end: props.initialZoomEnd ?? 100,
+  }
   const zoom = props.preserveZoom && zoomRange.value
     ? zoomRange.value
-    : { start: 70, end: 100 }
+    : defaultZoom
   
   return {
     tooltip: {
