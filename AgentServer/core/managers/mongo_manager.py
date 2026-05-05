@@ -10,6 +10,8 @@ MongoDB 管理器
 
 from typing import Optional, Any, List, Dict, Tuple
 from datetime import datetime
+import asyncio
+import os
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING, DESCENDING, IndexModel, UpdateOne, InsertOne
@@ -34,6 +36,16 @@ class MongoManager(BaseManager):
         self._client: Optional[AsyncIOMotorClient] = None
         self._db: Optional[AsyncIOMotorDatabase] = None
         self._config = settings.mongo
+
+    def _get_timeout_ms(self, env_key: str, default_ms: int) -> int:
+        value = os.getenv(env_key)
+        if value is None or value == "":
+            return default_ms
+        try:
+            parsed = int(value)
+            return parsed if parsed > 0 else default_ms
+        except ValueError:
+            return default_ms
     
     async def initialize(self) -> None:
         """初始化 MongoDB 连接"""
@@ -45,14 +57,27 @@ class MongoManager(BaseManager):
             f"(pool_size={self._config.max_pool_size})"
         )
         
+        # NOTE: 在受限 sandbox 环境里，localhost 可能被禁用；需要更短的超时避免长时间挂起。
+        # 可通过环境变量覆盖：
+        # - MONGO_CONNECT_TIMEOUT_MS
+        # - MONGO_SERVER_SELECTION_TIMEOUT_MS
+        # - MONGO_SOCKET_TIMEOUT_MS
+        connect_timeout_ms = self._get_timeout_ms("MONGO_CONNECT_TIMEOUT_MS", 5000)
+        server_selection_timeout_ms = self._get_timeout_ms("MONGO_SERVER_SELECTION_TIMEOUT_MS", 5000)
+        socket_timeout_ms = self._get_timeout_ms("MONGO_SOCKET_TIMEOUT_MS", 5000)
+
         self._client = AsyncIOMotorClient(
             self._config.url,
             maxPoolSize=self._config.max_pool_size,
+            connectTimeoutMS=connect_timeout_ms,
+            serverSelectionTimeoutMS=server_selection_timeout_ms,
+            socketTimeoutMS=socket_timeout_ms,
         )
         self._db = self._client[self._config.database]
         
         # 测试连接
-        await self._client.admin.command("ping")
+        ping_timeout = max(connect_timeout_ms, server_selection_timeout_ms, socket_timeout_ms) / 1000.0 + 0.5
+        await asyncio.wait_for(self._client.admin.command("ping"), timeout=ping_timeout)
         
         # 创建索引
         await self._ensure_indexes()
