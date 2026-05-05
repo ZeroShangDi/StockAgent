@@ -45,6 +45,16 @@ STRATEGIES = [
             "once_per_day": True,
         },
     },
+    {
+        "strategy_type": StrategyType.SUPPORT_RESISTANCE.value,
+        "strategy_name": "撑压线",
+        "params": {
+            "near_threshold_pct": 1.0,
+            "breakout_threshold_pct": 0.5,
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+    },
 ]
 
 

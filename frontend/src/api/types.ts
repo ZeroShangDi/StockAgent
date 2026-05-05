@@ -286,6 +286,7 @@ export interface CreateStrategyRequest {
 export enum StrategyType {
   LIMIT_OPEN = 'limit_open',
   PRICE_CHANGE = 'price_change',
+  SUPPORT_RESISTANCE = 'support_resistance',
   VOLUME_SURGE = 'volume_surge',
   MA_CROSS = 'ma_cross',
   MA5_BUY = 'ma5_buy',
@@ -342,6 +343,20 @@ export interface StrategyParamDef {
   label: string
   type: 'number' | 'float' | 'boolean' | 'string'
   default: number | boolean | string
+}
+
+export interface StrategyStockPoint {
+  date: string
+  price?: number | null
+}
+
+export interface StrategyStockConfig {
+  trend_type: string
+  support_enabled: boolean
+  resistance_enabled: boolean
+  support_points: StrategyStockPoint[]
+  resistance_points: StrategyStockPoint[]
+  note?: string
 }
 
 /** 策略类型信息（服务端返回） */

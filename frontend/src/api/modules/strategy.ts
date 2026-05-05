@@ -16,6 +16,7 @@ import type {
   AddStockResponse,
   ToggleSubscriptionResponse,
   StrategyTypeInfo,
+  StrategyStockConfig,
 } from '../types'
 
 export const strategyApi = {
@@ -120,6 +121,17 @@ export const subscriptionApi = {
     params: Record<string, unknown>
   ): Promise<StrategySubscription> {
     return api.put(`/strategy/subscriptions/${strategyType}/params`, { params })
+  },
+
+  /**
+   * 更新单只股票的监听配置
+   */
+  updateStockConfig(
+    strategyType: string,
+    tsCode: string,
+    config: StrategyStockConfig
+  ): Promise<StrategySubscription> {
+    return api.put(`/strategy/subscriptions/${strategyType}/stocks/${tsCode.toUpperCase()}/config`, { config })
   },
 
   /**

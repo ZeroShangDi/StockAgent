@@ -13,7 +13,15 @@ import { ElMessage } from 'element-plus'
 import { Plus, Refresh, Edit } from '@element-plus/icons-vue'
 import { subscriptionApi, stockApi } from '@/api'
 import { useUserStore } from '@/stores/user'
-import type { StrategySubscription, StockBasic, StrategyTypeInfo, StockInfoBrief } from '@/api/types'
+import { StrategyType } from '@/api/types'
+import type {
+  StrategySubscription,
+  StockBasic,
+  StrategyTypeInfo,
+  StockInfoBrief,
+  StrategyStockConfig,
+  StrategyStockPoint,
+} from '@/api/types'
 
 // ==================== 状态 ====================
 
@@ -39,8 +47,23 @@ const expandedLists = ref<Set<string>>(new Set())
 // 编辑参数弹窗
 const editParamsDialogVisible = ref(false)
 const editingStrategyType = ref<string>('')
-const editingParams = ref<Record<string, number | boolean>>({})
+const editingParams = ref<Record<string, unknown>>({})
 const savingParams = ref(false)
+
+// 单股撑压线配置弹窗
+const stockConfigDialogVisible = ref(false)
+const editingStockStrategyType = ref('')
+const editingStockTsCode = ref('')
+const editingStockName = ref('')
+const editingStockConfig = ref<StrategyStockConfig>(createEmptyStockConfig())
+const savingStockConfig = ref(false)
+
+const trendTypeOptions = [
+  { label: '上升趋势', value: 'uptrend' },
+  { label: '下降趋势', value: 'downtrend' },
+  { label: '盘整趋势', value: 'range' },
+  { label: '自定义', value: 'custom' },
+]
 
 // ==================== 方法 ====================
 
@@ -86,6 +109,77 @@ function getSubscription(strategyType: string): StrategySubscription | undefined
   return subscriptions.value.find(s => s.strategy_type === strategyType)
 }
 
+function isSupportResistanceStrategy(strategyType: string): boolean {
+  return strategyType === StrategyType.SUPPORT_RESISTANCE
+}
+
+function createEmptyPoint(): StrategyStockPoint {
+  return { date: '', price: null }
+}
+
+function createEmptyStockConfig(): StrategyStockConfig {
+  return {
+    trend_type: 'uptrend',
+    support_enabled: true,
+    resistance_enabled: true,
+    support_points: [createEmptyPoint(), createEmptyPoint()],
+    resistance_points: [createEmptyPoint(), createEmptyPoint()],
+    note: '',
+  }
+}
+
+function clonePoint(point?: StrategyStockPoint): StrategyStockPoint {
+  return {
+    date: point?.date || '',
+    price: point?.price ?? null,
+  }
+}
+
+function cloneStockConfig(config?: Partial<StrategyStockConfig>): StrategyStockConfig {
+  const fallback = createEmptyStockConfig()
+  return {
+    trend_type: config?.trend_type || fallback.trend_type,
+    support_enabled: config?.support_enabled ?? fallback.support_enabled,
+    resistance_enabled: config?.resistance_enabled ?? fallback.resistance_enabled,
+    support_points: [
+      clonePoint(config?.support_points?.[0]),
+      clonePoint(config?.support_points?.[1]),
+    ],
+    resistance_points: [
+      clonePoint(config?.resistance_points?.[0]),
+      clonePoint(config?.resistance_points?.[1]),
+    ],
+    note: config?.note || '',
+  }
+}
+
+function getStockConfig(strategyType: string, tsCode: string): StrategyStockConfig | null {
+  const params = getSubscription(strategyType)?.params as Record<string, unknown> | undefined
+  const stockConfigs = params?.stock_configs as Record<string, StrategyStockConfig> | undefined
+  return stockConfigs?.[tsCode] || null
+}
+
+function getStockConfigSummary(strategyType: string, tsCode: string): string {
+  const config = getStockConfig(strategyType, tsCode)
+  if (!config) {
+    return '未配置撑压线'
+  }
+
+  const parts: string[] = []
+  if (config.support_enabled && config.support_points.length === 2 && config.support_points.every(point => point.date)) {
+    parts.push('支撑线')
+  }
+  if (config.resistance_enabled && config.resistance_points.length === 2 && config.resistance_points.every(point => point.date)) {
+    parts.push('压力线')
+  }
+
+  if (parts.length === 0) {
+    return '点位未配置完整'
+  }
+
+  return `${parts.join(' / ')} 已配置`
+}
+
 /** 打开添加个股弹窗 */
 function openAddStockDialog(strategyType: string): void {
   currentStrategyType.value = strategyType
@@ -121,6 +215,7 @@ async function addStockToStrategy(): Promise<void> {
   
   addingStock.value = true
   try {
+    const selected = stockOptions.value.find(stock => stock.ts_code === selectedStock.value)
     const response = await subscriptionApi.addStockToStrategy(
       currentStrategyType.value,
       selectedStock.value
@@ -131,6 +226,13 @@ async function addStockToStrategy(): Promise<void> {
       await loadSubscriptions()
       ElMessage.success(response.message)
       addStockDialogVisible.value = false
+      if (isSupportResistanceStrategy(currentStrategyType.value)) {
+        openStockConfigDialog(
+          currentStrategyType.value,
+          selected?.name || selectedStock.value,
+          selectedStock.value
+        )
+      }
     } else {
       ElMessage.warning(response.message)
     }
@@ -179,7 +281,7 @@ function openEditParamsDialog(strategyType: string): void {
   
   editingStrategyType.value = strategyType
   // 复制当前参数
-  editingParams.value = { ...sub.params } as Record<string, number | boolean>
+  editingParams.value = { ...sub.params }
   editParamsDialogVisible.value = true
 }
 
@@ -210,6 +312,85 @@ async function saveParams(): Promise<void> {
     console.error(error)
   } finally {
     savingParams.value = false
+  }
+}
+
+function openStockConfigDialog(strategyType: string, stockName: string, tsCode: string): void {
+  editingStockStrategyType.value = strategyType
+  editingStockTsCode.value = tsCode
+  editingStockName.value = stockName
+  editingStockConfig.value = cloneStockConfig(getStockConfig(strategyType, tsCode) || undefined)
+  stockConfigDialogVisible.value = true
+}
+
+function normalizePoint(point: StrategyStockPoint): StrategyStockPoint {
+  return {
+    date: point.date,
+    price: point.price === null || point.price === undefined || point.price === 0 ? null : Number(point.price),
+  }
+}
+
+function getBooleanParamValue(key: string, defaultValue: boolean | string | number): boolean {
+  const value = editingParams.value[key]
+  if (typeof value === 'boolean') {
+    return value
+  }
+  if (typeof defaultValue === 'boolean') {
+    return defaultValue
+  }
+  return Boolean(value)
+}
+
+function getNumberParamValue(key: string, defaultValue: boolean | string | number): number {
+  const value = editingParams.value[key]
+  if (typeof value === 'number') {
+    return value
+  }
+  if (typeof defaultValue === 'number') {
+    return defaultValue
+  }
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function setEditingParam(key: string, value: boolean | number | string | undefined): void {
+  editingParams.value[key] = value ?? null
+}
+
+async function saveStockConfig(): Promise<void> {
+  if (!editingStockStrategyType.value || !editingStockTsCode.value) {
+    return
+  }
+
+  if (!editingStockConfig.value.support_enabled && !editingStockConfig.value.resistance_enabled) {
+    ElMessage.warning('至少需要启用支撑线或压力线中的一条')
+    return
+  }
+
+  const payload: StrategyStockConfig = {
+    trend_type: editingStockConfig.value.trend_type,
+    support_enabled: editingStockConfig.value.support_enabled,
+    resistance_enabled: editingStockConfig.value.resistance_enabled,
+    support_points: editingStockConfig.value.support_points.map(normalizePoint),
+    resistance_points: editingStockConfig.value.resistance_points.map(normalizePoint),
+    note: editingStockConfig.value.note || '',
+  }
+
+  savingStockConfig.value = true
+  try {
+    await subscriptionApi.updateStockConfig(
+      editingStockStrategyType.value,
+      editingStockTsCode.value,
+      payload
+    )
+    await loadSubscriptions()
+    ElMessage.success('撑压线配置已保存')
+    stockConfigDialogVisible.value = false
+  } catch (error) {
+    ElMessage.error('保存撑压线配置失败')
+    console.error(error)
+  } finally {
+    savingStockConfig.value = false
   }
 }
 
@@ -353,19 +534,54 @@ onMounted(async () => {
             
             <!-- 股票列表 -->
             <div 
-              v-if="getSubscription(st.type)?.watch_list_info?.length" 
-              class="stock-tags"
+              v-if="getSubscription(st.type)?.watch_list_info?.length"
+              :class="isSupportResistanceStrategy(st.type) ? 'stock-config-list' : 'stock-tags'"
             >
-              <el-tag
-                v-for="stock in getDisplayStockInfos(getSubscription(st.type)!)"
-                :key="stock.ts_code"
-                closable
-                size="small"
-                class="stock-tag"
-                @close="removeStock(st.type, stock.name, stock.ts_code)"
-              >
-                {{ stock.name }}
-              </el-tag>
+              <template v-if="isSupportResistanceStrategy(st.type)">
+                <div
+                  v-for="stock in getDisplayStockInfos(getSubscription(st.type)!)"
+                  :key="stock.ts_code"
+                  class="stock-config-item"
+                >
+                  <div class="stock-config-main">
+                    <div class="stock-config-title-row">
+                      <span class="stock-config-name">{{ stock.name }}</span>
+                      <span class="stock-config-code">{{ stock.ts_code }}</span>
+                    </div>
+                    <span class="stock-config-summary">
+                      {{ getStockConfigSummary(st.type, stock.ts_code) }}
+                    </span>
+                  </div>
+                  <div class="stock-config-actions">
+                    <el-button
+                      link
+                      type="primary"
+                      @click="openStockConfigDialog(st.type, stock.name, stock.ts_code)"
+                    >
+                      配置撑压线
+                    </el-button>
+                    <el-button
+                      link
+                      type="danger"
+                      @click="removeStock(st.type, stock.name, stock.ts_code)"
+                    >
+                      移除
+                    </el-button>
+                  </div>
+                </div>
+              </template>
+              <template v-else>
+                <el-tag
+                  v-for="stock in getDisplayStockInfos(getSubscription(st.type)!)"
+                  :key="stock.ts_code"
+                  closable
+                  size="small"
+                  class="stock-tag"
+                  @close="removeStock(st.type, stock.name, stock.ts_code)"
+                >
+                  {{ stock.name }}
+                </el-tag>
+              </template>
               
               <!-- 展开/收起 -->
               <el-button
@@ -445,6 +661,129 @@ onMounted(async () => {
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 单股撑压线配置弹窗 -->
+    <el-dialog
+      v-model="stockConfigDialogVisible"
+      title="配置撑压线"
+      width="720px"
+      :close-on-click-modal="false"
+    >
+      <div class="stock-config-dialog">
+        <p class="form-hint mb-4">
+          为 <strong>{{ editingStockName }}</strong>
+          <span class="stock-code-inline">({{ editingStockTsCode }})</span>
+          配置支撑线与压力线点位。价格留空时，会自动取对应日期 K 线的最低价或最高价。
+        </p>
+
+        <div class="stock-config-form-grid">
+          <div class="param-form-item">
+            <label class="param-form-label">趋势类型</label>
+            <el-select v-model="editingStockConfig.trend_type">
+              <el-option
+                v-for="option in trendTypeOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">支撑线</label>
+            <el-switch v-model="editingStockConfig.support_enabled" active-text="启用" inactive-text="关闭" />
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">压力线</label>
+            <el-switch v-model="editingStockConfig.resistance_enabled" active-text="启用" inactive-text="关闭" />
+          </div>
+        </div>
+
+        <div v-if="editingStockConfig.support_enabled" class="line-config-card">
+          <div class="line-config-header">
+            <h4>支撑线点位</h4>
+            <span>默认价格取当日最低价</span>
+          </div>
+          <div class="line-points-grid">
+            <div
+              v-for="(point, index) in editingStockConfig.support_points"
+              :key="`support-${index}`"
+              class="line-point-item"
+            >
+              <label class="param-form-label">支撑点 {{ index + 1 }}</label>
+              <el-date-picker
+                v-model="point.date"
+                type="date"
+                value-format="YYYYMMDD"
+                format="YYYY-MM-DD"
+                placeholder="选择日期"
+              />
+              <el-input-number
+                v-model="point.price"
+                :min="0"
+                :precision="2"
+                :step="0.01"
+                controls-position="right"
+                placeholder="留空自动取低点"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div v-if="editingStockConfig.resistance_enabled" class="line-config-card">
+          <div class="line-config-header">
+            <h4>压力线点位</h4>
+            <span>默认价格取当日最高价</span>
+          </div>
+          <div class="line-points-grid">
+            <div
+              v-for="(point, index) in editingStockConfig.resistance_points"
+              :key="`resistance-${index}`"
+              class="line-point-item"
+            >
+              <label class="param-form-label">压力点 {{ index + 1 }}</label>
+              <el-date-picker
+                v-model="point.date"
+                type="date"
+                value-format="YYYYMMDD"
+                format="YYYY-MM-DD"
+                placeholder="选择日期"
+              />
+              <el-input-number
+                v-model="point.price"
+                :min="0"
+                :precision="2"
+                :step="0.01"
+                controls-position="right"
+                placeholder="留空自动取高点"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="param-form-item">
+          <label class="param-form-label">备注</label>
+          <el-input
+            v-model="editingStockConfig.note"
+            type="textarea"
+            :rows="2"
+            placeholder="可选，记录点位含义或趋势说明"
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="stockConfigDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="savingStockConfig"
+          @click="saveStockConfig"
+        >
+          保存配置
+        </el-button>
+      </template>
+    </el-dialog>
     
     <!-- 编辑参数弹窗（管理员） -->
     <el-dialog
@@ -470,7 +809,8 @@ onMounted(async () => {
             <!-- 布尔类型 -->
             <el-switch
               v-if="param.type === 'boolean'"
-              v-model="editingParams[param.key]"
+              :model-value="getBooleanParamValue(param.key, param.default)"
+              @update:model-value="setEditingParam(param.key, $event)"
               :active-text="'是'"
               :inactive-text="'否'"
             />
@@ -478,7 +818,8 @@ onMounted(async () => {
             <!-- 数字类型 -->
             <el-input-number
               v-else
-              v-model="editingParams[param.key]"
+              :model-value="getNumberParamValue(param.key, param.default)"
+              @update:model-value="setEditingParam(param.key, $event)"
               :step="param.type === 'float' ? 0.01 : 1"
               :precision="param.type === 'float' ? 2 : 0"
               :min="0"
@@ -659,6 +1000,43 @@ onMounted(async () => {
   @apply font-mono;
 }
 
+.stock-config-list {
+  @apply flex flex-col gap-3;
+}
+
+.stock-config-item {
+  @apply flex items-start justify-between gap-4 rounded-lg p-3;
+  background: var(--bg-muted);
+}
+
+.stock-config-main {
+  @apply flex-1 min-w-0;
+}
+
+.stock-config-title-row {
+  @apply flex items-center gap-2 mb-1;
+}
+
+.stock-config-name {
+  @apply font-medium;
+  color: var(--text-primary);
+}
+
+.stock-config-code,
+.stock-code-inline {
+  @apply text-xs font-mono;
+  color: var(--text-tertiary);
+}
+
+.stock-config-summary {
+  @apply text-xs;
+  color: var(--text-secondary);
+}
+
+.stock-config-actions {
+  @apply flex items-center gap-2 shrink-0;
+}
+
 /* 空状态 */
 .empty-stocks {
   @apply flex flex-col items-center py-6 text-center;
@@ -723,5 +1101,58 @@ onMounted(async () => {
 .param-form-label {
   @apply text-sm flex-shrink-0;
   color: var(--text-secondary);
+}
+
+.stock-config-dialog {
+  @apply space-y-5;
+}
+
+.stock-config-form-grid {
+  @apply grid gap-4;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.line-config-card {
+  @apply rounded-lg p-4;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-light);
+}
+
+.line-config-header {
+  @apply flex items-center justify-between mb-4;
+}
+
+.line-config-header h4 {
+  @apply text-sm font-semibold;
+  color: var(--text-primary);
+}
+
+.line-config-header span {
+  @apply text-xs;
+  color: var(--text-tertiary);
+}
+
+.line-points-grid {
+  @apply grid gap-4;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.line-point-item {
+  @apply flex flex-col gap-2;
+}
+
+@media (max-width: 768px) {
+  .stock-config-item {
+    @apply flex-col;
+  }
+
+  .stock-config-actions {
+    @apply justify-end w-full;
+  }
+
+  .stock-config-form-grid,
+  .line-points-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

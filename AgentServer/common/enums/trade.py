@@ -18,6 +18,7 @@ class StrategyType(str, Enum):
     """监听策略类型 (Listener 节点使用)"""
     LIMIT_OPEN = "limit_open"           # 涨跌停打开
     PRICE_CHANGE = "price_change"       # 涨跌幅阈值
+    SUPPORT_RESISTANCE = "support_resistance"  # 撑压线
     VOLUME_SURGE = "volume_surge"       # 放量突破
     MA_CROSS = "ma_cross"               # 均线交叉
     MA5_BUY = "ma5_buy"                 # 5日线低吸

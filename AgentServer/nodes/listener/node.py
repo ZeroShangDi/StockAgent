@@ -34,6 +34,7 @@ from .strategies import (
     LimitOpenStrategy,
     PriceChangeStrategy,
     MA5BuyStrategy,
+    SupportResistanceStrategy,
 )
 
 
@@ -187,6 +188,7 @@ class ListenerNode(BaseNode):
             StrategyType.LIMIT_OPEN.value: LimitOpenStrategy(),
             StrategyType.PRICE_CHANGE.value: PriceChangeStrategy(),
             StrategyType.MA5_BUY.value: MA5BuyStrategy(),
+            StrategyType.SUPPORT_RESISTANCE.value: SupportResistanceStrategy(),
         }
         self.logger.info(f"Registered strategies: {list(self._strategies.keys())}")
     

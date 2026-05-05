@@ -10,7 +10,7 @@
 import asyncio
 import logging
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Path, Body, Depends
@@ -34,6 +34,7 @@ IMPLEMENTED_STRATEGIES = [
     StrategyType.MA5_BUY,      # 5日线低吸
     StrategyType.LIMIT_OPEN,   # 涨跌停打开
     StrategyType.PRICE_CHANGE, # 涨跌幅阈值
+    StrategyType.SUPPORT_RESISTANCE, # 撑压线
 ]
 
 IMPLEMENTED_STRATEGY_VALUES = [s.value for s in IMPLEMENTED_STRATEGIES]
@@ -63,9 +64,26 @@ STRATEGY_META = {
         "description": "涨跌幅超过阈值时提醒",
         "default_params": {
             "threshold": 5.0,
+            "direction": "both",
+            "once_per_day": True,
         },
         "param_schema": [
             {"key": "threshold", "label": "涨跌阈值 (%)", "type": "float", "default": 5.0},
+        ],
+    },
+    StrategyType.SUPPORT_RESISTANCE.value: {
+        "name": "撑压线",
+        "description": "根据每只股票单独配置的支撑线/压力线，在接近或突破时提醒",
+        "default_params": {
+            "near_threshold_pct": 1.0,
+            "breakout_threshold_pct": 0.5,
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+        "param_schema": [
+            {"key": "near_threshold_pct", "label": "接近阈值 (%)", "type": "float", "default": 1.0},
+            {"key": "breakout_threshold_pct", "label": "突破阈值 (%)", "type": "float", "default": 0.5},
+            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
         ],
     },
 }
@@ -160,6 +178,11 @@ class AddStockResponse(BaseModel):
     watch_list: List[str]
 
 
+class UpdateStockConfigRequest(BaseModel):
+    """更新单只股票的策略配置"""
+    config: Dict[str, Any] = Field(..., description="单只股票的策略配置")
+
+
 # ==================== 辅助函数 ====================
 
 
@@ -202,6 +225,101 @@ async def _to_response(record: dict) -> SubscriptionResponse:
         created_at=created_at.isoformat() if isinstance(created_at, datetime) else str(created_at or ""),
         updated_at=updated_at.isoformat() if isinstance(updated_at, datetime) else str(updated_at or ""),
     )
+
+
+async def _get_daily_record_for_date(ts_code: str, trade_date: str) -> dict:
+    record = await mongo_manager.find_one(
+        "stock_daily",
+        {"ts_code": ts_code, "trade_date": trade_date},
+        projection={"trade_date": 1, "low": 1, "high": 1},
+    )
+    if not record:
+        raise HTTPException(status_code=400, detail=f"{ts_code} 在 {trade_date} 没有日线数据，请选择有效交易日")
+    return record
+
+
+async def _resolve_point_price(ts_code: str, trade_date: str, price_field: str) -> float:
+    record = await _get_daily_record_for_date(ts_code, trade_date)
+
+    value = record.get(price_field)
+    if value is None:
+        raise HTTPException(status_code=400, detail=f"{ts_code} 在 {trade_date} 缺少 {price_field} 价格，无法自动补全点位")
+
+    return float(value)
+
+
+async def _normalize_line_points(
+    ts_code: str,
+    line_type: str,
+    points: Any,
+) -> List[Dict[str, Any]]:
+    if not isinstance(points, list) or len(points) != 2:
+        raise HTTPException(status_code=400, detail=f"{line_type} 必须提供两个坐标点")
+
+    normalized: List[Dict[str, Any]] = []
+    price_field = "low" if line_type == "support_points" else "high"
+
+    for index, point in enumerate(points, start=1):
+        if not isinstance(point, dict):
+            raise HTTPException(status_code=400, detail=f"{line_type} 第 {index} 个点位格式不正确")
+        trade_date = str(point.get("date", "")).strip()
+        if not trade_date or len(trade_date) != 8 or not trade_date.isdigit():
+            raise HTTPException(status_code=400, detail=f"{line_type} 第 {index} 个点位日期必须为 YYYYMMDD")
+
+        await _get_daily_record_for_date(ts_code, trade_date)
+
+        raw_price = point.get("price")
+        if raw_price in (None, ""):
+            price = await _resolve_point_price(ts_code, trade_date, price_field)
+        else:
+            try:
+                price = float(raw_price)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"{line_type} 第 {index} 个点位价格无效") from exc
+
+        if price <= 0:
+            raise HTTPException(status_code=400, detail=f"{line_type} 第 {index} 个点位价格必须大于 0")
+
+        normalized.append({"date": trade_date, "price": round(price, 4)})
+
+    normalized.sort(key=lambda item: item["date"])
+    if normalized[0]["date"] == normalized[1]["date"]:
+        raise HTTPException(status_code=400, detail=f"{line_type} 的两个点位日期不能相同")
+
+    return normalized
+
+
+async def _normalize_support_resistance_config(ts_code: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    trend_type = str(config.get("trend_type", "custom")).strip() or "custom"
+    support_enabled = bool(config.get("support_enabled", False))
+    resistance_enabled = bool(config.get("resistance_enabled", False))
+
+    if not support_enabled and not resistance_enabled:
+        raise HTTPException(status_code=400, detail="至少需要启用支撑线或压力线中的一条")
+
+    normalized = {
+        "trend_type": trend_type,
+        "support_enabled": support_enabled,
+        "resistance_enabled": resistance_enabled,
+        "support_points": [],
+        "resistance_points": [],
+        "note": str(config.get("note", "") or "").strip(),
+    }
+
+    if support_enabled:
+        normalized["support_points"] = await _normalize_line_points(
+            ts_code=ts_code,
+            line_type="support_points",
+            points=config.get("support_points"),
+        )
+    if resistance_enabled:
+        normalized["resistance_points"] = await _normalize_line_points(
+            ts_code=ts_code,
+            line_type="resistance_points",
+            points=config.get("resistance_points"),
+        )
+
+    return normalized
 
 
 async def _ensure_strategy_exists(strategy_type: str) -> dict:
@@ -327,6 +445,10 @@ async def update_strategy_params(
     
     # 确保策略存在
     record = await _ensure_strategy_exists(strategy_type)
+    current_params = dict(record.get("params", {}) or {})
+    updated_params = dict(data.params)
+    if "stock_configs" in current_params and "stock_configs" not in updated_params:
+        updated_params["stock_configs"] = current_params["stock_configs"]
     
     # 更新参数
     await mongo_manager.update_one(
@@ -334,7 +456,7 @@ async def update_strategy_params(
         {"strategy_type": strategy_type},
         {
             "$set": {
-                "params": data.params,
+                "params": updated_params,
                 "updated_at": datetime.utcnow(),
             }
         },
@@ -456,7 +578,7 @@ async def add_stock_to_strategy(
     stock_name = stock.get("name", ts_code)
     return AddStockResponse(
         success=True,
-        message=f"已添加 {stock_name}({ts_code})",
+        message=f"已添加 {stock_name}({ts_code})" + ("，请继续配置撑压线点位" if strategy_type == StrategyType.SUPPORT_RESISTANCE.value else ""),
         watch_list=watch_list,
     )
 
@@ -489,6 +611,11 @@ async def remove_stock_from_strategy(
     
     # 移除
     watch_list.remove(ts_code)
+    params = dict(record.get("params", {}) or {})
+    stock_configs = dict(params.get("stock_configs", {}) or {})
+    if ts_code in stock_configs:
+        stock_configs.pop(ts_code, None)
+        params["stock_configs"] = stock_configs
     
     await mongo_manager.update_one(
         "strategy_subscriptions",
@@ -496,6 +623,7 @@ async def remove_stock_from_strategy(
         {
             "$set": {
                 "watch_list": watch_list,
+                "params": params,
                 "updated_at": datetime.utcnow(),
             }
         },
@@ -509,6 +637,48 @@ async def remove_stock_from_strategy(
         message=f"已移除 {ts_code}",
         watch_list=watch_list,
     )
+
+
+@router.put("/{strategy_type}/stocks/{ts_code}/config", response_model=SubscriptionResponse)
+async def update_stock_config(
+    strategy_type: str = Path(...),
+    ts_code: str = Path(..., pattern=r"^\d{6}\.(SH|SZ|BJ)$"),
+    data: UpdateStockConfigRequest = Body(...),
+):
+    """更新单只股票的策略配置"""
+    if strategy_type != StrategyType.SUPPORT_RESISTANCE.value:
+        raise HTTPException(status_code=400, detail="当前仅撑压线策略支持按股票配置点位")
+
+    record = await _ensure_strategy_exists(strategy_type)
+    ts_code = ts_code.upper()
+    watch_list: List[str] = record.get("watch_list", [])
+    if ts_code not in watch_list:
+        raise HTTPException(status_code=400, detail=f"{ts_code} 不在监听列表中，请先添加股票")
+
+    normalized_config = await _normalize_support_resistance_config(ts_code, data.config)
+
+    params = dict(record.get("params", {}) or {})
+    stock_configs = dict(params.get("stock_configs", {}) or {})
+    stock_configs[ts_code] = normalized_config
+    params["stock_configs"] = stock_configs
+
+    await mongo_manager.update_one(
+        "strategy_subscriptions",
+        {"strategy_type": strategy_type},
+        {
+            "$set": {
+                "params": params,
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    asyncio.create_task(_notify_listeners_refresh(strategy_type))
+    updated = await mongo_manager.find_one(
+        "strategy_subscriptions",
+        {"strategy_type": strategy_type},
+    )
+    return await _to_response(updated)
 
 
 # ==================== 管理员初始化 ====================
