@@ -257,6 +257,7 @@ onBeforeUnmount(() => {
 .weather-page {
   display: grid;
   gap: 20px;
+  padding: 1.5rem;
 }
 
 .hero-card,

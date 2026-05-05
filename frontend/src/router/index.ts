@@ -127,6 +127,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/stock/StockPickerView.vue'),
         meta: { title: '一句话选股' },
       },
+      {
+        path: 'stock-pools',
+        name: 'StockPools',
+        component: () => import('@/views/stock/StockPoolsView.vue'),
+        meta: { title: '股池管理' },
+      },
       
       // 策略
       {

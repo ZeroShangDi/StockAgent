@@ -38,6 +38,8 @@ import {
   Promotion,
   Document,
   WarningFilled,
+  Opportunity,
+  CollectionTag,
 } from '@element-plus/icons-vue'
 import { useAuth } from '@/hooks'
 import { useUserStore, useTaskStore, useThemeStore } from '@/stores'
@@ -67,21 +69,40 @@ const activeTaskCount = computed(() => taskStore.activeTaskCount)
 
 // ==================== 菜单项 ====================
 
-const menuItems = [
-  { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
-  { path: '/market', icon: Histogram, title: '行情分析' },
-  { path: '/market-weather', icon: Histogram, title: '市场晴雨表' },
-  { path: '/sector-strategy', icon: TrendCharts, title: '板块分析' },
-  { path: '/hot-news', icon: Promotion, title: '热点追踪' },
-  { path: '/reports', icon: Document, title: '报告回顾' },
-  { path: '/backtest', icon: DataAnalysis, title: '单股回测' },
-  { path: '/factor-selection', icon: DataAnalysis, title: '因子选股' },
-  { path: '/analysis', icon: DataAnalysis, title: '分析任务' },
-  { path: '/watchlist', icon: Star, title: '自选股' },
-  { path: '/stock-picker', icon: DataAnalysis, title: '一句话选股' },
-  { path: '/strategies', icon: TrendCharts, title: '市场监听' },
-  { path: '/system-status', icon: WarningFilled, title: '能力状态' },
-  { path: '/settings', icon: Setting, title: '设置' },
+const menuSections = [
+  {
+    key: 'featured',
+    title: '核心工作台',
+    items: [
+      { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
+      { path: '/market-weather', icon: Sunny, title: '市场晴雨表' },
+      { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
+      { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
+    ],
+  },
+  {
+    key: 'market',
+    title: '市场与跟踪',
+    items: [
+      { path: '/market', icon: Histogram, title: '行情分析' },
+      { path: '/sector-strategy', icon: TrendCharts, title: '板块分析' },
+      { path: '/hot-news', icon: Promotion, title: '热点追踪' },
+      { path: '/watchlist', icon: Star, title: '自选股' },
+      { path: '/strategies', icon: TrendCharts, title: '市场监听' },
+    ],
+  },
+  {
+    key: 'analysis',
+    title: '分析与系统',
+    items: [
+      { path: '/analysis', icon: DataAnalysis, title: '分析任务' },
+      { path: '/backtest', icon: DataAnalysis, title: '单股回测' },
+      { path: '/factor-selection', icon: DataAnalysis, title: '因子选股' },
+      { path: '/reports', icon: Document, title: '报告回顾' },
+      { path: '/system-status', icon: WarningFilled, title: '能力状态' },
+      { path: '/settings', icon: Setting, title: '设置' },
+    ],
+  },
 ]
 
 // ==================== 生命周期 ====================
@@ -125,25 +146,31 @@ async function handleLogout(): Promise<void> {
         class="sidebar-menu"
         @select="handleMenuSelect"
       >
-        <ElMenuItem
-          v-for="item in menuItems"
-          :key="item.path"
-          :index="item.path"
-          class="menu-item-wrapper"
-        >
-          <ElIcon><component :is="item.icon" /></ElIcon>
-          <template #title>
-            <div class="menu-title-wrapper">
-              <span>{{ item.title }}</span>
-              <span 
-                v-if="item.path === '/analysis' && activeTaskCount > 0"
-                class="menu-badge-dot"
-              >
-                {{ activeTaskCount > 99 ? '99+' : activeTaskCount }}
-              </span>
-            </div>
-          </template>
-        </ElMenuItem>
+        <template v-for="section in menuSections" :key="section.key">
+          <div v-if="!isCollapsed" class="menu-section-label">
+            {{ section.title }}
+          </div>
+          <ElMenuItem
+            v-for="item in section.items"
+            :key="item.path"
+            :index="item.path"
+            class="menu-item-wrapper"
+          >
+            <ElIcon><component :is="item.icon" /></ElIcon>
+            <template #title>
+              <div class="menu-title-wrapper">
+                <span>{{ item.title }}</span>
+                <span 
+                  v-if="item.path === '/analysis' && activeTaskCount > 0"
+                  class="menu-badge-dot"
+                >
+                  {{ activeTaskCount > 99 ? '99+' : activeTaskCount }}
+                </span>
+              </div>
+            </template>
+          </ElMenuItem>
+          <div v-if="!isCollapsed && section.key !== menuSections[menuSections.length - 1].key" class="menu-section-divider"></div>
+        </template>
       </ElMenu>
       
       <div class="collapse-btn" @click="toggleCollapse">
@@ -257,6 +284,23 @@ async function handleLogout(): Promise<void> {
         height: 28px;
       }
     }
+  }
+
+  .menu-section-label {
+    padding: 14px 18px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    opacity: 0.72;
+  }
+
+  .menu-section-divider {
+    height: 1px;
+    margin: 10px 16px;
+    background: var(--sidebar-border);
+    opacity: 0.7;
   }
   
   .sidebar-menu {

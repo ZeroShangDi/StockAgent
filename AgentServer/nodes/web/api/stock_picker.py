@@ -71,6 +71,22 @@ async def list_stock_pools(user_id: str = Depends(get_current_user_id)) -> Dict[
     return {"items": [_pool_summary(pool) for pool in pools]}
 
 
+@router.get("/pools/{pool_id}")
+async def get_stock_pool_detail(
+    pool_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    pool = await mongo_manager.find_one("stock_pools", {"pool_id": pool_id, "user_id": user_id})
+    if not pool:
+        raise HTTPException(status_code=404, detail="股池不存在")
+    return {
+        **_pool_summary(pool),
+        "stocks": pool.get("stocks", []),
+        "source_module": pool.get("source_module"),
+        "created_at": pool.get("created_at"),
+    }
+
+
 @router.post("/pools")
 async def create_stock_pool(
     body: StockPoolCreateRequest,

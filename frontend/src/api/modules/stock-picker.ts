@@ -34,6 +34,23 @@ export interface StockPoolSummary {
   updated_at?: string
 }
 
+export interface StockPoolStock {
+  ts_code: string
+  code: string
+  name?: string
+  status?: string
+  source_module?: string
+  source_run_id?: string
+  source_query?: string
+  added_at?: string
+}
+
+export interface StockPoolDetail extends StockPoolSummary {
+  stocks: StockPoolStock[]
+  source_module?: string
+  created_at?: string
+}
+
 export interface StockPoolListResult {
   items: StockPoolSummary[]
 }
@@ -64,6 +81,10 @@ export const stockPickerApi = {
 
   listPools(): Promise<StockPoolListResult> {
     return api.get('/stock-picker/pools')
+  },
+
+  getPoolDetail(poolId: string): Promise<StockPoolDetail> {
+    return api.get(`/stock-picker/pools/${poolId}`)
   },
 
   createPool(data: CreateStockPoolRequest): Promise<StockPoolSummary> {

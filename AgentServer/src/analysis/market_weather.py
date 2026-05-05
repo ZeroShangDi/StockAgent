@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -212,11 +213,15 @@ class MarketWeatherService:
         return trade_dates[-days:]
 
     async def sync_trade_dates(self, trade_dates: List[str], overwrite: bool = False) -> Dict[str, Any]:
+        if not await data_source_manager.health_check():
+            await data_source_manager.initialize()
+
         success = 0
         skipped = 0
         failed = 0
         errors: List[Dict[str, str]] = []
         records: List[Dict[str, Any]] = []
+        pending_dates: List[str] = []
 
         for trade_date in trade_dates:
             if not overwrite:
@@ -224,8 +229,18 @@ class MarketWeatherService:
                 if existing:
                     skipped += 1
                     continue
+            pending_dates.append(trade_date)
+
+        semaphore = asyncio.Semaphore(4)
+
+        async def _fetch(trade_date: str) -> Dict[str, Any]:
+            async with semaphore:
+                return await self.fetch_one(trade_date)
+
+        tasks = {trade_date: asyncio.create_task(_fetch(trade_date)) for trade_date in pending_dates}
+        for trade_date, task in tasks.items():
             try:
-                records.append(await self.fetch_one(trade_date))
+                records.append(await task)
                 success += 1
             except Exception as exc:
                 failed += 1

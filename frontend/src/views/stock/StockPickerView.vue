@@ -321,6 +321,7 @@ async function submitToPool(): Promise<void> {
 .picker-page {
   display: grid;
   gap: 20px;
+  padding: 1.5rem;
 }
 
 .hero-card,
@@ -382,6 +383,10 @@ h1 {
   padding: 24px 28px;
 }
 
+.result-card {
+  overflow: hidden;
+}
+
 .query-bar {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -438,6 +443,16 @@ h1 {
 
 .loading-state {
   padding: 16px 0;
+}
+
+.result-card :deep(.el-table__body-wrapper),
+.result-card :deep(.el-table__header-wrapper),
+.result-card :deep(.el-scrollbar__wrap) {
+  overflow-x: auto !important;
+}
+
+.result-card :deep(.el-table) {
+  min-width: 100%;
 }
 
 .stock-meta {
