@@ -18,6 +18,7 @@
 """
 
 from typing import Optional, List, Dict, Any, Tuple, Type
+import inspect
 import logging
 
 from core.base import BaseManager
@@ -27,6 +28,7 @@ from src.data_sources import (
     TushareAdapter,
     AKShareAdapter,
     BaoStockAdapter,
+    CozeWorkflowAdapter,
 )
 
 
@@ -72,6 +74,27 @@ class DataSourceManager(BaseManager):
             self.logger.info("Tushare token configured, adding TushareAdapter")
         else:
             self.logger.warning("Tushare token not configured, using free data sources only")
+
+        # Coze 工作流数据源（可选）
+        try:
+            if settings.coze.is_configured:
+                adapter_classes.append(
+                    (
+                        CozeWorkflowAdapter,
+                        {
+                            "api_token": settings.coze.api_token.get_secret_value(),
+                            "workflow_id": settings.coze.workflow_id,
+                            "api_base": settings.coze.api_base,
+                            "space_id": settings.coze.space_id,
+                            "app_id": settings.coze.app_id,
+                            "bot_id": settings.coze.bot_id,
+                            "timeout": settings.coze.timeout,
+                        },
+                    )
+                )
+                self.logger.info("Coze workflow configured, adding CozeWorkflowAdapter")
+        except Exception as e:
+            self.logger.warning(f"Failed to load Coze config: {e}")
         
         # 免费数据源始终添加
         adapter_classes.append((AKShareAdapter, {}))
@@ -130,6 +153,52 @@ class DataSourceManager(BaseManager):
     def get_adapter(self, name: str) -> Optional[AsyncDataSourceAdapter]:
         """根据名称获取特定适配器"""
         return self._adapter_map.get(name)
+
+    def _get_default_preferred_sources(
+        self,
+        method_name: str,
+        kwargs: Dict[str, Any],
+    ) -> List[str]:
+        """
+        根据能力和调用形态给出默认首选数据源顺序。
+
+        设计原则：
+        - Coze 优先承担单股/实时/财务类请求
+        - 全市场按交易日同步仍优先走 Tushare/传统源
+        - 指数历史日线不强行走 Coze（当前 index_k 不稳定）
+        """
+        preferred: List[str] = []
+        has_coze = "coze" in self._adapter_map
+        has_tushare = "tushare" in self._adapter_map
+
+        ts_code = kwargs.get("ts_code")
+        has_single_ts_code = bool(ts_code) and isinstance(ts_code, str) and "," not in ts_code
+        is_full_market_daily = method_name == "get_daily" and kwargs.get("trade_date") and not kwargs.get("ts_code")
+
+        if method_name == "get_daily":
+            if has_single_ts_code and has_coze:
+                preferred.append("coze")
+            elif is_full_market_daily and has_tushare:
+                preferred.append("tushare")
+        elif method_name == "get_stock_basic":
+            if has_single_ts_code and has_coze:
+                preferred.append("coze")
+        elif method_name in {
+            "get_realtime_quotes",
+            "get_realtime_index_quotes",
+            "get_daily_basic",
+            "get_financial_indicator",
+            "get_financial_data",
+            "get_trade_calendar",
+            "get_latest_trade_date",
+        }:
+            if has_coze:
+                preferred.append("coze")
+        elif method_name == "get_index_daily":
+            if has_tushare:
+                preferred.append("tushare")
+
+        return preferred
     
     # ==================== 通用数据获取方法 ====================
     
@@ -151,11 +220,23 @@ class DataSourceManager(BaseManager):
             (data, source_name) - 数据和数据源名称
         """
         adapters = list(self._adapters)
-        
-        # 如果指定了优先数据源，调整顺序
-        if preferred_source and preferred_source in self._adapter_map:
-            preferred = self._adapter_map[preferred_source]
-            adapters = [preferred] + [a for a in adapters if a.name != preferred_source]
+
+        preferred_sources: List[str] = []
+        if preferred_source:
+            preferred_sources = [preferred_source]
+        else:
+            preferred_sources = self._get_default_preferred_sources(method_name, kwargs)
+
+        if preferred_sources:
+            reordered: List[AsyncDataSourceAdapter] = []
+            added = set()
+            for source_name in preferred_sources:
+                adapter = self._adapter_map.get(source_name)
+                if adapter and source_name not in added:
+                    reordered.append(adapter)
+                    added.add(source_name)
+            reordered.extend(adapter for adapter in adapters if adapter.name not in added)
+            adapters = reordered
         
         for adapter in adapters:
             if not await adapter.is_available():
@@ -166,7 +247,12 @@ class DataSourceManager(BaseManager):
                 continue
             
             try:
-                result = await method(**kwargs)
+                signature = inspect.signature(method)
+                accepted_kwargs = {
+                    key: value for key, value in kwargs.items()
+                    if key in signature.parameters
+                }
+                result = await method(**accepted_kwargs)
                 
                 # 检查结果是否有效
                 if result is not None:

@@ -7,6 +7,7 @@ Tushare 数据源适配器
 返回数据格式遵循 base.py 中定义的标准 TypedDict 结构。
 """
 import asyncio
+import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date, timedelta
 
@@ -128,11 +129,12 @@ class TushareAdapter(AsyncDataSourceAdapter):
         
         try:
             import tushare as ts
-            ts.set_token(token)
+            # 避免 tushare 写入 `~/tk.csv`（在受限 sandbox 下可能无权限）。
+            # 通过环境变量/显式 token 初始化 pro 客户端即可。
+            os.environ.setdefault("TUSHARE_TOKEN", token)
+            os.environ.setdefault("TS_TOKEN", token)
             self._ts = ts
-            self._pro = ts.pro_api()
-            self._pro._DataApi__token = token
-            self._pro._DataApi__http_url = 'http://lianghua.nanyangqiankun.top'
+            self._pro = ts.pro_api(token)
             self._initialized = True
             self.logger.info("Tushare adapter initialized ✓")
         except Exception as e:
@@ -357,7 +359,7 @@ class TushareAdapter(AsyncDataSourceAdapter):
                 df = await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
-                        lambda code_str=ts_code_str: self.ts.realtime_quote(ts_code=code_str)
+                        lambda code_str=ts_code_str: self._ts.realtime_quote(ts_code=code_str)
                     ),
                     timeout=timeout
                 )
@@ -946,8 +948,13 @@ class TushareAdapter(AsyncDataSourceAdapter):
                 if valid_dates:
                     return valid_dates[-1]
         except Exception as e:
-            self.logger.error(f"Failed to get latest trade date: {e}")
-        
+            self.logger.warning(
+                "Failed to get latest trade date from Tushare, "
+                "will let DataSourceManager fallback to other sources: %s",
+                e,
+            )
+            return None
+
         return cutoff_date
     
     async def is_trading_time(self) -> bool:

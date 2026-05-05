@@ -610,8 +610,18 @@ class AKShareAdapter(AsyncDataSourceAdapter):
     
     async def get_latest_trade_date(self) -> Optional[str]:
         """获取最近交易日"""
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-        return yesterday
+        now = datetime.now()
+        cutoff_dt = now if now.hour >= 18 else (now - timedelta(days=1))
+        cutoff_date = cutoff_dt.strftime("%Y%m%d")
+        start_date = (cutoff_dt - timedelta(days=60)).strftime("%Y%m%d")
+
+        trade_dates = await self.get_trade_calendar(start_date, cutoff_date)
+        if trade_dates:
+            valid_dates = [d for d in trade_dates if d <= cutoff_date]
+            if valid_dates:
+                return valid_dates[-1]
+
+        return cutoff_date
     
     # ==================== 指数 ====================
     

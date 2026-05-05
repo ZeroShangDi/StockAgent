@@ -143,6 +143,35 @@ class TushareSettings(BaseSettings):
         return bool(self.token.get_secret_value())
 
 
+class CozeSettings(BaseSettings):
+    """Coze 工作流数据源配置
+
+    环境变量: COZE_API_TOKEN, COZE_WORKFLOW_ID, COZE_SPACE_ID, COZE_API_BASE, ...
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="COZE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    api_token: SecretStr = Field(
+        default=SecretStr(""),
+        description="Coze PAT / API Token",
+    )
+    api_base: str = "https://api.coze.cn"
+    workflow_id: str = "7635993821533487155"
+    space_id: str = "7492401860964810793"
+    app_id: Optional[str] = None
+    bot_id: Optional[str] = None
+    timeout: float = 30.0
+
+    @property
+    def is_configured(self) -> bool:
+        """检查是否已配置 Coze 工作流访问参数"""
+        return bool(self.api_token.get_secret_value()) and bool(self.workflow_id)
+
+
 class LLMSettings(BaseSettings):
     """LLM 模型配置
     
@@ -317,6 +346,12 @@ class DataSyncSettings(BaseSettings):
     
     # 股票日线数据采集时间 (默认: 每个交易日 15:30)
     stock_daily_schedule: Optional[str] = None
+
+    # 是否只同步重点股票（自选股 + 监听股），适用于 Coze 单股模式
+    focus_stocks_only: bool = False
+
+    # 重点股票最大同步数量（去重后截断）
+    focus_stocks_max_count: int = 200
     
     # 指数基础信息采集时间 (默认: 每个交易日 9:00)
     index_basic_schedule: Optional[str] = None
@@ -481,6 +516,10 @@ class Settings(BaseSettings):
     @property
     def llm(self) -> LLMSettings:
         return _get_llm_settings()
+
+    @property
+    def coze(self) -> CozeSettings:
+        return _get_coze_settings()
     
     @property
     def observability(self) -> ObservabilitySettings:
@@ -537,6 +576,11 @@ def _get_tushare_settings() -> TushareSettings:
 @lru_cache()
 def _get_llm_settings() -> LLMSettings:
     return LLMSettings()
+
+
+@lru_cache()
+def _get_coze_settings() -> CozeSettings:
+    return CozeSettings()
 
 
 @lru_cache()

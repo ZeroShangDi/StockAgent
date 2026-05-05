@@ -4,7 +4,7 @@
 提供统一的数据源适配器接口，支持多数据源自动切换和降级。
 
 使用方式:
-    from src.data_sources import TushareAdapter, AKShareAdapter, BaoStockAdapter
+    from src.data_sources import TushareAdapter, AKShareAdapter, BaoStockAdapter, CozeWorkflowAdapter
     
     # 创建适配器
     adapter = TushareAdapter(token="your_token")
@@ -18,17 +18,17 @@
     await adapter.shutdown()
 
 数据源能力对比:
-    | 功能          | Tushare | AKShare | BaoStock |
-    |---------------|---------|---------|----------|
-    | 股票列表      | ✅      | ✅      | ✅       |
-    | 日线行情      | ✅      | ✅      | ✅       |
-    | 实时行情      | ✅      | ✅      | ❌       |
-    | 每日指标      | ✅      | ⚠️慢    | ⚠️部分   |
-    | 财务数据      | ✅      | ❌      | ❌       |
-    | 资金流向      | ✅      | ✅      | ❌       |
-    | 涨跌停        | ✅      | ✅      | ❌       |
-    | 新闻公告      | ⚠️付费  | ✅      | ❌       |
-    | K线数据       | ✅      | ✅      | ✅       |
+    | 功能          | Tushare | AKShare | Coze Workflow | BaoStock |
+    |---------------|---------|---------|---------------|----------|
+    | 股票列表      | ✅      | ✅      | ✅            | ✅       |
+    | 日线行情      | ✅      | ✅      | ✅            | ✅       |
+    | 实时行情      | ✅      | ✅      | ✅            | ❌       |
+    | 每日指标      | ✅      | ⚠️慢    | ❌            | ⚠️部分   |
+    | 财务数据      | ✅      | ❌      | ✅            | ❌       |
+    | 资金流向      | ✅      | ✅      | ⚠️待扩展      | ❌       |
+    | 涨跌停        | ✅      | ✅      | ❌            | ❌       |
+    | 新闻公告      | ⚠️付费  | ✅      | ❌            | ❌       |
+    | K线数据       | ✅      | ✅      | ✅            | ✅       |
 """
 
 from .base import (
@@ -52,6 +52,7 @@ from .base import (
 from .tushare_adapter import TushareAdapter
 from .akshare_adapter import AKShareAdapter
 from .baostock_adapter import BaoStockAdapter
+from .coze_workflow_adapter import CozeWorkflowAdapter
 
 
 __all__ = [
@@ -75,4 +76,5 @@ __all__ = [
     "TushareAdapter",
     "AKShareAdapter",
     "BaoStockAdapter",
+    "CozeWorkflowAdapter",
 ]

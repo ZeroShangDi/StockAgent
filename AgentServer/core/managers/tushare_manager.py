@@ -8,6 +8,7 @@ Tushare 管理器 (数据 Provider)
 """
 
 import asyncio
+import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date, timedelta
 import time
@@ -100,9 +101,12 @@ class TushareManager(BaseManager):
         import tushare as ts
         
         token = self._config.token.get_secret_value()
-        ts.set_token(token)
+        # 避免 tushare 写入 `~/tk.csv`（在 sandbox 下可能无权限）。
+        # 通过环境变量/显式 token 初始化 pro 客户端即可。
+        os.environ.setdefault("TUSHARE_TOKEN", token)
+        os.environ.setdefault("TS_TOKEN", token)
         self._ts = ts  # 保存 tushare 模块引用，用于非 pro 接口
-        self._pro = ts.pro_api()
+        self._pro = ts.pro_api(token)
         
         # 频率控制（暂时禁用）
         # rate_per_second = self._config.rate_limit / 60.0
@@ -128,7 +132,20 @@ class TushareManager(BaseManager):
             # 简单调用测试
             await self._call_api("trade_cal", start_date="20240101", end_date="20240101")
             return True
-        except Exception:
+        except Exception as e:
+            self.logger.warning("Tushare trade_cal health check failed: %s", e)
+        
+        try:
+            # 有些 token 没有 trade_cal 权限，但日线同步仍然可用
+            await self._call_api(
+                "daily",
+                ts_code="000001.SZ",
+                start_date="20240102",
+                end_date="20240102",
+            )
+            return True
+        except Exception as e:
+            self.logger.warning("Tushare daily health check failed: %s", e)
             return False
     
     async def _call_api(self, api_name: str, **kwargs) -> pd.DataFrame:
@@ -888,9 +905,14 @@ class TushareManager(BaseManager):
         except Exception as e:
             self.logger.error(f"Failed to get trade calendar: {e}")
         
-        # 兜底: 返回截止日期
-        self.logger.warning(f"Using cutoff date as fallback: {cutoff_date}")
-        return cutoff_date
+        # 兜底: 至少回退到最近工作日，避免周末直接返回非交易日
+        fallback_dt = datetime.strptime(cutoff_date, "%Y%m%d")
+        while fallback_dt.weekday() >= 5:
+            fallback_dt -= timedelta(days=1)
+
+        fallback_date = fallback_dt.strftime("%Y%m%d")
+        self.logger.warning(f"Using weekday cutoff fallback: {fallback_date}")
+        return fallback_date
     
     # ==================== 实时行情 (Listener 节点使用) ====================
     

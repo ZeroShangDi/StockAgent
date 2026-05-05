@@ -189,6 +189,7 @@ class DataSourceType(Enum):
     TUSHARE = "tushare"
     AKSHARE = "akshare"
     BAOSTOCK = "baostock"
+    COZE = "coze"
 
 
 @dataclass
