@@ -13,6 +13,7 @@ from .report import router as report_router
 from .system import router as system_router
 from .market_weather import router as market_weather_router
 from .stock_picker import router as stock_picker_router
+from .practice import router as practice_router
 
 __all__ = [
     "auth_router",
@@ -26,4 +27,5 @@ __all__ = [
     "system_router",
     "market_weather_router",
     "stock_picker_router",
+    "practice_router",
 ]

@@ -133,6 +133,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/stock/StockPoolsView.vue'),
         meta: { title: '股池管理' },
       },
+      {
+        path: 'kline-practice',
+        name: 'KlinePractice',
+        component: () => import('@/views/practice/KlinePracticeView.vue'),
+        meta: { title: '盘感练习' },
+      },
       
       // 策略
       {

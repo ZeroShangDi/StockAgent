@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -30,9 +30,32 @@ use([
 const props = defineProps<{
   data: StockDaily[]
   tsCode: string
+  preserveZoom?: boolean
 }>()
 
 const themeStore = useThemeStore()
+const zoomRange = ref<{ start: number; end: number } | null>(null)
+
+watch(
+  () => props.tsCode,
+  () => {
+    zoomRange.value = null
+  }
+)
+
+function handleDataZoom(event: { start?: number; end?: number; batch?: Array<{ start?: number; end?: number }> }): void {
+  if (!props.preserveZoom) {
+    return
+  }
+
+  const payload = event?.batch?.[0] ?? event
+  if (typeof payload?.start === 'number' && typeof payload?.end === 'number') {
+    zoomRange.value = {
+      start: payload.start,
+      end: payload.end,
+    }
+  }
+}
 
 // 主题相关颜色
 const themeColors = computed(() => {
@@ -91,6 +114,9 @@ const option = computed(() => {
   const ma5 = calculateMA(sortedData, 5)
   const ma10 = calculateMA(sortedData, 10)
   const ma20 = calculateMA(sortedData, 20)
+  const zoom = props.preserveZoom && zoomRange.value
+    ? zoomRange.value
+    : { start: 70, end: 100 }
   
   return {
     tooltip: {
@@ -172,16 +198,16 @@ const option = computed(() => {
       {
         type: 'inside',
         xAxisIndex: [0, 1],
-        start: 70,
-        end: 100,
+        start: zoom.start,
+        end: zoom.end,
       },
       {
         show: true,
         xAxisIndex: [0, 1],
         type: 'slider',
         bottom: 8,
-        start: 70,
-        end: 100,
+        start: zoom.start,
+        end: zoom.end,
         height: 28,
         borderColor: 'transparent',
         backgroundColor: colors.zoomBg,
@@ -342,7 +368,7 @@ function calculateMA(data: StockDaily[], period: number): (number | '-')[] {
 
 <template>
   <div class="stock-chart">
-    <VChart v-if="data.length > 0" :option="option" autoresize />
+    <VChart v-if="data.length > 0" :option="option" autoresize @datazoom="handleDataZoom" />
     <el-empty v-else description="暂无K线数据" />
   </div>
 </template>

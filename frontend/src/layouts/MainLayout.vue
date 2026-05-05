@@ -40,6 +40,7 @@ import {
   WarningFilled,
   Opportunity,
   CollectionTag,
+  DataLine,
 } from '@element-plus/icons-vue'
 import { useAuth } from '@/hooks'
 import { useUserStore, useTaskStore, useThemeStore } from '@/stores'
@@ -79,6 +80,7 @@ const menuSections = [
       { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
       { path: '/market-weather', icon: Sunny, title: '市场晴雨表' },
       { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
+      { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
       { path: '/watchlist', icon: Star, title: '自选股' },
       { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
       { path: '/strategies', icon: TrendCharts, title: '市场监听' },

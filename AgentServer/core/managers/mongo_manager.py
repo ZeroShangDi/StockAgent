@@ -363,6 +363,13 @@ class MongoManager(BaseManager):
         await self._safe_create_indexes("sync_records", [
             IndexModel([("sync_type", ASCENDING)], unique=True),
         ])
+
+        # K线练习会话表
+        await self._safe_create_indexes("kline_practice_sessions", [
+            IndexModel([("session_id", ASCENDING)], unique=True),
+            IndexModel([("user_id", ASCENDING), ("status", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)]),
+        ])
         
         self.logger.info("MongoDB indexes ensured")
     
