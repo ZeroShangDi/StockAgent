@@ -8,7 +8,10 @@
           查看一句话选股、自定义观察等来源沉淀下来的本地股池，并快速浏览池内股票与来源线索。
         </p>
       </div>
-      <el-button :loading="loading" @click="loadPools">刷新股池</el-button>
+      <div class="hero-actions">
+        <el-button type="primary" @click="openCreateDialog">新建股池</el-button>
+        <el-button :loading="loading" @click="loadPools">刷新股池</el-button>
+      </div>
     </section>
 
     <section class="body-grid">
@@ -147,14 +150,62 @@
         </div>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="createDialogVisible"
+      title="新建股池"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <div class="dialog-body">
+        <div class="field-block">
+          <label>股池名称</label>
+          <el-input v-model="createForm.name" maxlength="50" placeholder="例如：异动确认池" />
+        </div>
+
+        <div class="field-block">
+          <label>股池类型</label>
+          <el-select v-model="createForm.pool_type" class="dialog-select" placeholder="请选择股池类型">
+            <el-option
+              v-for="type in STOCK_POOL_TYPE_OPTIONS"
+              :key="type"
+              :label="type"
+              :value="type"
+            />
+          </el-select>
+        </div>
+
+        <div class="field-block">
+          <label>备注说明</label>
+          <el-input
+            v-model="createForm.description"
+            type="textarea"
+            :rows="3"
+            maxlength="200"
+            show-word-limit
+            placeholder="可选，记录该股池的用途和筛选标准"
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="createDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="creatingPool" @click="handleCreatePool">
+            创建股池
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { stockPickerApi, subscriptionApi } from '@/api'
+import { STOCK_POOL_TYPE_OPTIONS } from '@/api/modules/stock-picker'
 import type { StockPoolDetail, StockPoolSummary } from '@/api/modules/stock-picker'
 import type { StockPoolStock } from '@/api/modules/stock-picker'
 import type { StrategyTypeInfo } from '@/api/types'
@@ -169,6 +220,13 @@ const strategyTypes = ref<StrategyTypeInfo[]>([])
 const strategyTypeLoading = ref(false)
 const batchAdding = ref(false)
 const selectedStrategyType = ref('')
+const createDialogVisible = ref(false)
+const creatingPool = ref(false)
+const createForm = reactive({
+  name: '',
+  pool_type: STOCK_POOL_TYPE_OPTIONS[0],
+  description: '',
+})
 
 function formatDateTime(value: string): string {
   const date = new Date(value)
@@ -307,6 +365,48 @@ async function handleDeletePool(): Promise<void> {
   await loadPools()
 }
 
+function resetCreateForm(): void {
+  createForm.name = ''
+  createForm.pool_type = STOCK_POOL_TYPE_OPTIONS[0]
+  createForm.description = ''
+}
+
+function openCreateDialog(): void {
+  resetCreateForm()
+  createDialogVisible.value = true
+}
+
+async function handleCreatePool(): Promise<void> {
+  const name = createForm.name.trim()
+  const poolType = createForm.pool_type.trim()
+  const description = createForm.description.trim()
+
+  if (!name) {
+    ElMessage.warning('请输入股池名称')
+    return
+  }
+
+  if (!poolType) {
+    ElMessage.warning('请输入股池类型')
+    return
+  }
+
+  creatingPool.value = true
+  try {
+    const pool = await stockPickerApi.createPool({
+      name,
+      pool_type: poolType,
+      description: description || undefined,
+    })
+    ElMessage.success(`已创建股池 ${pool.name}`)
+    createDialogVisible.value = false
+    await loadPools()
+    await selectPool(pool.pool_id)
+  } finally {
+    creatingPool.value = false
+  }
+}
+
 loadPools()
 </script>
 
@@ -334,6 +434,13 @@ loadPools()
   justify-content: space-between;
   gap: 20px;
   padding: 28px 32px;
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .eyebrow {
@@ -489,6 +596,10 @@ h2 {
 
   .detail-actions {
     justify-content: flex-start;
+  }
+
+  .hero-actions {
+    width: 100%;
   }
 }
 </style>

@@ -1,5 +1,9 @@
 import { api } from '../client'
 
+export const STOCK_POOL_TYPE_OPTIONS = ['候选池', '观察池', '监控池', '自选池'] as const
+
+export type StockPoolTypeOption = typeof STOCK_POOL_TYPE_OPTIONS[number]
+
 export interface StockPickerMeta {
   code: string
   ts_code: string
@@ -57,7 +61,7 @@ export interface StockPoolListResult {
 
 export interface CreateStockPoolRequest {
   name: string
-  pool_type: string
+  pool_type: StockPoolTypeOption | string
   description?: string
 }
 

@@ -154,6 +154,7 @@ import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { stockPickerApi } from '@/api'
+import { STOCK_POOL_TYPE_OPTIONS } from '@/api/modules/stock-picker'
 import type { StockPickerQueryResult, StockPickerRow, StockPoolSummary } from '@/api/modules/stock-picker'
 
 const quickExamples = [
@@ -162,7 +163,7 @@ const quickExamples = [
   '低位放量的医药股',
 ]
 
-const poolTypeOptions = ['候选池', '观察池', '监控池', '自选池']
+const poolTypeOptions = STOCK_POOL_TYPE_OPTIONS
 
 const loading = ref(false)
 const queryText = ref('')
