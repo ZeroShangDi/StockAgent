@@ -62,6 +62,7 @@ dev = [
 
 [project.scripts]
 stock-agent = "main:main"
+stock-agent-dev = "src.dev_stack:main"
 
 [build-system]
 requires = ["hatchling"]

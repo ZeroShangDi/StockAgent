@@ -200,6 +200,57 @@ pip install -r requirements.txt
 cd frontend && npm install
 ```
 
+### 1.1 一键启动开发常用后端节点
+
+在 `AgentServer` 目录下可以直接使用统一入口，同时拉起后端节点。
+
+默认 `--all` 使用最高档 `full`：
+
+```bash
+python main.py --all
+```
+
+三个档位分别是：
+
+- `lite`
+  - `web`
+  - `inference`
+  - `listener`
+- `standard`
+  - `web`
+  - `data_sync`
+  - `inference`
+  - `listener`
+  - `backtest`
+- `full`
+  - `web`
+  - `data_sync`
+  - `inference`
+  - `listener`
+  - `backtest`
+  - `mcp`
+
+可选方式：
+
+```bash
+# 启动标准档
+python main.py --all --profile standard
+
+# 启动轻量档
+python main.py --all --profile lite
+
+# 自定义节点列表
+python main.py --all --nodes web,data_sync,listener
+```
+
+如果你使用的是可编辑安装，也可以直接执行：
+
+```bash
+stock-agent-dev
+```
+
+停止时直接按 `Ctrl+C`，脚本会一并结束所有已启动节点。
+
 ### 2. 配置环境变量
 
 ```bash
@@ -239,11 +290,22 @@ docker run -d -p 27017:27017 mongo
 docker run -d -p 6379:6379 redis
 docker run -d -p 19530:19530 milvusdb/milvus:latest
 
-# 启动后端节点
+# 启动后端节点（推荐开发方式，默认 full）
+python main.py --all
+
+# 标准档
+python main.py --all --profile standard
+
+# 轻量档
+python main.py --all --profile lite
+
+# 按需单独启动节点
 NODE_TYPE=web python main.py          # Web 网关
 NODE_TYPE=data_sync python main.py    # 数据同步
 NODE_TYPE=mcp python main.py          # MCP 服务
 NODE_TYPE=inference python main.py    # 推理节点
+NODE_TYPE=listener python main.py     # 监听节点
+NODE_TYPE=backtest python main.py     # 回测节点
 
 # 启动前端
 cd frontend && npm run dev

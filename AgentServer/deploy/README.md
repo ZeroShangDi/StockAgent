@@ -69,10 +69,20 @@ cd AgentServer
 # 安装依赖
 pip install -r requirements.txt
 
-# 启动各节点（不同终端）
+# 一键启动完整开发栈
+python main.py --all
+
+# 启动标准档
+python main.py --all --profile standard
+
+# 启动轻量档
+python main.py --all --profile lite
+
+# 也可按需单独启动
 NODE_TYPE=web python main.py
 NODE_TYPE=data_sync python main.py
 NODE_TYPE=inference python main.py
+NODE_TYPE=listener python main.py
 NODE_TYPE=backtest python main.py
 ```
 
