@@ -55,6 +55,24 @@ STRATEGIES = [
             "stock_configs": {},
         },
     },
+    {
+        "strategy_type": StrategyType.FIXED_STOP_LOSS.value,
+        "strategy_name": "固定止损",
+        "params": {
+            "default_stop_loss_pct": 8.0,
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+    },
+    {
+        "strategy_type": StrategyType.TRAILING_STOP_LOSS.value,
+        "strategy_name": "移动止损",
+        "params": {
+            "default_trail_pct": 6.0,
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+    },
 ]
 
 

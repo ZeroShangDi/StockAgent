@@ -6,6 +6,8 @@
 - PriceChangeStrategy: 涨跌幅阈值策略
 - MA5BuyStrategy: 5日线低吸策略
 - SupportResistanceStrategy: 撑压线策略
+- FixedStopLossStrategy: 固定止损策略
+- TrailingStopLossStrategy: 移动止损策略
 """
 
 from .base import BaseStrategy
@@ -13,6 +15,8 @@ from .limit_open import LimitOpenStrategy
 from .price_change import PriceChangeStrategy
 from .ma5_buy import MA5BuyStrategy
 from .support_resistance import SupportResistanceStrategy
+from .fixed_stop_loss import FixedStopLossStrategy
+from .trailing_stop_loss import TrailingStopLossStrategy
 
 __all__ = [
     "BaseStrategy",
@@ -20,4 +24,6 @@ __all__ = [
     "PriceChangeStrategy",
     "MA5BuyStrategy",
     "SupportResistanceStrategy",
+    "FixedStopLossStrategy",
+    "TrailingStopLossStrategy",
 ]

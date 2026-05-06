@@ -287,6 +287,8 @@ export enum StrategyType {
   LIMIT_OPEN = 'limit_open',
   PRICE_CHANGE = 'price_change',
   SUPPORT_RESISTANCE = 'support_resistance',
+  FIXED_STOP_LOSS = 'fixed_stop_loss',
+  TRAILING_STOP_LOSS = 'trailing_stop_loss',
   VOLUME_SURGE = 'volume_surge',
   MA_CROSS = 'ma_cross',
   MA5_BUY = 'ma5_buy',
@@ -359,11 +361,21 @@ export interface StrategyStockPoint {
 }
 
 export interface StrategyStockConfig {
-  trend_type: string
-  support_enabled: boolean
-  resistance_enabled: boolean
-  support_points: StrategyStockPoint[]
-  resistance_points: StrategyStockPoint[]
+  trend_type?: string
+  support_enabled?: boolean
+  resistance_enabled?: boolean
+  support_points?: StrategyStockPoint[]
+  resistance_points?: StrategyStockPoint[]
+  enabled?: boolean
+  reference_price?: number | null
+  reference_date?: string
+  stop_loss_pct?: number | null
+  entry_price?: number | null
+  entry_date?: string
+  highest_price?: number | null
+  highest_price_date?: string
+  trail_pct?: number | null
+  last_triggered_date?: string
   note?: string
 }
 

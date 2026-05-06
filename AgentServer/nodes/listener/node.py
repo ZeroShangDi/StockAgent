@@ -35,6 +35,8 @@ from .strategies import (
     PriceChangeStrategy,
     MA5BuyStrategy,
     SupportResistanceStrategy,
+    FixedStopLossStrategy,
+    TrailingStopLossStrategy,
 )
 
 
@@ -189,6 +191,8 @@ class ListenerNode(BaseNode):
             StrategyType.PRICE_CHANGE.value: PriceChangeStrategy(),
             StrategyType.MA5_BUY.value: MA5BuyStrategy(),
             StrategyType.SUPPORT_RESISTANCE.value: SupportResistanceStrategy(),
+            StrategyType.FIXED_STOP_LOSS.value: FixedStopLossStrategy(),
+            StrategyType.TRAILING_STOP_LOSS.value: TrailingStopLossStrategy(),
         }
         self.logger.info(f"Registered strategies: {list(self._strategies.keys())}")
     

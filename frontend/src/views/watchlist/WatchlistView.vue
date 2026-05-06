@@ -628,6 +628,12 @@ function getSortLabel(): string {
         <p v-if="selectedStrategyType === 'support_resistance'" class="batch-hint">
           撑压线策略批量加入后，还需要到市场监听页面逐只补充点位配置。
         </p>
+        <p v-else-if="selectedStrategyType === 'fixed_stop_loss'" class="batch-hint">
+          固定止损策略批量加入后，会按最新本地收盘价初始化止损基准，后续可逐只调整。
+        </p>
+        <p v-else-if="selectedStrategyType === 'trailing_stop_loss'" class="batch-hint">
+          移动止损策略批量加入后，会按最新本地收盘价初始化入场价与最高价，后续可逐只调整。
+        </p>
       </div>
 
       <template #footer>

@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.protocols import MarketSnapshot, StrategySubscription, StrategyType
+from nodes.listener.strategies.fixed_stop_loss import FixedStopLossStrategy
 from nodes.listener.strategies.ma5_buy import MA5BuyStrategy, StockState
 from nodes.listener.strategies.price_change import PriceChangeStrategy
 from nodes.listener.strategies.support_resistance import SupportResistanceStrategy
+from nodes.listener.strategies.trailing_stop_loss import TrailingStopLossStrategy
 
 
 @pytest.mark.asyncio
@@ -159,3 +161,100 @@ async def test_support_resistance_strategy_percent_thresholds_are_percent_values
     alerts = await strategy.evaluate(subscription=subscription, snapshot=snapshot)
 
     assert alerts == []
+
+
+@pytest.mark.asyncio
+async def test_fixed_stop_loss_strategy_triggers_and_persists_daily_state() -> None:
+    strategy = FixedStopLossStrategy()
+    strategy._persist_runtime_fields = AsyncMock()  # type: ignore[method-assign]
+    today_key = date.today().strftime("%Y%m%d")
+
+    subscription = StrategySubscription(
+        strategy_name="固定止损",
+        strategy_type=StrategyType.FIXED_STOP_LOSS,
+        watch_list=["000001.SZ"],
+        params={
+            "once_per_day": True,
+            "stock_configs": {
+                "000001.SZ": {
+                    "enabled": True,
+                    "reference_price": 10.0,
+                    "reference_date": "20260505",
+                    "stop_loss_pct": 8.0,
+                    "last_triggered_date": "",
+                }
+            },
+        },
+    )
+    snapshot = MarketSnapshot(
+        quotes={
+            "000001.SZ": {
+                "ts_code": "000001.SZ",
+                "name": "平安银行",
+                "price": 9.15,
+                "low": 9.12,
+            }
+        }
+    )
+
+    alerts = await strategy.evaluate(subscription=subscription, snapshot=snapshot)
+
+    assert len(alerts) == 1
+    assert alerts[0].extra_data["event_type"] == "fixed_stop_loss"
+    strategy._persist_runtime_fields.assert_awaited_once_with(  # type: ignore[attr-defined]
+        subscription=subscription,
+        ts_code="000001.SZ",
+        updates={"last_triggered_date": today_key},
+    )
+
+
+@pytest.mark.asyncio
+async def test_trailing_stop_loss_strategy_updates_highest_price_and_triggers() -> None:
+    strategy = TrailingStopLossStrategy()
+    strategy._persist_runtime_fields = AsyncMock()  # type: ignore[method-assign]
+    today_key = date.today().strftime("%Y%m%d")
+
+    subscription = StrategySubscription(
+        strategy_name="移动止损",
+        strategy_type=StrategyType.TRAILING_STOP_LOSS,
+        watch_list=["000001.SZ"],
+        params={
+            "once_per_day": True,
+            "stock_configs": {
+                "000001.SZ": {
+                    "enabled": True,
+                    "entry_price": 10.0,
+                    "entry_date": "20260505",
+                    "highest_price": 12.0,
+                    "highest_price_date": "20260505",
+                    "trail_pct": 5.0,
+                    "last_triggered_date": "",
+                }
+            },
+        },
+    )
+    snapshot = MarketSnapshot(
+        quotes={
+            "000001.SZ": {
+                "ts_code": "000001.SZ",
+                "name": "平安银行",
+                "price": 12.1,
+                "high": 12.8,
+                "low": 12.05,
+            }
+        }
+    )
+
+    alerts = await strategy.evaluate(subscription=subscription, snapshot=snapshot)
+
+    assert len(alerts) == 1
+    assert alerts[0].extra_data["event_type"] == "trailing_stop_loss"
+    strategy._persist_runtime_fields.assert_awaited_once_with(  # type: ignore[attr-defined]
+        subscription=subscription,
+        ts_code="000001.SZ",
+        updates={
+            "highest_price": 12.8,
+            "highest_price_date": today_key,
+            "last_triggered_date": today_key,
+        },
+    )

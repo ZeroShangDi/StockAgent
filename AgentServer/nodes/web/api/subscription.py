@@ -36,6 +36,8 @@ IMPLEMENTED_STRATEGIES = [
     StrategyType.LIMIT_OPEN,   # 涨跌停打开
     StrategyType.PRICE_CHANGE, # 涨跌幅阈值
     StrategyType.SUPPORT_RESISTANCE, # 撑压线
+    StrategyType.FIXED_STOP_LOSS, # 固定止损
+    StrategyType.TRAILING_STOP_LOSS, # 移动止损
 ]
 
 IMPLEMENTED_STRATEGY_VALUES = [s.value for s in IMPLEMENTED_STRATEGIES]
@@ -84,6 +86,32 @@ STRATEGY_META = {
         "param_schema": [
             {"key": "near_threshold_pct", "label": "接近阈值 (%)", "type": "float", "default": 1.0},
             {"key": "breakout_threshold_pct", "label": "突破阈值 (%)", "type": "float", "default": 0.5},
+            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
+        ],
+    },
+    StrategyType.FIXED_STOP_LOSS.value: {
+        "name": "固定止损",
+        "description": "从加入监听时的基准价开始计算，跌到固定比例时提醒",
+        "default_params": {
+            "default_stop_loss_pct": 8.0,
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+        "param_schema": [
+            {"key": "default_stop_loss_pct", "label": "默认止损比例 (%)", "type": "float", "default": 8.0},
+            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
+        ],
+    },
+    StrategyType.TRAILING_STOP_LOSS.value: {
+        "name": "移动止损",
+        "description": "跟踪加入后最高价，回撤到固定比例时提醒",
+        "default_params": {
+            "default_trail_pct": 6.0,
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+        "param_schema": [
+            {"key": "default_trail_pct", "label": "默认回撤比例 (%)", "type": "float", "default": 6.0},
             {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
         ],
     },
@@ -246,7 +274,7 @@ async def _get_daily_record_for_date(ts_code: str, trade_date: str) -> dict:
     record = await mongo_manager.find_one(
         "stock_daily",
         {"ts_code": ts_code, "trade_date": trade_date},
-        projection={"trade_date": 1, "low": 1, "high": 1},
+        projection={"trade_date": 1, "low": 1, "high": 1, "close": 1},
     )
     if not record:
         raise HTTPException(status_code=400, detail=f"{ts_code} 在 {trade_date} 没有日线数据，请选择有效交易日")
@@ -261,6 +289,50 @@ async def _resolve_point_price(ts_code: str, trade_date: str, price_field: str) 
         raise HTTPException(status_code=400, detail=f"{ts_code} 在 {trade_date} 缺少 {price_field} 价格，无法自动补全点位")
 
     return float(value)
+
+
+async def _get_latest_daily_record(ts_code: str) -> dict:
+    records = await mongo_manager.find_many(
+        "stock_daily",
+        {"ts_code": ts_code},
+        projection={"trade_date": 1, "close": 1, "high": 1},
+        sort=[("trade_date", -1)],
+        limit=1,
+    )
+    if not records:
+        raise HTTPException(status_code=400, detail=f"{ts_code} 缺少本地日线数据，暂时无法初始化止损基准")
+    return records[0]
+
+
+async def _resolve_close_price(ts_code: str, trade_date: str) -> float:
+    record = await _get_daily_record_for_date(ts_code, trade_date)
+    value = record.get("close")
+    if value is None:
+        raise HTTPException(status_code=400, detail=f"{ts_code} 在 {trade_date} 缺少收盘价，无法自动补全止损基准")
+    return float(value)
+
+
+def _parse_positive_float(raw_value: Any, field_name: str) -> float:
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须为有效数字") from exc
+
+    if value <= 0:
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须大于 0")
+    return value
+
+
+def _normalize_percent_input(raw_value: Any, field_name: str, default: float) -> float:
+    candidate = default if raw_value in (None, "") else raw_value
+    try:
+        value = float(candidate)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须为有效数字") from exc
+
+    if value <= 0:
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须大于 0")
+    return value
 
 
 async def _normalize_line_points(
@@ -335,6 +407,156 @@ async def _normalize_support_resistance_config(ts_code: str, config: Dict[str, A
         )
 
     return normalized
+
+
+async def _normalize_fixed_stop_loss_config(
+    ts_code: str,
+    config: Dict[str, Any],
+    existing_config: Optional[Dict[str, Any]],
+    default_stop_loss_pct: float,
+) -> Dict[str, Any]:
+    current = dict(existing_config or {})
+    enabled = bool(config.get("enabled", current.get("enabled", True)))
+    note = str(config.get("note", current.get("note", "")) or "").strip()
+
+    reference_date = str(config.get("reference_date", current.get("reference_date", "")) or "").strip()
+    raw_reference_price = config.get("reference_price", current.get("reference_price"))
+
+    if not reference_date:
+        latest_record = await _get_latest_daily_record(ts_code)
+        reference_date = str(latest_record.get("trade_date") or "")
+        latest_close = float(latest_record.get("close") or 0)
+    else:
+        latest_close = await _resolve_close_price(ts_code, reference_date)
+
+    if raw_reference_price in (None, ""):
+        reference_price = latest_close
+    else:
+        reference_price = _parse_positive_float(raw_reference_price, "参考价格")
+
+    stop_loss_pct = _normalize_percent_input(
+        config.get("stop_loss_pct", current.get("stop_loss_pct")),
+        "止损比例",
+        default_stop_loss_pct,
+    )
+
+    return {
+        "enabled": enabled,
+        "reference_price": round(reference_price, 4),
+        "reference_date": reference_date,
+        "stop_loss_pct": round(stop_loss_pct, 4),
+        "note": note,
+        "last_triggered_date": str(current.get("last_triggered_date", "") or ""),
+    }
+
+
+async def _normalize_trailing_stop_loss_config(
+    ts_code: str,
+    config: Dict[str, Any],
+    existing_config: Optional[Dict[str, Any]],
+    default_trail_pct: float,
+) -> Dict[str, Any]:
+    current = dict(existing_config or {})
+    enabled = bool(config.get("enabled", current.get("enabled", True)))
+    note = str(config.get("note", current.get("note", "")) or "").strip()
+
+    entry_date = str(config.get("entry_date", current.get("entry_date", "")) or "").strip()
+    raw_entry_price = config.get("entry_price", current.get("entry_price"))
+
+    if not entry_date:
+        latest_record = await _get_latest_daily_record(ts_code)
+        entry_date = str(latest_record.get("trade_date") or "")
+        fallback_entry_price = float(latest_record.get("close") or 0)
+    else:
+        fallback_entry_price = await _resolve_close_price(ts_code, entry_date)
+
+    if raw_entry_price in (None, ""):
+        entry_price = fallback_entry_price
+    else:
+        entry_price = _parse_positive_float(raw_entry_price, "入场价格")
+
+    highest_price_date = str(
+        config.get("highest_price_date", current.get("highest_price_date", entry_date)) or entry_date
+    ).strip()
+    raw_highest_price = config.get("highest_price", current.get("highest_price"))
+
+    if raw_highest_price in (None, ""):
+        if highest_price_date:
+            highest_price = await _resolve_close_price(ts_code, highest_price_date)
+        else:
+            highest_price = entry_price
+            highest_price_date = entry_date
+    else:
+        highest_price = _parse_positive_float(raw_highest_price, "最高价格")
+
+    if highest_price_date and highest_price_date < entry_date:
+        raise HTTPException(status_code=400, detail="最高价日期不能早于入场日期")
+
+    highest_price = max(highest_price, entry_price)
+    if not highest_price_date:
+        highest_price_date = entry_date
+
+    trail_pct = _normalize_percent_input(
+        config.get("trail_pct", current.get("trail_pct")),
+        "回撤比例",
+        default_trail_pct,
+    )
+
+    return {
+        "enabled": enabled,
+        "entry_price": round(entry_price, 4),
+        "entry_date": entry_date,
+        "highest_price": round(highest_price, 4),
+        "highest_price_date": highest_price_date,
+        "trail_pct": round(trail_pct, 4),
+        "note": note,
+        "last_triggered_date": str(current.get("last_triggered_date", "") or ""),
+    }
+
+
+async def _initialize_stock_config_on_add(
+    strategy_type: str,
+    record: Dict[str, Any],
+    ts_code: str,
+) -> Optional[Dict[str, Any]]:
+    params = dict(record.get("params", {}) or {})
+    stock_configs = dict(params.get("stock_configs", {}) or {})
+    if strategy_type == StrategyType.SUPPORT_RESISTANCE.value:
+        return None
+
+    if strategy_type == StrategyType.FIXED_STOP_LOSS.value:
+        if stock_configs.get(ts_code):
+            return None
+        latest_record = await _get_latest_daily_record(ts_code)
+        stock_configs[ts_code] = {
+            "enabled": True,
+            "reference_price": round(float(latest_record.get("close") or 0), 4),
+            "reference_date": str(latest_record.get("trade_date") or ""),
+            "stop_loss_pct": round(float(params.get("default_stop_loss_pct", 8.0) or 8.0), 4),
+            "note": "",
+            "last_triggered_date": "",
+        }
+    elif strategy_type == StrategyType.TRAILING_STOP_LOSS.value:
+        if stock_configs.get(ts_code):
+            return None
+        latest_record = await _get_latest_daily_record(ts_code)
+        latest_price = round(float(latest_record.get("close") or 0), 4)
+        latest_date = str(latest_record.get("trade_date") or "")
+        stock_configs[ts_code] = {
+            "enabled": True,
+            "entry_price": latest_price,
+            "entry_date": latest_date,
+            "highest_price": latest_price,
+            "highest_price_date": latest_date,
+            "trail_pct": round(float(params.get("default_trail_pct", 6.0) or 6.0), 4),
+            "note": "",
+            "last_triggered_date": "",
+        }
+    else:
+        return None
+
+    params["stock_configs"] = stock_configs
+    return params
 
 
 async def _normalize_transition_rules(
@@ -661,15 +883,20 @@ async def add_stock_to_strategy(
     
     # 添加到 watch_list
     watch_list.append(ts_code)
-    
+
+    update_payload: Dict[str, Any] = {
+        "watch_list": watch_list,
+        "updated_at": datetime.utcnow(),
+    }
+    initialized_params = await _initialize_stock_config_on_add(strategy_type, record, ts_code)
+    if initialized_params is not None:
+        update_payload["params"] = initialized_params
+
     await mongo_manager.update_one(
         "strategy_subscriptions",
         {"strategy_type": strategy_type},
         {
-            "$set": {
-                "watch_list": watch_list,
-                "updated_at": datetime.utcnow(),
-            }
+            "$set": update_payload
         },
     )
     
@@ -677,9 +904,16 @@ async def add_stock_to_strategy(
     asyncio.create_task(_notify_listeners_refresh(strategy_type))
     
     stock_name = stock.get("name", ts_code)
+    suffix = ""
+    if strategy_type == StrategyType.SUPPORT_RESISTANCE.value:
+        suffix = "，请继续配置撑压线点位"
+    elif strategy_type == StrategyType.FIXED_STOP_LOSS.value:
+        suffix = "，已按最新本地收盘价初始化固定止损基准，可后续调整"
+    elif strategy_type == StrategyType.TRAILING_STOP_LOSS.value:
+        suffix = "，已按最新本地收盘价初始化移动止损基准，可后续调整"
     return AddStockResponse(
         success=True,
-        message=f"已添加 {stock_name}({ts_code})" + ("，请继续配置撑压线点位" if strategy_type == StrategyType.SUPPORT_RESISTANCE.value else ""),
+        message=f"已添加 {stock_name}({ts_code}){suffix}",
         watch_list=watch_list,
     )
 
@@ -723,6 +957,9 @@ async def batch_add_stocks_to_strategy(
     added: List[str] = []
     skipped: List[str] = []
 
+    params = dict(record.get("params", {}) or {})
+    stock_configs = dict(params.get("stock_configs", {}) or {})
+
     for ts_code in normalized_codes:
         if ts_code in watch_list:
             skipped.append(ts_code)
@@ -731,13 +968,41 @@ async def batch_add_stocks_to_strategy(
         watch_list.append(ts_code)
         added.append(ts_code)
 
+        if strategy_type == StrategyType.FIXED_STOP_LOSS.value:
+            latest_record = await _get_latest_daily_record(ts_code)
+            stock_configs[ts_code] = {
+                "enabled": True,
+                "reference_price": round(float(latest_record.get("close") or 0), 4),
+                "reference_date": str(latest_record.get("trade_date") or ""),
+                "stop_loss_pct": round(float(params.get("default_stop_loss_pct", 8.0) or 8.0), 4),
+                "note": "",
+                "last_triggered_date": "",
+            }
+        elif strategy_type == StrategyType.TRAILING_STOP_LOSS.value:
+            latest_record = await _get_latest_daily_record(ts_code)
+            latest_price = round(float(latest_record.get("close") or 0), 4)
+            latest_date = str(latest_record.get("trade_date") or "")
+            stock_configs[ts_code] = {
+                "enabled": True,
+                "entry_price": latest_price,
+                "entry_date": latest_date,
+                "highest_price": latest_price,
+                "highest_price_date": latest_date,
+                "trail_pct": round(float(params.get("default_trail_pct", 6.0) or 6.0), 4),
+                "note": "",
+                "last_triggered_date": "",
+            }
+
     if added:
+        if strategy_type in {StrategyType.FIXED_STOP_LOSS.value, StrategyType.TRAILING_STOP_LOSS.value}:
+            params["stock_configs"] = stock_configs
         await mongo_manager.update_one(
             "strategy_subscriptions",
             {"strategy_type": strategy_type},
             {
                 "$set": {
                     "watch_list": watch_list,
+                    **({"params": params} if strategy_type in {StrategyType.FIXED_STOP_LOSS.value, StrategyType.TRAILING_STOP_LOSS.value} else {}),
                     "updated_at": datetime.utcnow(),
                 }
             },
@@ -749,6 +1014,10 @@ async def batch_add_stocks_to_strategy(
         message += f"，跳过 {len(skipped)} 只已存在股票"
     if strategy_type == StrategyType.SUPPORT_RESISTANCE.value and added:
         message += "。请后续逐只配置撑压线点位"
+    elif strategy_type == StrategyType.FIXED_STOP_LOSS.value and added:
+        message += "。已按最新本地收盘价初始化固定止损基准，可后续逐只调整"
+    elif strategy_type == StrategyType.TRAILING_STOP_LOSS.value and added:
+        message += "。已按最新本地收盘价初始化移动止损基准，可后续逐只调整"
 
     return BatchAddStockResponse(
         success=bool(added),
@@ -822,8 +1091,12 @@ async def update_stock_config(
     data: UpdateStockConfigRequest = Body(...),
 ):
     """更新单只股票的策略配置"""
-    if strategy_type != StrategyType.SUPPORT_RESISTANCE.value:
-        raise HTTPException(status_code=400, detail="当前仅撑压线策略支持按股票配置点位")
+    if strategy_type not in {
+        StrategyType.SUPPORT_RESISTANCE.value,
+        StrategyType.FIXED_STOP_LOSS.value,
+        StrategyType.TRAILING_STOP_LOSS.value,
+    }:
+        raise HTTPException(status_code=400, detail="当前策略暂不支持按股票单独配置")
 
     record = await _ensure_strategy_exists(strategy_type)
     ts_code = ts_code.upper()
@@ -831,10 +1104,27 @@ async def update_stock_config(
     if ts_code not in watch_list:
         raise HTTPException(status_code=400, detail=f"{ts_code} 不在监听列表中，请先添加股票")
 
-    normalized_config = await _normalize_support_resistance_config(ts_code, data.config)
-
     params = dict(record.get("params", {}) or {})
     stock_configs = dict(params.get("stock_configs", {}) or {})
+    current_config = dict(stock_configs.get(ts_code, {}) or {})
+
+    if strategy_type == StrategyType.SUPPORT_RESISTANCE.value:
+        normalized_config = await _normalize_support_resistance_config(ts_code, data.config)
+    elif strategy_type == StrategyType.FIXED_STOP_LOSS.value:
+        normalized_config = await _normalize_fixed_stop_loss_config(
+            ts_code,
+            data.config,
+            current_config,
+            float(params.get("default_stop_loss_pct", 8.0) or 8.0),
+        )
+    else:
+        normalized_config = await _normalize_trailing_stop_loss_config(
+            ts_code,
+            data.config,
+            current_config,
+            float(params.get("default_trail_pct", 6.0) or 6.0),
+        )
+
     stock_configs[ts_code] = normalized_config
     params["stock_configs"] = stock_configs
 

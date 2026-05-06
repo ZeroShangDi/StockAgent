@@ -123,6 +123,22 @@ function isSupportResistanceStrategy(strategyType: string): boolean {
   return strategyType === StrategyType.SUPPORT_RESISTANCE
 }
 
+function isFixedStopLossStrategy(strategyType: string): boolean {
+  return strategyType === StrategyType.FIXED_STOP_LOSS
+}
+
+function isTrailingStopLossStrategy(strategyType: string): boolean {
+  return strategyType === StrategyType.TRAILING_STOP_LOSS
+}
+
+function isPerStockConfigStrategy(strategyType: string): boolean {
+  return (
+    isSupportResistanceStrategy(strategyType) ||
+    isFixedStopLossStrategy(strategyType) ||
+    isTrailingStopLossStrategy(strategyType)
+  )
+}
+
 function createEmptyPoint(): StrategyStockPoint {
   return { date: '', price: null }
 }
@@ -134,6 +150,28 @@ function createEmptyStockConfig(): StrategyStockConfig {
     resistance_enabled: true,
     support_points: [createEmptyPoint(), createEmptyPoint()],
     resistance_points: [createEmptyPoint(), createEmptyPoint()],
+    note: '',
+  }
+}
+
+function createFixedStopLossConfig(): StrategyStockConfig {
+  return {
+    enabled: true,
+    reference_price: null,
+    reference_date: '',
+    stop_loss_pct: 8,
+    note: '',
+  }
+}
+
+function createTrailingStopLossConfig(): StrategyStockConfig {
+  return {
+    enabled: true,
+    entry_price: null,
+    entry_date: '',
+    highest_price: null,
+    highest_price_date: '',
+    trail_pct: 6,
     note: '',
   }
 }
@@ -163,6 +201,32 @@ function cloneStockConfig(config?: Partial<StrategyStockConfig>): StrategyStockC
   }
 }
 
+function cloneFixedStopLossConfig(config?: Partial<StrategyStockConfig>): StrategyStockConfig {
+  const fallback = createFixedStopLossConfig()
+  return {
+    enabled: config?.enabled ?? fallback.enabled,
+    reference_price: config?.reference_price ?? fallback.reference_price,
+    reference_date: config?.reference_date || fallback.reference_date,
+    stop_loss_pct: config?.stop_loss_pct ?? fallback.stop_loss_pct,
+    note: config?.note || '',
+    last_triggered_date: config?.last_triggered_date || '',
+  }
+}
+
+function cloneTrailingStopLossConfig(config?: Partial<StrategyStockConfig>): StrategyStockConfig {
+  const fallback = createTrailingStopLossConfig()
+  return {
+    enabled: config?.enabled ?? fallback.enabled,
+    entry_price: config?.entry_price ?? fallback.entry_price,
+    entry_date: config?.entry_date || fallback.entry_date,
+    highest_price: config?.highest_price ?? fallback.highest_price,
+    highest_price_date: config?.highest_price_date || fallback.highest_price_date,
+    trail_pct: config?.trail_pct ?? fallback.trail_pct,
+    note: config?.note || '',
+    last_triggered_date: config?.last_triggered_date || '',
+  }
+}
+
 function getStockConfig(strategyType: string, tsCode: string): StrategyStockConfig | null {
   const params = getSubscription(strategyType)?.params as Record<string, unknown> | undefined
   const stockConfigs = params?.stock_configs as Record<string, StrategyStockConfig> | undefined
@@ -172,14 +236,34 @@ function getStockConfig(strategyType: string, tsCode: string): StrategyStockConf
 function getStockConfigSummary(strategyType: string, tsCode: string): string {
   const config = getStockConfig(strategyType, tsCode)
   if (!config) {
+    if (isFixedStopLossStrategy(strategyType)) {
+      return '未初始化固定止损'
+    }
+    if (isTrailingStopLossStrategy(strategyType)) {
+      return '未初始化移动止损'
+    }
     return '未配置撑压线'
   }
 
+  if (isFixedStopLossStrategy(strategyType)) {
+    if (!config.reference_price || !config.stop_loss_pct) {
+      return '止损基准未配置完整'
+    }
+    return `基准 ${Number(config.reference_price).toFixed(2)} / 止损 ${Number(config.stop_loss_pct).toFixed(2)}%`
+  }
+
+  if (isTrailingStopLossStrategy(strategyType)) {
+    if (!config.highest_price || !config.trail_pct) {
+      return '移动止损配置未完整'
+    }
+    return `最高 ${Number(config.highest_price).toFixed(2)} / 回撤 ${Number(config.trail_pct).toFixed(2)}%`
+  }
+
   const parts: string[] = []
-  if (config.support_enabled && config.support_points.length === 2 && config.support_points.every(point => point.date)) {
+  if (config.support_enabled && (config.support_points || []).length === 2 && (config.support_points || []).every(point => point.date)) {
     parts.push('支撑线')
   }
-  if (config.resistance_enabled && config.resistance_points.length === 2 && config.resistance_points.every(point => point.date)) {
+  if (config.resistance_enabled && (config.resistance_points || []).length === 2 && (config.resistance_points || []).every(point => point.date)) {
     parts.push('压力线')
   }
 
@@ -188,6 +272,26 @@ function getStockConfigSummary(strategyType: string, tsCode: string): string {
   }
 
   return `${parts.join(' / ')} 已配置`
+}
+
+function getStockConfigActionLabel(strategyType: string): string {
+  if (isFixedStopLossStrategy(strategyType)) {
+    return '配置固定止损'
+  }
+  if (isTrailingStopLossStrategy(strategyType)) {
+    return '配置移动止损'
+  }
+  return '配置撑压线'
+}
+
+function createDialogStockConfig(strategyType: string, config?: Partial<StrategyStockConfig>): StrategyStockConfig {
+  if (isFixedStopLossStrategy(strategyType)) {
+    return cloneFixedStopLossConfig(config)
+  }
+  if (isTrailingStopLossStrategy(strategyType)) {
+    return cloneTrailingStopLossConfig(config)
+  }
+  return cloneStockConfig(config)
 }
 
 function createTransitionRule(): StrategyTransitionRule {
@@ -407,7 +511,7 @@ function openStockConfigDialog(strategyType: string, stockName: string, tsCode: 
   editingStockStrategyType.value = strategyType
   editingStockTsCode.value = tsCode
   editingStockName.value = stockName
-  editingStockConfig.value = cloneStockConfig(getStockConfig(strategyType, tsCode) || undefined)
+  editingStockConfig.value = createDialogStockConfig(strategyType, getStockConfig(strategyType, tsCode) || undefined)
   stockConfigDialogVisible.value = true
 }
 
@@ -458,18 +562,48 @@ async function saveStockConfig(): Promise<void> {
     return
   }
 
-  if (!editingStockConfig.value.support_enabled && !editingStockConfig.value.resistance_enabled) {
-    ElMessage.warning('至少需要启用支撑线或压力线中的一条')
-    return
-  }
-
-  const payload: StrategyStockConfig = {
-    trend_type: editingStockConfig.value.trend_type,
-    support_enabled: editingStockConfig.value.support_enabled,
-    resistance_enabled: editingStockConfig.value.resistance_enabled,
-    support_points: editingStockConfig.value.support_points.map(normalizePoint),
-    resistance_points: editingStockConfig.value.resistance_points.map(normalizePoint),
-    note: editingStockConfig.value.note || '',
+  let payload: StrategyStockConfig
+  if (isSupportResistanceStrategy(editingStockStrategyType.value)) {
+    if (!editingStockConfig.value.support_enabled && !editingStockConfig.value.resistance_enabled) {
+      ElMessage.warning('至少需要启用支撑线或压力线中的一条')
+      return
+    }
+    payload = {
+      trend_type: editingStockConfig.value.trend_type,
+      support_enabled: editingStockConfig.value.support_enabled,
+      resistance_enabled: editingStockConfig.value.resistance_enabled,
+      support_points: (editingStockConfig.value.support_points || []).map(normalizePoint),
+      resistance_points: (editingStockConfig.value.resistance_points || []).map(normalizePoint),
+      note: editingStockConfig.value.note || '',
+    }
+  } else if (isFixedStopLossStrategy(editingStockStrategyType.value)) {
+    if (!editingStockConfig.value.reference_price || !editingStockConfig.value.stop_loss_pct) {
+      ElMessage.warning('请至少填写参考价格和止损比例')
+      return
+    }
+    payload = {
+      enabled: editingStockConfig.value.enabled ?? true,
+      reference_price: Number(editingStockConfig.value.reference_price),
+      reference_date: editingStockConfig.value.reference_date || '',
+      stop_loss_pct: Number(editingStockConfig.value.stop_loss_pct),
+      note: editingStockConfig.value.note || '',
+      last_triggered_date: editingStockConfig.value.last_triggered_date || '',
+    }
+  } else {
+    if (!editingStockConfig.value.entry_price || !editingStockConfig.value.trail_pct) {
+      ElMessage.warning('请至少填写入场价格和回撤比例')
+      return
+    }
+    payload = {
+      enabled: editingStockConfig.value.enabled ?? true,
+      entry_price: Number(editingStockConfig.value.entry_price),
+      entry_date: editingStockConfig.value.entry_date || '',
+      highest_price: editingStockConfig.value.highest_price == null ? null : Number(editingStockConfig.value.highest_price),
+      highest_price_date: editingStockConfig.value.highest_price_date || '',
+      trail_pct: Number(editingStockConfig.value.trail_pct),
+      note: editingStockConfig.value.note || '',
+      last_triggered_date: editingStockConfig.value.last_triggered_date || '',
+    }
   }
 
   savingStockConfig.value = true
@@ -480,10 +614,10 @@ async function saveStockConfig(): Promise<void> {
       payload
     )
     await loadSubscriptions()
-    ElMessage.success('撑压线配置已保存')
+    ElMessage.success(`${getStockConfigActionLabel(editingStockStrategyType.value)}已保存`)
     stockConfigDialogVisible.value = false
   } catch (error) {
-    ElMessage.error('保存撑压线配置失败')
+    ElMessage.error(`${getStockConfigActionLabel(editingStockStrategyType.value)}失败`)
     console.error(error)
   } finally {
     savingStockConfig.value = false
@@ -643,9 +777,9 @@ onMounted(async () => {
             <!-- 股票列表 -->
             <div 
               v-if="getSubscription(st.type)?.watch_list_info?.length"
-              :class="isSupportResistanceStrategy(st.type) ? 'stock-config-list' : 'stock-tags'"
+              :class="isPerStockConfigStrategy(st.type) ? 'stock-config-list' : 'stock-tags'"
             >
-              <template v-if="isSupportResistanceStrategy(st.type)">
+              <template v-if="isPerStockConfigStrategy(st.type)">
                 <div
                   v-for="stock in getDisplayStockInfos(getSubscription(st.type)!)"
                   :key="stock.ts_code"
@@ -666,7 +800,7 @@ onMounted(async () => {
                       type="primary"
                       @click="openStockConfigDialog(st.type, stock.name, stock.ts_code)"
                     >
-                      配置撑压线
+                      {{ getStockConfigActionLabel(st.type) }}
                     </el-button>
                     <el-button
                       link
@@ -773,7 +907,7 @@ onMounted(async () => {
     <!-- 单股撑压线配置弹窗 -->
     <el-dialog
       v-model="stockConfigDialogVisible"
-      title="配置撑压线"
+      :title="getStockConfigActionLabel(editingStockStrategyType)"
       width="720px"
       :close-on-click-modal="false"
     >
@@ -781,10 +915,18 @@ onMounted(async () => {
         <p class="form-hint mb-4">
           为 <strong>{{ editingStockName }}</strong>
           <span class="stock-code-inline">({{ editingStockTsCode }})</span>
-          配置支撑线与压力线点位。价格留空时，会自动取对应日期 K 线的最低价或最高价。
+          <template v-if="isSupportResistanceStrategy(editingStockStrategyType)">
+            配置支撑线与压力线点位。价格留空时，会自动取对应日期 K 线的最低价或最高价。
+          </template>
+          <template v-else-if="isFixedStopLossStrategy(editingStockStrategyType)">
+            配置固定止损基准。若参考日期留空，后端会继续使用当前已保存的加入基准。
+          </template>
+          <template v-else>
+            配置移动止损基准与回撤比例。最高价默认会在监听运行中持续自动抬升并持久化。
+          </template>
         </p>
 
-        <div class="stock-config-form-grid">
+        <div v-if="isSupportResistanceStrategy(editingStockStrategyType)" class="stock-config-form-grid">
           <div class="param-form-item">
             <label class="param-form-label">趋势类型</label>
             <el-select v-model="editingStockConfig.trend_type">
@@ -808,7 +950,7 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-if="editingStockConfig.support_enabled" class="line-config-card">
+        <div v-if="isSupportResistanceStrategy(editingStockStrategyType) && editingStockConfig.support_enabled" class="line-config-card">
           <div class="line-config-header">
             <h4>支撑线点位</h4>
             <span>默认价格取当日最低价</span>
@@ -839,7 +981,7 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-if="editingStockConfig.resistance_enabled" class="line-config-card">
+        <div v-if="isSupportResistanceStrategy(editingStockStrategyType) && editingStockConfig.resistance_enabled" class="line-config-card">
           <div class="line-config-header">
             <h4>压力线点位</h4>
             <span>默认价格取当日最高价</span>
@@ -870,13 +1012,115 @@ onMounted(async () => {
           </div>
         </div>
 
+        <div v-if="isFixedStopLossStrategy(editingStockStrategyType)" class="params-form-grid transition-grid">
+          <div class="param-form-item">
+            <label class="param-form-label">是否启用</label>
+            <el-switch v-model="editingStockConfig.enabled" active-text="启用" inactive-text="关闭" />
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">参考日期</label>
+            <el-date-picker
+              v-model="editingStockConfig.reference_date"
+              type="date"
+              value-format="YYYYMMDD"
+              format="YYYY-MM-DD"
+              placeholder="选择参考日期"
+            />
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">参考价格</label>
+            <el-input-number
+              v-model="editingStockConfig.reference_price"
+              :min="0"
+              :precision="2"
+              :step="0.01"
+              controls-position="right"
+            />
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">止损比例 (%)</label>
+            <el-input-number
+              v-model="editingStockConfig.stop_loss_pct"
+              :min="0.01"
+              :precision="2"
+              :step="0.1"
+              controls-position="right"
+            />
+          </div>
+        </div>
+
+        <div v-if="isTrailingStopLossStrategy(editingStockStrategyType)" class="params-form-grid transition-grid">
+          <div class="param-form-item">
+            <label class="param-form-label">是否启用</label>
+            <el-switch v-model="editingStockConfig.enabled" active-text="启用" inactive-text="关闭" />
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">入场日期</label>
+            <el-date-picker
+              v-model="editingStockConfig.entry_date"
+              type="date"
+              value-format="YYYYMMDD"
+              format="YYYY-MM-DD"
+              placeholder="选择入场日期"
+            />
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">入场价格</label>
+            <el-input-number
+              v-model="editingStockConfig.entry_price"
+              :min="0"
+              :precision="2"
+              :step="0.01"
+              controls-position="right"
+            />
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">当前最高价</label>
+            <el-input-number
+              v-model="editingStockConfig.highest_price"
+              :min="0"
+              :precision="2"
+              :step="0.01"
+              controls-position="right"
+            />
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">最高价日期</label>
+            <el-date-picker
+              v-model="editingStockConfig.highest_price_date"
+              type="date"
+              value-format="YYYYMMDD"
+              format="YYYY-MM-DD"
+              placeholder="选择最高价日期"
+            />
+          </div>
+
+          <div class="param-form-item">
+            <label class="param-form-label">回撤比例 (%)</label>
+            <el-input-number
+              v-model="editingStockConfig.trail_pct"
+              :min="0.01"
+              :precision="2"
+              :step="0.1"
+              controls-position="right"
+            />
+          </div>
+        </div>
+
         <div class="param-form-item">
           <label class="param-form-label">备注</label>
           <el-input
             v-model="editingStockConfig.note"
             type="textarea"
             :rows="2"
-            placeholder="可选，记录点位含义或趋势说明"
+            :placeholder="isSupportResistanceStrategy(editingStockStrategyType) ? '可选，记录点位含义或趋势说明' : '可选，记录止损逻辑或建仓背景'"
           />
         </div>
       </div>
