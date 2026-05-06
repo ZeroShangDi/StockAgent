@@ -1,6 +1,11 @@
 import { api } from '../client'
 import type { StockDaily } from '../types'
 
+export const TRADE_REVIEW_REASON_OPTIONS = {
+  success: ['顺势而为', '板块共振', '买点前置', '纪律执行', '仓位合适', '止盈及时', '逻辑充分', '情绪稳定'],
+  failure: ['追高买入', '逆势交易', '仓位过重', '卖点滞后', '止损不坚决', '逻辑不清', '受情绪影响', '节奏错误'],
+} as const
+
 export interface TradeReviewGroupSummary {
   group_id: string
   name: string
@@ -42,8 +47,8 @@ export interface TradeReviewRecord {
   mindset: string
   market_context: string
   result_reasons: {
-    success: string[]
-    failure: string[]
+    verdict: '' | 'success' | 'failure'
+    reasons: string[]
   }
   updated_at?: string
   created_at?: string
@@ -96,6 +101,14 @@ export interface TradeReviewKlineContext {
   }
   daily: StockDaily[]
   markers: TradeReviewKlineMarker[]
+  related_records: TradeReviewRecord[]
+  navigation: {
+    anchor_record_id: string
+    previous_record_id?: string | null
+    next_record_id?: string | null
+    position: number
+    total: number
+  }
   zoom: {
     start: number
     end: number
@@ -140,7 +153,7 @@ export const tradeReviewApi = {
       operation_reason: string
       mindset: string
       market_context: string
-      result_reasons: { success: string[]; failure: string[] }
+      result_reasons: { verdict: '' | 'success' | 'failure'; reasons: string[] }
     },
   ): Promise<TradeReviewRecord> {
     return api.patch(`/trade-review/records/${recordId}`, data)
@@ -150,8 +163,11 @@ export const tradeReviewApi = {
     return api.get(`/trade-review/groups/${groupId}/stats`)
   },
 
-  getKline(recordId: string, window = 50): Promise<TradeReviewKlineContext> {
-    return api.get(`/trade-review/records/${recordId}/kline`, { params: { window } })
+  getKline(
+    recordId: string,
+    params?: { window?: number; category?: string; keyword?: string; anchor_record_id?: string },
+  ): Promise<TradeReviewKlineContext> {
+    return api.get(`/trade-review/records/${recordId}/kline`, { params })
   },
 }
 

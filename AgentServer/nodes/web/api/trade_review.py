@@ -22,8 +22,8 @@ class TradeReviewGroupCreateRequest(BaseModel):
 
 
 class TradeReviewReasonsPayload(BaseModel):
-    success: List[str] = Field(default_factory=list)
-    failure: List[str] = Field(default_factory=list)
+    verdict: str = ""
+    reasons: List[str] = Field(default_factory=list)
 
 
 class TradeReviewUpdateRequest(BaseModel):
@@ -132,6 +132,9 @@ async def get_trade_review_stats(
 async def get_trade_review_kline_context(
     record_id: str,
     window: int = Query(default=50, ge=10, le=250),
+    category: str = Query(default="trade"),
+    keyword: Optional[str] = Query(default=None),
+    anchor_record_id: Optional[str] = Query(default=None),
     user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
     try:
@@ -139,6 +142,9 @@ async def get_trade_review_kline_context(
             user_id=user_id,
             record_id=record_id,
             window=window,
+            category=category,
+            keyword=keyword,
+            anchor_record_id=anchor_record_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -5,7 +5,7 @@
         <p class="eyebrow">Trade Review</p>
         <h1>交割单复盘</h1>
         <p class="description">
-          按分组沉淀自己的交割单或案例交割单，支持 CSV 去重导入、逐笔补充复盘笔记，并从整体维度做交易统计。
+          先按分组管理交割单，再按时间顺序逐笔进入沉浸式复盘。统计口径当前由后端基于分组全量数据计算，后续会继续细化。
         </p>
       </div>
       <div class="hero-actions">
@@ -54,7 +54,7 @@
           <el-tabs v-model="activeTab">
             <el-tab-pane label="逐笔复盘" name="records">
               <div class="toolbar">
-                <el-select v-model="category" class="toolbar-select" @change="loadRecords">
+                <el-select v-model="category" class="toolbar-select" @change="handleFilterChange">
                   <el-option
                     v-for="option in categoryOptions"
                     :key="option.value"
@@ -67,11 +67,13 @@
                   class="toolbar-search"
                   placeholder="按股票、代码、业务类型搜索"
                   clearable
-                  @keyup.enter="loadRecords"
-                  @clear="loadRecords"
+                  @keyup.enter="handleFilterChange"
+                  @clear="handleFilterChange"
                 />
-                <el-button @click="loadRecords">查询</el-button>
-                <span class="toolbar-meta">共 {{ records.total }} 条</span>
+                <el-button @click="handleFilterChange">查询</el-button>
+                <span class="toolbar-meta">
+                  共 {{ records.total }} 条 · 当前第 {{ currentPage }} / {{ totalPages }} 页
+                </span>
               </div>
 
               <el-table :data="records.items" stripe class="records-table">
@@ -109,19 +111,34 @@
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="210" fixed="right">
+                <el-table-column label="操作" width="150" fixed="right">
                   <template #default="{ row }">
-                    <div class="row-actions">
-                      <el-button link type="primary" @click="openReviewDrawer(row)">复盘</el-button>
-                      <el-button link type="primary" :disabled="!row.ts_code" @click="openKlineDialog(row)">K线</el-button>
-                    </div>
+                    <el-button link type="primary" @click="openReviewSession(row)">
+                      进入复盘
+                    </el-button>
                   </template>
                 </el-table-column>
               </el-table>
+
+              <div class="pagination-wrap">
+                <el-pagination
+                  background
+                  layout="total, sizes, prev, pager, next, jumper"
+                  :total="records.total"
+                  :current-page="currentPage"
+                  :page-size="pageSize"
+                  :page-sizes="[50, 100, 200, 500]"
+                  @current-change="handlePageChange"
+                  @size-change="handlePageSizeChange"
+                />
+              </div>
             </el-tab-pane>
 
             <el-tab-pane label="统计总览" name="stats">
               <div v-if="stats" class="stats-panel">
+                <div class="stats-note">
+                  当前统计由后端基于分组内全量数据聚合，不受当前表格分页影响。更细维度的交割单分析已记录到待办，后续会继续扩展。
+                </div>
                 <section class="summary-grid">
                   <article class="summary-card">
                     <span>总记录</span>
@@ -255,78 +272,24 @@
         </el-button>
       </template>
     </el-dialog>
-
-    <el-drawer v-model="reviewDrawerVisible" size="560px" :title="selectedRecord ? `复盘：${selectedRecord.security_name || selectedRecord.code}` : '复盘'">
-      <template v-if="selectedRecord">
-        <div class="review-meta">
-          <span>{{ formatTradeDate(selectedRecord.trade_date) }}</span>
-          <span>{{ selectedRecord.business_type }}</span>
-          <span>{{ selectedRecord.code }}</span>
-          <span>{{ formatNumber(selectedRecord.price) }} × {{ selectedRecord.quantity }}</span>
-        </div>
-        <div class="field-block">
-          <label>操作理由</label>
-          <el-input v-model="reviewForm.operation_reason" type="textarea" :rows="4" placeholder="这笔交易为什么做？" />
-        </div>
-        <div class="field-block">
-          <label>心路历程</label>
-          <el-input v-model="reviewForm.mindset" type="textarea" :rows="4" placeholder="当时的情绪、预期和执行状态" />
-        </div>
-        <div class="field-block">
-          <label>市场环境</label>
-          <el-input v-model="reviewForm.market_context" type="textarea" :rows="4" placeholder="大盘、板块、情绪、题材背景" />
-        </div>
-        <div class="field-block">
-          <label>成功原因（每行一个）</label>
-          <el-input v-model="reviewForm.successText" type="textarea" :rows="4" placeholder="例如：顺势、板块共振、买点前置" />
-        </div>
-        <div class="field-block">
-          <label>失败原因（每行一个）</label>
-          <el-input v-model="reviewForm.failureText" type="textarea" :rows="4" placeholder="例如：追高、仓位重、卖点后置" />
-        </div>
-        <div class="drawer-actions">
-          <el-button :disabled="!selectedRecord.ts_code" @click="openKlineDialog(selectedRecord)">查看 K 线</el-button>
-          <el-button type="primary" :loading="savingReview" @click="handleSaveReview">保存复盘</el-button>
-        </div>
-      </template>
-    </el-drawer>
-
-    <el-dialog v-model="klineDialogVisible" title="交易 K 线复盘" width="82%">
-      <div v-if="klineContext" class="kline-panel">
-        <div class="kline-meta">
-          <strong>{{ klineContext.stock.name || klineContext.stock.ts_code }}</strong>
-          <span>{{ klineContext.stock.ts_code }}</span>
-          <span>{{ formatTradeDate(klineContext.record.trade_date) }}</span>
-          <span>{{ klineContext.record.side === 'buy' ? '买入' : '卖出' }} {{ formatNumber(klineContext.record.price) }}</span>
-        </div>
-        <div class="kline-chart">
-          <StockChart
-            :data="klineContext.daily"
-            :ts-code="klineContext.stock.ts_code"
-            :markers="klineContext.markers"
-            preserve-zoom
-            :initial-zoom-start="klineContext.zoom.start"
-            :initial-zoom-end="klineContext.zoom.end"
-          />
-        </div>
-      </div>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { tradeReviewApi } from '@/api'
-import StockChart from '@/components/charts/StockChart.vue'
 import type {
   TradeReviewGroupSummary,
-  TradeReviewKlineContext,
   TradeReviewRecord,
   TradeReviewRecordListResult,
   TradeReviewStatsResult,
 } from '@/api/modules/trade-review'
+
+const route = useRoute()
+const router = useRouter()
 
 const loading = ref(false)
 const groups = ref<TradeReviewGroupSummary[]>([])
@@ -334,7 +297,9 @@ const activeGroupId = ref('')
 const activeTab = ref<'records' | 'stats'>('records')
 const category = ref('trade')
 const keyword = ref('')
-const records = ref<TradeReviewRecordListResult>({ items: [], total: 0, skip: 0, limit: 200 })
+const pageSize = ref(100)
+const currentPage = ref(1)
+const records = ref<TradeReviewRecordListResult>({ items: [], total: 0, skip: 0, limit: 100 })
 const stats = ref<TradeReviewStatsResult | null>(null)
 
 const createDialogVisible = ref(false)
@@ -349,21 +314,8 @@ const importing = ref(false)
 const selectedImportFile = ref<File | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
-const reviewDrawerVisible = ref(false)
-const selectedRecord = ref<TradeReviewRecord | null>(null)
-const savingReview = ref(false)
-const reviewForm = reactive({
-  operation_reason: '',
-  mindset: '',
-  market_context: '',
-  successText: '',
-  failureText: '',
-})
-
-const klineDialogVisible = ref(false)
-const klineContext = ref<TradeReviewKlineContext | null>(null)
-
 const activeGroup = computed(() => groups.value.find((item) => item.group_id === activeGroupId.value) || null)
+const totalPages = computed(() => Math.max(1, Math.ceil((records.value.total || 0) / pageSize.value)))
 
 const categoryOptions = [
   { label: '成交记录', value: 'trade' },
@@ -412,7 +364,7 @@ async function loadGroups(): Promise<void> {
       await Promise.all([loadRecords(), loadStats()])
     } else {
       activeGroupId.value = ''
-      records.value = { items: [], total: 0, skip: 0, limit: 200 }
+      records.value = { items: [], total: 0, skip: 0, limit: pageSize.value }
       stats.value = null
     }
   } finally {
@@ -422,6 +374,7 @@ async function loadGroups(): Promise<void> {
 
 async function selectGroup(groupId: string): Promise<void> {
   activeGroupId.value = groupId
+  currentPage.value = 1
   await Promise.all([loadRecords(), loadStats()])
 }
 
@@ -430,14 +383,47 @@ async function loadRecords(): Promise<void> {
   records.value = await tradeReviewApi.listRecords(activeGroupId.value, {
     category: category.value,
     keyword: keyword.value.trim() || undefined,
-    limit: 200,
-    skip: 0,
+    limit: pageSize.value,
+    skip: (currentPage.value - 1) * pageSize.value,
   })
 }
 
 async function loadStats(): Promise<void> {
   if (!activeGroupId.value) return
   stats.value = await tradeReviewApi.getStats(activeGroupId.value)
+}
+
+function handleFilterChange(): void {
+  currentPage.value = 1
+  loadRecords()
+}
+
+function handlePageChange(page: number): void {
+  currentPage.value = page
+  loadRecords()
+}
+
+function handlePageSizeChange(size: number): void {
+  pageSize.value = size
+  currentPage.value = 1
+  loadRecords()
+}
+
+function openReviewSession(record: TradeReviewRecord): void {
+  router.push({
+    name: 'TradeReviewSession',
+    params: {
+      groupId: activeGroupId.value,
+      recordId: record.record_id,
+    },
+    query: {
+      category: category.value,
+      keyword: keyword.value.trim() || undefined,
+      anchor: record.record_id,
+      page: String(currentPage.value),
+      pageSize: String(pageSize.value),
+    },
+  })
 }
 
 function openCreateDialog(): void {
@@ -497,47 +483,6 @@ async function handleImportCsv(): Promise<void> {
   }
 }
 
-function openReviewDrawer(record: TradeReviewRecord): void {
-  selectedRecord.value = record
-  reviewForm.operation_reason = record.operation_reason || ''
-  reviewForm.mindset = record.mindset || ''
-  reviewForm.market_context = record.market_context || ''
-  reviewForm.successText = (record.result_reasons?.success || []).join('\n')
-  reviewForm.failureText = (record.result_reasons?.failure || []).join('\n')
-  reviewDrawerVisible.value = true
-}
-
-async function handleSaveReview(): Promise<void> {
-  if (!selectedRecord.value) return
-  savingReview.value = true
-  try {
-    const updated = await tradeReviewApi.updateRecord(selectedRecord.value.record_id, {
-      operation_reason: reviewForm.operation_reason,
-      mindset: reviewForm.mindset,
-      market_context: reviewForm.market_context,
-      result_reasons: {
-        success: reviewForm.successText.split('\n').map((item) => item.trim()).filter(Boolean),
-        failure: reviewForm.failureText.split('\n').map((item) => item.trim()).filter(Boolean),
-      },
-    })
-    selectedRecord.value = updated
-    reviewDrawerVisible.value = false
-    await Promise.all([loadRecords(), loadStats()])
-    ElMessage.success('复盘内容已保存')
-  } finally {
-    savingReview.value = false
-  }
-}
-
-async function openKlineDialog(record: TradeReviewRecord): Promise<void> {
-  if (!record.ts_code) {
-    ElMessage.warning('该记录没有可用股票代码')
-    return
-  }
-  klineContext.value = await tradeReviewApi.getKline(record.record_id, 50)
-  klineDialogVisible.value = true
-}
-
 watch(activeTab, async (value) => {
   if (value === 'stats' && activeGroupId.value) {
     await loadStats()
@@ -545,6 +490,23 @@ watch(activeTab, async (value) => {
 })
 
 onMounted(() => {
+  if (typeof route.query.groupId === 'string') {
+    activeGroupId.value = route.query.groupId
+  }
+  if (typeof route.query.category === 'string') {
+    category.value = route.query.category
+  }
+  if (typeof route.query.keyword === 'string') {
+    keyword.value = route.query.keyword
+  }
+  if (typeof route.query.page === 'string') {
+    const page = Number(route.query.page)
+    if (page > 0) currentPage.value = page
+  }
+  if (typeof route.query.pageSize === 'string') {
+    const size = Number(route.query.pageSize)
+    if (size > 0) pageSize.value = size
+  }
   loadGroups()
 })
 </script>
@@ -651,8 +613,7 @@ onMounted(() => {
 .group-item span,
 .detail-type,
 .detail-meta,
-.toolbar-meta,
-.review-meta {
+.toolbar-meta {
   color: var(--el-text-color-secondary);
   font-size: 13px;
 }
@@ -689,15 +650,24 @@ onMounted(() => {
   width: 100%;
 }
 
-.row-actions {
-  display: inline-flex;
-  gap: 8px;
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 .stats-panel {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+.stats-note {
+  padding: 14px 16px;
+  border-radius: 14px;
+  color: var(--el-text-color-secondary);
+  background: rgba(59, 130, 246, 0.08);
+  line-height: 1.7;
 }
 
 .summary-grid {
@@ -739,8 +709,7 @@ onMounted(() => {
   line-height: 1.8;
 }
 
-.dialog-body,
-.kline-panel {
+.dialog-body {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -773,32 +742,6 @@ onMounted(() => {
 
 .file-input {
   display: block;
-}
-
-.review-meta {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
-.drawer-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 20px;
-}
-
-.kline-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.kline-chart {
-  height: 620px;
-  min-width: 0;
 }
 
 @media (max-width: 1200px) {

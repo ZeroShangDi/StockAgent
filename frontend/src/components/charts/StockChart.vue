@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { CandlestickChart, LineChart, BarChart } from 'echarts/charts'
+import { CandlestickChart, LineChart, BarChart, ScatterChart } from 'echarts/charts'
 import {
   TitleComponent,
   TooltipComponent,
@@ -29,6 +29,7 @@ use([
   CandlestickChart,
   LineChart,
   BarChart,
+  ScatterChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
@@ -130,24 +131,35 @@ const option = computed(() => {
     .filter((item) => item.trade_date && typeof item.price === 'number')
     .map((item) => ({
       name: item.label || (item.side === 'buy' ? '买点' : item.side === 'sell' ? '卖点' : '标记'),
-      coord: [item.trade_date, item.price],
-      value: item.price,
-      symbol: item.side === 'buy' ? 'triangle' : item.side === 'sell' ? 'diamond' : 'circle',
-      symbolRotate: item.side === 'buy' ? 0 : 180,
-      symbolSize: item.is_current ? 24 : 18,
+      value: [item.trade_date, item.price],
+      symbol: 'circle',
+      symbolSize: item.is_current ? 10 : 8,
       itemStyle: {
-        color: item.side === 'buy' ? '#ef4444' : item.side === 'sell' ? '#10b981' : '#3b82f6',
+        color: item.is_current ? (item.side === 'buy' ? '#ef4444' : item.side === 'sell' ? '#10b981' : '#3b82f6') : '#ffffff',
+        borderColor: item.side === 'buy' ? '#ef4444' : item.side === 'sell' ? '#10b981' : '#3b82f6',
+        borderWidth: item.is_current ? 2.5 : 2,
+        shadowBlur: item.is_current ? 8 : 4,
+        shadowColor: item.side === 'buy' ? 'rgba(239, 68, 68, 0.4)' : item.side === 'sell' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(59, 130, 246, 0.35)',
       },
       label: {
         show: true,
         formatter: item.label || (item.side === 'buy' ? '买' : item.side === 'sell' ? '卖' : '标'),
-        color: colors.tooltipText,
-        backgroundColor: colors.tooltipBg,
-        borderColor: colors.tooltipBorder,
-        borderWidth: 1,
-        borderRadius: 4,
-        padding: [3, 6],
         position: item.side === 'buy' ? 'top' : 'bottom',
+        distance: 6,
+        fontSize: item.is_current ? 11 : 10,
+        fontWeight: item.is_current ? 600 : 500,
+        color: item.side === 'buy' ? '#b91c1c' : item.side === 'sell' ? '#047857' : colors.tooltipText,
+        backgroundColor: 'rgba(255,255,255,0.88)',
+        borderColor: item.side === 'buy' ? 'rgba(239, 68, 68, 0.28)' : item.side === 'sell' ? 'rgba(16, 185, 129, 0.28)' : colors.tooltipBorder,
+        borderWidth: 1,
+        borderRadius: 6,
+        padding: [2, 5],
+      },
+      tooltip: {
+        valueFormatter: () => `${item.label || ''} ${item.price}`,
+      },
+      emphasis: {
+        scale: 1.4,
       },
     }))
   const defaultZoom = {
@@ -341,10 +353,6 @@ const option = computed(() => {
         name: 'K线',
         type: 'candlestick',
         data: klineData,
-        markPoint: markers.length > 0 ? {
-          symbolKeepAspect: true,
-          data: markers,
-        } : undefined,
         itemStyle: {
           color: colors.upColor,
           color0: colors.downColor,
@@ -385,6 +393,18 @@ const option = computed(() => {
         xAxisIndex: 1,
         yAxisIndex: 1,
         data: volumes,
+      },
+      {
+        name: '买卖点',
+        type: 'scatter',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: markers,
+        z: 20,
+        zlevel: 2,
+        tooltip: {
+          trigger: 'item',
+        },
       },
     ],
   }

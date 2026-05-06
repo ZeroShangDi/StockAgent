@@ -514,6 +514,9 @@ class TradeReviewService:
         user_id: str,
         record_id: str,
         window: int = 50,
+        category: str = "trade",
+        keyword: Optional[str] = None,
+        anchor_record_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         record = await mongo_manager.find_one(
             self.RECORD_COLLECTION,
@@ -576,6 +579,35 @@ class TradeReviewService:
             projection={"name": 1, "ts_code": 1},
         )
 
+        navigation_filter: Dict[str, Any] = {
+            "group_id": record.get("group_id"),
+            "user_id": user_id,
+            "is_trade_record": True,
+        }
+        if category != "all":
+            navigation_filter["category"] = category
+        if keyword:
+            navigation_filter["$or"] = [
+                {"security_name": {"$regex": keyword, "$options": "i"}},
+                {"code": {"$regex": keyword, "$options": "i"}},
+                {"ts_code": {"$regex": keyword.upper(), "$options": "i"}},
+                {"business_type": {"$regex": keyword, "$options": "i"}},
+            ]
+
+        navigation_records = await mongo_manager.find_many(
+            self.RECORD_COLLECTION,
+            navigation_filter,
+            sort=[("trade_date", 1), ("row_no", 1)],
+            projection={"record_id": 1},
+        )
+        navigation_ids = [str(item.get("record_id")) for item in navigation_records if item.get("record_id")]
+        fallback_anchor = anchor_record_id or record_id
+        if fallback_anchor not in navigation_ids:
+            fallback_anchor = record_id
+        if fallback_anchor not in navigation_ids and navigation_ids:
+            fallback_anchor = navigation_ids[0]
+        current_index = navigation_ids.index(fallback_anchor) if fallback_anchor in navigation_ids else -1
+
         return {
             "record": self._serialize_record(record),
             "stock": {
@@ -600,6 +632,13 @@ class TradeReviewService:
             ],
             "markers": markers,
             "related_records": [self._serialize_record(item) for item in same_stock_records],
+            "navigation": {
+                "anchor_record_id": fallback_anchor,
+                "previous_record_id": navigation_ids[current_index - 1] if current_index > 0 else None,
+                "next_record_id": navigation_ids[current_index + 1] if 0 <= current_index < len(navigation_ids) - 1 else None,
+                "position": current_index + 1 if current_index >= 0 else 0,
+                "total": len(navigation_ids),
+            },
             "zoom": {
                 "start": zoom_start,
                 "end": zoom_end,

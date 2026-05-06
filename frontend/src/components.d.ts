@@ -22,6 +22,7 @@ declare module 'vue' {
     ElInputNumber: typeof import('element-plus/es')['ElInputNumber']
     ElLink: typeof import('element-plus/es')['ElLink']
     ElOption: typeof import('element-plus/es')['ElOption']
+    ElPagination: typeof import('element-plus/es')['ElPagination']
     ElProgress: typeof import('element-plus/es')['ElProgress']
     ElRadio: typeof import('element-plus/es')['ElRadio']
     ElRadioButton: typeof import('element-plus/es')['ElRadioButton']
@@ -46,5 +47,8 @@ declare module 'vue' {
     TaskProgressCard: typeof import('./components/dashboard/TaskProgressCard.vue')['default']
     TaskStatusBadge: typeof import('./components/agent/TaskStatusBadge.vue')['default']
     WatchlistCard: typeof import('./components/dashboard/WatchlistCard.vue')['default']
+  }
+  export interface ComponentCustomProperties {
+    vLoading: typeof import('element-plus/es')['ElLoadingDirective']
   }
 }
