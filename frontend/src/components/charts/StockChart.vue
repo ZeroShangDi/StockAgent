@@ -14,6 +14,15 @@ import {
 import { useThemeStore } from '@/stores'
 import type { StockDaily } from '@/api'
 
+interface StockChartMarker {
+  record_id?: string
+  trade_date: string
+  price: number
+  side?: string | null
+  label?: string
+  is_current?: boolean
+}
+
 // 注册 ECharts 组件
 use([
   CanvasRenderer,
@@ -33,6 +42,7 @@ const props = defineProps<{
   preserveZoom?: boolean
   initialZoomStart?: number
   initialZoomEnd?: number
+  markers?: StockChartMarker[]
 }>()
 
 const themeStore = useThemeStore()
@@ -95,8 +105,8 @@ const option = computed(() => {
   
   const colors = themeColors.value
   
-  // 反转数据（API 返回的是倒序）
-  const sortedData = [...props.data].reverse()
+  // 统一按交易日升序排序，兼容不同接口的返回顺序
+  const sortedData = [...props.data].sort((a, b) => a.trade_date.localeCompare(b.trade_date))
   
   // 日期
   const dates = sortedData.map((d) => d.trade_date)
@@ -116,6 +126,30 @@ const option = computed(() => {
   const ma5 = calculateMA(sortedData, 5)
   const ma10 = calculateMA(sortedData, 10)
   const ma20 = calculateMA(sortedData, 20)
+  const markers = (props.markers || [])
+    .filter((item) => item.trade_date && typeof item.price === 'number')
+    .map((item) => ({
+      name: item.label || (item.side === 'buy' ? '买点' : item.side === 'sell' ? '卖点' : '标记'),
+      coord: [item.trade_date, item.price],
+      value: item.price,
+      symbol: item.side === 'buy' ? 'triangle' : item.side === 'sell' ? 'diamond' : 'circle',
+      symbolRotate: item.side === 'buy' ? 0 : 180,
+      symbolSize: item.is_current ? 24 : 18,
+      itemStyle: {
+        color: item.side === 'buy' ? '#ef4444' : item.side === 'sell' ? '#10b981' : '#3b82f6',
+      },
+      label: {
+        show: true,
+        formatter: item.label || (item.side === 'buy' ? '买' : item.side === 'sell' ? '卖' : '标'),
+        color: colors.tooltipText,
+        backgroundColor: colors.tooltipBg,
+        borderColor: colors.tooltipBorder,
+        borderWidth: 1,
+        borderRadius: 4,
+        padding: [3, 6],
+        position: item.side === 'buy' ? 'top' : 'bottom',
+      },
+    }))
   const defaultZoom = {
     start: props.initialZoomStart ?? 70,
     end: props.initialZoomEnd ?? 100,
@@ -307,6 +341,10 @@ const option = computed(() => {
         name: 'K线',
         type: 'candlestick',
         data: klineData,
+        markPoint: markers.length > 0 ? {
+          symbolKeepAspect: true,
+          data: markers,
+        } : undefined,
         itemStyle: {
           color: colors.upColor,
           color0: colors.downColor,

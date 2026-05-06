@@ -370,6 +370,32 @@ class MongoManager(BaseManager):
             IndexModel([("user_id", ASCENDING), ("status", ASCENDING)]),
             IndexModel([("created_at", DESCENDING)]),
         ])
+
+        # 交割单复盘分组
+        await self._safe_create_indexes("trade_review_groups", [
+            IndexModel([("group_id", ASCENDING)], unique=True),
+            IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("updated_at", DESCENDING)]),
+        ])
+
+        # 交割单导入批次
+        await self._safe_create_indexes("trade_review_import_batches", [
+            IndexModel([("batch_id", ASCENDING)], unique=True),
+            IndexModel([("group_id", ASCENDING)]),
+            IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("imported_at", DESCENDING)]),
+        ])
+
+        # 交割单逐笔记录
+        await self._safe_create_indexes("trade_review_records", [
+            IndexModel([("record_id", ASCENDING)], unique=True),
+            IndexModel([("group_id", ASCENDING), ("dedupe_key", ASCENDING)], unique=True),
+            IndexModel([("group_id", ASCENDING), ("trade_date", DESCENDING)]),
+            IndexModel([("group_id", ASCENDING), ("category", ASCENDING), ("trade_date", DESCENDING)]),
+            IndexModel([("group_id", ASCENDING), ("ts_code", ASCENDING), ("trade_date", DESCENDING)]),
+            IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("reviewed", ASCENDING)]),
+        ])
         
         self.logger.info("MongoDB indexes ensured")
     

@@ -134,6 +134,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '股池管理' },
       },
       {
+        path: 'trade-review',
+        name: 'TradeReview',
+        component: () => import('@/views/stock/TradeReviewView.vue'),
+        meta: { title: '交割单复盘' },
+      },
+      {
         path: 'kline-practice',
         name: 'KlinePractice',
         component: () => import('@/views/practice/KlinePracticeView.vue'),

@@ -63,6 +63,7 @@ const activeMenu = computed(() => {
   if (path.startsWith('/analysis')) return '/analysis'
   if (path.startsWith('/stock-picker')) return '/stock-picker'
   if (path.startsWith('/stock-pools')) return '/stock-pools'
+  if (path.startsWith('/trade-review')) return '/trade-review'
   if (path.startsWith('/kline-practice')) return '/kline-practice'
   if (path.startsWith('/stock')) return '/analysis'
   if (path.startsWith('/strategies')) return '/strategies'
@@ -81,6 +82,7 @@ const menuSections = [
       { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
       { path: '/market-weather', icon: Sunny, title: '市场晴雨表' },
       { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
+      { path: '/trade-review', icon: Document, title: '交割单复盘' },
       { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
       { path: '/watchlist', icon: Star, title: '自选股' },
       { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
