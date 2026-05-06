@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { systemApi } from '@/api'
 import type {
+  SystemCozePluginStatusResponse,
   SystemDataSourceMatrix,
   SystemDataSourceMatrixRow,
   SystemDatasetStatus,
@@ -16,7 +17,9 @@ type SectionKey = 'services' | 'data_sources' | 'datasets' | 'features'
 
 const overviewLoading = ref(true)
 const refreshing = ref(false)
+const cozeRefreshing = ref(false)
 const overview = ref<SystemStatusOverview | null>(null)
+const cozePlugins = ref<SystemCozePluginStatusResponse | null>(null)
 const sectionItems = ref<Record<SectionKey, (SystemStatusItem | SystemDatasetStatus)[]>>({
   services: [],
   data_sources: [],
@@ -81,10 +84,25 @@ async function loadSection(section: SectionKey, forceRefresh = false) {
   }
 }
 
+async function loadCozePlugins(forceRefresh = false) {
+  cozeRefreshing.value = true
+  try {
+    cozePlugins.value = await systemApi.getCozePluginStatus(forceRefresh)
+  } catch (error) {
+    console.error('加载 Coze 插件状态失败', error)
+    ElMessage.error('加载 Coze 插件状态失败')
+  } finally {
+    cozeRefreshing.value = false
+  }
+}
+
 async function loadStatus(forceRefresh = false) {
   refreshing.value = true
-  await loadOverview(forceRefresh)
-  await Promise.all(sections.value.map((section) => loadSection(section.key, forceRefresh)))
+  await Promise.all([
+    loadOverview(forceRefresh),
+    loadCozePlugins(forceRefresh),
+    ...sections.value.map((section) => loadSection(section.key, forceRefresh)),
+  ])
   refreshing.value = false
 }
 
@@ -141,6 +159,14 @@ function getCurrentSourceLabel(row: SystemDataSourceMatrixRow): string {
   return row.current_source_has_data
     ? `当前默认：${row.current_source}`
     : `默认路由：${row.current_source}（本次探测未拿到数据）`
+}
+
+function formatCozeParams(params: Record<string, unknown>): string {
+  const entries = Object.entries(params || {})
+  if (entries.length === 0) return '无需参数'
+  return entries
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(', ')
 }
 
 onMounted(() => {
@@ -301,6 +327,85 @@ onMounted(() => {
             </div>
           </div>
         </div>
+
+        <div
+          v-if="section.key === 'data_sources' && cozePlugins"
+          class="coze-block card"
+        >
+          <div class="matrix-header">
+            <div>
+              <h3>Coze 插件状态</h3>
+              <p>
+                这里会逐个探测扣子工作流当前挂载的全部 20 个股票插件；你可以单独刷新这一块，判断它们是持续失败还是偶发失败。
+              </p>
+            </div>
+
+            <div class="coze-actions">
+              <div class="coze-summary">
+                <el-tag type="success" round effect="dark">正常 {{ cozePlugins.summary.available }}</el-tag>
+                <el-tag type="warning" round effect="dark">降级 {{ cozePlugins.summary.degraded }}</el-tag>
+                <el-tag type="danger" round effect="dark">失败 {{ cozePlugins.summary.unavailable }}</el-tag>
+              </div>
+              <button class="refresh-btn ghost" @click="loadCozePlugins(true)">
+                <el-icon><Refresh /></el-icon>
+                {{ cozeRefreshing ? '刷新中...' : '只刷新 Coze' }}
+              </button>
+            </div>
+          </div>
+
+          <p class="coze-meta">
+            检测时间：{{ new Date(cozePlugins.generated_at).toLocaleString('zh-CN') }}
+            · 单独接口：<code>/api/v1/system/status/coze?force_refresh=true</code>
+          </p>
+
+          <div class="coze-table">
+            <div class="coze-row coze-head">
+              <div class="coze-col plugin">插件</div>
+              <div class="coze-col status">状态</div>
+              <div class="coze-col usage">项目中是否使用</div>
+              <div class="coze-col result">探测结果</div>
+            </div>
+
+            <div
+              v-for="plugin in cozePlugins.plugins"
+              :key="plugin.key"
+              class="coze-row"
+            >
+              <div class="coze-col plugin">
+                <strong>{{ plugin.name }}</strong>
+                <p>{{ plugin.key }}</p>
+                <span>{{ plugin.description }}</span>
+              </div>
+
+              <div class="coze-col status">
+                <el-tag :type="getStatusType(plugin.status)" effect="dark" round>
+                  {{ getStatusLabel(plugin.status) }}
+                </el-tag>
+                <span v-if="plugin.latency_ms !== null && plugin.latency_ms !== undefined">
+                  {{ plugin.latency_ms }} ms
+                </span>
+              </div>
+
+              <div class="coze-col usage">
+                <el-tag :type="plugin.used_in_project ? 'success' : 'info'" effect="plain" round>
+                  {{ plugin.used_in_project ? '已接入项目' : '暂未接入' }}
+                </el-tag>
+                <p>{{ plugin.usage_description }}</p>
+              </div>
+
+              <div class="coze-col result">
+                <p class="coze-reason">{{ plugin.reason }}</p>
+                <ul class="coze-details">
+                  <li>参数：{{ formatCozeParams(plugin.params) }}</li>
+                  <li v-if="plugin.data_key">主数据字段：{{ plugin.data_key }}</li>
+                  <li>返回记录数：{{ plugin.data_count ?? 0 }}</li>
+                  <li v-if="plugin.top_level_keys.length > 0">顶层字段：{{ plugin.top_level_keys.join(', ') }}</li>
+                  <li v-if="plugin.sample_keys.length > 0">样本字段：{{ plugin.sample_keys.join(', ') }}</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </div>
@@ -362,6 +467,12 @@ onMounted(() => {
   color: #fff;
   cursor: pointer;
   font-weight: 600;
+}
+
+.refresh-btn.ghost {
+  background: rgba(15, 118, 110, 0.08);
+  color: #0f766e;
+  border: 1px solid rgba(15, 118, 110, 0.16);
 }
 
 .summary-grid {
@@ -587,6 +698,87 @@ onMounted(() => {
   font-size: 13px;
 }
 
+.coze-block {
+  margin-top: 16px;
+  padding: 22px;
+}
+
+.coze-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.coze-summary {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.coze-meta {
+  margin: 12px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.coze-table {
+  display: flex;
+  flex-direction: column;
+  margin-top: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.coze-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.15fr) minmax(140px, 0.5fr) minmax(220px, 0.9fr) minmax(320px, 1.45fr);
+}
+
+.coze-row + .coze-row {
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.coze-head {
+  background: rgba(15, 23, 42, 0.04);
+  font-weight: 700;
+}
+
+.coze-col {
+  min-width: 0;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.coze-col strong {
+  display: block;
+}
+
+.coze-col p,
+.coze-col span {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.coze-reason {
+  color: var(--el-text-color-regular) !important;
+}
+
+.coze-details {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+
 @media (max-width: 1100px) {
   .summary-grid,
   .status-grid,
@@ -595,6 +787,10 @@ onMounted(() => {
   }
 
   .matrix-row {
+    grid-template-columns: 1fr;
+  }
+
+  .coze-row {
     grid-template-columns: 1fr;
   }
 }

@@ -57,6 +57,169 @@ DATA_SOURCE_DESCRIPTIONS = {
     "coze": "通过 Coze 工作流封装的单股数据源，实时/单股日线/财务强，但不适合全市场批量主同步。",
 }
 
+COZE_PLUGIN_META = [
+    {
+        "key": "etf_current",
+        "name": "ETF 实时行情",
+        "description": "获取单个 ETF/基金的实时行情",
+        "params": {"fund_code": "510300"},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口",
+    },
+    {
+        "key": "stock_current",
+        "name": "股票实时行情",
+        "description": "获取单个股票的实时最新行情数据",
+        "params": {"stock_code": "000001"},
+        "used_in_project": True,
+        "usage_description": "Coze 实时行情主入口，自选股/监听/策略实时判断依赖它",
+    },
+    {
+        "key": "stock_k",
+        "name": "股票 K 线",
+        "description": "获取单个股票的 K 线行情信息",
+        "params_builder": "stock_k",
+        "used_in_project": True,
+        "usage_description": "单股日线、K 线、交易日历派生和部分 daily_basic 依赖它",
+    },
+    {
+        "key": "stock_shares",
+        "name": "股票股本信息",
+        "description": "获取单个股票的股本信息",
+        "params": {"stock_code": "000001"},
+        "used_in_project": True,
+        "usage_description": "daily_basic 的总股本/流通股本/市值计算依赖它",
+    },
+    {
+        "key": "stock_latest_buy",
+        "name": "最新分时成交",
+        "description": "获取单个股票的成交分时",
+        "params": {"stock_code": "000001"},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口",
+    },
+    {
+        "key": "stock_min_flow",
+        "name": "股票分时资金流向",
+        "description": "获取单个股票的分时资金流向",
+        "params": {"stock_code": "000001"},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口",
+    },
+    {
+        "key": "etf_min",
+        "name": "ETF 分时行情",
+        "description": "获取单个 ETF 的分时行情",
+        "params": {"fund_code": "510300"},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无 ETF 模块接入",
+    },
+    {
+        "key": "index_k",
+        "name": "指数 K 线",
+        "description": "获取单个指数的 K 线行情",
+        "params_builder": "index_k",
+        "used_in_project": True,
+        "usage_description": "Coze 指数历史日线候选能力，但当前项目默认改走免费源",
+    },
+    {
+        "key": "stock_east_hot",
+        "name": "东方财富人气榜",
+        "description": "获取东方财富人气榜 TOP100 股票",
+        "params": {},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口",
+    },
+    {
+        "key": "etf_k",
+        "name": "ETF K 线",
+        "description": "获取单个 ETF/基金的日周月 K 线",
+        "params": {"fund_code": "510300", "k_type": 1},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无 ETF 模块接入",
+    },
+    {
+        "key": "index_current_data",
+        "name": "指数实时行情",
+        "description": "获取主要指数实时行情",
+        "params": {"index_code": "000001"},
+        "used_in_project": True,
+        "usage_description": "指数实时行情可作为市场概览候选来源",
+    },
+    {
+        "key": "stock_min",
+        "name": "股票分时行情",
+        "description": "获取单个股票分时行情",
+        "params": {"stock_code": "000001"},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口",
+    },
+    {
+        "key": "stock_fin_data",
+        "name": "财务核心指标",
+        "description": "获取单只股票财务核心指标",
+        "params": {"stock_code": "000001"},
+        "used_in_project": True,
+        "usage_description": "财务指标与一句话选股/分析类能力的 Coze 财务入口",
+    },
+    {
+        "key": "stock_dividend",
+        "name": "历史分红信息",
+        "description": "获取股票全部历史分红信息",
+        "params": {"stock_code": "000001"},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口",
+    },
+    {
+        "key": "info_all_code",
+        "name": "全市场股票代码列表",
+        "description": "获取 A 股全部股票代码信息",
+        "params": {},
+        "used_in_project": True,
+        "usage_description": "Coze 股票列表候选入口，但当前不作为主列表源",
+    },
+    {
+        "key": "stock_ths_hot_concept",
+        "name": "同花热门概念板块",
+        "description": "获取热门概念板块",
+        "params": {},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口",
+    },
+    {
+        "key": "stock_day_flow",
+        "name": "股票日资金流向",
+        "description": "获取股票日资金流入流向",
+        "params_builder": "stock_day_flow",
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口，但后续资金流模块可能会接入",
+    },
+    {
+        "key": "index_min",
+        "name": "指数分时行情",
+        "description": "获取指数分时行情",
+        "params": {"index_code": "000001"},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口",
+    },
+    {
+        "key": "stock_five",
+        "name": "股票五档行情",
+        "description": "获取单个股票五档盘口",
+        "params": {"stock_code": "000001"},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无盘口模块接入",
+    },
+    {
+        "key": "stock_ths_hot",
+        "name": "同花顺热股榜",
+        "description": "获取同花顺热股 TOP100",
+        "params": {},
+        "used_in_project": False,
+        "usage_description": "当前项目暂无直接调用入口",
+    },
+]
+
 
 async def _run_with_timeout(coro: Any, timeout: float, default: Any = None) -> Any:
     try:
@@ -197,10 +360,88 @@ def _recent_probe_window() -> tuple[str, str]:
     return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
 
 
+def _recent_probe_window_hyphenated() -> tuple[str, str]:
+    start, end = _recent_probe_window()
+    return f"{start[:4]}-{start[4:6]}-{start[6:8]}", f"{end[:4]}-{end[4:6]}-{end[6:8]}"
+
+
 def _format_percentage(numerator: int, denominator: int) -> str:
     if denominator <= 0:
         return "0.0%"
     return f"{numerator / denominator * 100:.1f}%"
+
+
+def _build_coze_probe_params(meta: Dict[str, Any]) -> Dict[str, Any]:
+    builder = meta.get("params_builder")
+    if not builder:
+        return dict(meta.get("params") or {})
+
+    if builder == "stock_k":
+        start_date, end_date = _recent_probe_window_hyphenated()
+        return {
+            "stock_code": "000001",
+            "k_type": 1,
+            "adjust_type": 1,
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+
+    if builder == "index_k":
+        start_date, _ = _recent_probe_window_hyphenated()
+        return {
+            "index_code": "000001",
+            "k_type": 1,
+            "start_date": start_date,
+        }
+
+    if builder == "stock_day_flow":
+        start_date, end_date = _recent_probe_window_hyphenated()
+        return {
+            "stock_code": "000001",
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+
+    return dict(meta.get("params") or {})
+
+
+def _extract_coze_payload_metrics(payload: Any) -> Dict[str, Any]:
+    top_level_keys: List[str] = []
+    array_counts: Dict[str, int] = {}
+    primary_key = ""
+    primary_count = 0
+    sample: Optional[Dict[str, Any]] = None
+
+    if isinstance(payload, dict):
+        top_level_keys = list(payload.keys())
+        for key, value in payload.items():
+            if isinstance(value, list):
+                array_counts[key] = len(value)
+                if len(value) > primary_count:
+                    primary_key = key
+                    primary_count = len(value)
+                    if value and isinstance(value[0], dict):
+                        sample = value[0]
+            elif isinstance(value, dict) and sample is None:
+                sample = value
+        if primary_count <= 0 and isinstance(payload.get("data"), dict):
+            sample = payload.get("data")
+    elif isinstance(payload, list):
+        primary_key = "data"
+        primary_count = len(payload)
+        if payload and isinstance(payload[0], dict):
+            sample = payload[0]
+
+    has_data = primary_count > 0 or bool(sample)
+    sample_keys = list(sample.keys())[:8] if isinstance(sample, dict) else []
+    return {
+        "has_data": has_data,
+        "primary_key": primary_key,
+        "primary_count": primary_count,
+        "array_counts": array_counts,
+        "top_level_keys": top_level_keys,
+        "sample_keys": sample_keys,
+    }
 
 
 async def _ensure_optional_managers() -> Dict[str, Optional[str]]:
@@ -407,6 +648,132 @@ async def _probe_coze_adapter(adapter: Any) -> Dict[str, Any]:
     )
     item = _status_item("coze", "Coze 工作流", status, reason, details=details)
     return _with_data_source_details(item, adapter=adapter, interfaces=interfaces)
+
+
+async def _build_coze_plugin_status_data() -> Dict[str, Any]:
+    optional_notes = await _ensure_optional_managers()
+    generated_at = datetime.now().isoformat()
+
+    if optional_notes.get("data_source"):
+        return {
+            "generated_at": generated_at,
+            "summary": {"available": 0, "degraded": 0, "unavailable": len(COZE_PLUGIN_META)},
+            "plugins": [
+                {
+                    "key": meta["key"],
+                    "name": meta["name"],
+                    "status": "unavailable",
+                    "reason": f"统一数据源初始化失败：{optional_notes['data_source']}",
+                    "description": meta["description"],
+                    "params": _build_coze_probe_params(meta),
+                    "latency_ms": None,
+                    "data_count": 0,
+                    "top_level_keys": [],
+                    "sample_keys": [],
+                    "used_in_project": meta["used_in_project"],
+                    "usage_description": meta["usage_description"],
+                }
+                for meta in COZE_PLUGIN_META
+            ],
+        }
+
+    adapter = next((item for item in getattr(data_source_manager, "_adapters", []) if item.name == "coze"), None)
+    if adapter is None or not await adapter.is_available():
+        reason = "Coze 适配器未初始化或当前不可用"
+        return {
+            "generated_at": generated_at,
+            "summary": {"available": 0, "degraded": 0, "unavailable": len(COZE_PLUGIN_META)},
+            "plugins": [
+                {
+                    "key": meta["key"],
+                    "name": meta["name"],
+                    "status": "unavailable",
+                    "reason": reason,
+                    "description": meta["description"],
+                    "params": _build_coze_probe_params(meta),
+                    "latency_ms": None,
+                    "data_count": 0,
+                    "top_level_keys": [],
+                    "sample_keys": [],
+                    "used_in_project": meta["used_in_project"],
+                    "usage_description": meta["usage_description"],
+                }
+                for meta in COZE_PLUGIN_META
+            ],
+        }
+
+    semaphore = asyncio.Semaphore(6)
+
+    async def _probe_plugin(meta: Dict[str, Any]) -> Dict[str, Any]:
+        params = _build_coze_probe_params(meta)
+        async with semaphore:
+            started_at = time.perf_counter()
+            try:
+                payload = await _run_with_timeout(adapter._run_plugin(meta["key"], params), timeout=8.0)
+                latency_ms = round((time.perf_counter() - started_at) * 1000, 1)
+                if payload is None:
+                    status = "degraded"
+                    reason = "请求超时或未返回可解析结果"
+                    metrics = {
+                        "primary_count": 0,
+                        "primary_key": "",
+                        "top_level_keys": [],
+                        "sample_keys": [],
+                    }
+                else:
+                    metrics = _extract_coze_payload_metrics(payload)
+                    if metrics["has_data"]:
+                        status = "available"
+                        reason = "请求成功且返回了可解析数据"
+                    else:
+                        status = "degraded"
+                        reason = "请求成功，但当前返回空数据或无法识别的数据结构"
+
+                return {
+                    "key": meta["key"],
+                    "name": meta["name"],
+                    "status": status,
+                    "reason": reason,
+                    "description": meta["description"],
+                    "params": params,
+                    "latency_ms": latency_ms,
+                    "data_count": metrics["primary_count"],
+                    "data_key": metrics["primary_key"] or None,
+                    "top_level_keys": metrics["top_level_keys"],
+                    "sample_keys": metrics["sample_keys"],
+                    "used_in_project": meta["used_in_project"],
+                    "usage_description": meta["usage_description"],
+                }
+            except Exception as exc:
+                latency_ms = round((time.perf_counter() - started_at) * 1000, 1)
+                return {
+                    "key": meta["key"],
+                    "name": meta["name"],
+                    "status": "unavailable",
+                    "reason": str(exc),
+                    "description": meta["description"],
+                    "params": params,
+                    "latency_ms": latency_ms,
+                    "data_count": 0,
+                    "data_key": None,
+                    "top_level_keys": [],
+                    "sample_keys": [],
+                    "used_in_project": meta["used_in_project"],
+                    "usage_description": meta["usage_description"],
+                }
+
+    plugins = await asyncio.gather(*[_probe_plugin(meta) for meta in COZE_PLUGIN_META])
+    summary = {
+        "available": sum(1 for item in plugins if item["status"] == "available"),
+        "degraded": sum(1 for item in plugins if item["status"] == "degraded"),
+        "unavailable": sum(1 for item in plugins if item["status"] == "unavailable"),
+    }
+
+    return {
+        "generated_at": generated_at,
+        "summary": summary,
+        "plugins": plugins,
+    }
 
 
 async def _probe_generic_adapter(adapter: Any) -> Dict[str, Any]:
@@ -1176,6 +1543,14 @@ async def build_capability_section(section: SectionName, force_refresh: bool = F
         "items": result["items"],
         "metadata": result.get("metadata", {}),
     }
+
+
+async def build_coze_plugin_status(force_refresh: bool = False) -> Dict[str, Any]:
+    return await _get_cached(
+        "system_status:coze_plugins",
+        _build_coze_plugin_status_data,
+        force_refresh=force_refresh,
+    )
 
 
 async def build_capability_audit() -> Dict[str, Any]:

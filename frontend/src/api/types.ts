@@ -458,6 +458,28 @@ export interface SystemStatusSectionResponse {
   metadata?: Record<string, unknown>
 }
 
+export interface SystemCozePluginStatus {
+  key: string
+  name: string
+  status: SystemStatusLevel
+  reason: string
+  description: string
+  params: Record<string, unknown>
+  latency_ms?: number | null
+  data_count?: number
+  data_key?: string | null
+  top_level_keys: string[]
+  sample_keys: string[]
+  used_in_project: boolean
+  usage_description: string
+}
+
+export interface SystemCozePluginStatusResponse {
+  generated_at: string
+  summary: SystemStatusSummary
+  plugins: SystemCozePluginStatus[]
+}
+
 export interface SystemDataSourceMatrixAdapter {
   key: string
   name: string

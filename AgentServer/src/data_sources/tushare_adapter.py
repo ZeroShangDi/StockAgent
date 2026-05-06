@@ -102,7 +102,7 @@ class TushareAdapter(AsyncDataSourceAdapter):
         )
     
     def _get_default_priority(self) -> int:
-        return 100  # 最高优先级
+        return 20  # 权限/积分不稳定时作为最后回退
     
     # ==================== 生命周期 ====================
     

@@ -97,7 +97,7 @@ class CozeWorkflowAdapter(AsyncDataSourceAdapter):
         )
 
     def _get_default_priority(self) -> int:
-        return 40
+        return 90
 
     async def initialize(self) -> None:
         """初始化 Coze 工作流连接"""

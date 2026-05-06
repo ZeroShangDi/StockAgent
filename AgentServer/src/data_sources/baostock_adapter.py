@@ -71,7 +71,7 @@ class BaoStockAdapter(AsyncDataSourceAdapter):
         )
     
     def _get_default_priority(self) -> int:
-        return 10  # 最低优先级
+        return 60  # 免费回退源
     
     # ==================== 生命周期 ====================
     

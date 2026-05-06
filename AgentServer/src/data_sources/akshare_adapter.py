@@ -72,7 +72,7 @@ class AKShareAdapter(AsyncDataSourceAdapter):
         )
     
     def _get_default_priority(self) -> int:
-        return 50  # 中等优先级
+        return 70  # 免费源优先级高于 Tushare
     
     # ==================== 生命周期 ====================
     

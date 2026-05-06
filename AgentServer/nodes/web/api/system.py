@@ -2,7 +2,12 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.diagnostics import build_capability_audit, build_capability_overview, build_capability_section
+from src.diagnostics import (
+    build_capability_audit,
+    build_capability_overview,
+    build_capability_section,
+    build_coze_plugin_status,
+)
 from .auth import get_current_user_id
 
 
@@ -35,3 +40,12 @@ async def get_system_status_section(
         return await build_capability_section(section, force_refresh=force_refresh)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/status/coze")
+async def get_coze_plugin_status(
+    force_refresh: bool = Query(False),
+    _user_id: str = Depends(get_current_user_id),
+):
+    """返回 Coze 全量插件探测状态，便于单独重复刷新。"""
+    return await build_coze_plugin_status(force_refresh=force_refresh)

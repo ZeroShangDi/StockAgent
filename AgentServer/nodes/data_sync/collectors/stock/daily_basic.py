@@ -146,11 +146,21 @@ class DailyBasicCollector(BaseCollector):
         if not latest_trade_date:
             return {"count": 0, "message": "Cannot get latest trade date"}
         
-        if await mongo_manager.is_synced(sync_marker, latest_trade_date):
+        already_synced = await mongo_manager.is_synced(sync_marker, latest_trade_date)
+        coverage_ok = await self._has_trade_date_coverage(latest_trade_date, focus_mode)
+
+        if already_synced and coverage_ok:
             self.logger.info(f"Daily basic {latest_trade_date} already synced, skipping")
             return {"count": 0, "message": f"Already synced {latest_trade_date}", "skipped": True}
-        
-        sync_info = await self._determine_sync_range_for(sync_marker, latest_trade_date)
+
+        if already_synced and not coverage_ok:
+            self.logger.warning(
+                f"Sync marker {sync_marker} already points to {latest_trade_date}, "
+                "but daily_basic coverage is incomplete; forcing latest-date resync"
+            )
+            sync_info = (latest_trade_date, latest_trade_date, False)
+        else:
+            sync_info = await self._determine_sync_range_for(sync_marker, latest_trade_date)
         
         if sync_info is None:
             return {"count": 0, "message": f"Already synced {latest_trade_date}", "skipped": True}
@@ -238,12 +248,16 @@ class DailyBasicCollector(BaseCollector):
                 retry_failures=True,
             )
         
-        # 记录同步完成
-        await mongo_manager.record_sync(
-            sync_type=sync_marker,
-            sync_date=end_date,
-            count=total_count,
-        )
+        if await self._has_trade_date_coverage(end_date, focus_mode):
+            await mongo_manager.record_sync(
+                sync_type=sync_marker,
+                sync_date=end_date,
+                count=total_count,
+            )
+        else:
+            self.logger.warning(
+                f"Skip recording sync marker for {sync_marker}: daily_basic still lacks {end_date} coverage"
+            )
         
         return {
             "count": total_count,
@@ -266,6 +280,27 @@ class DailyBasicCollector(BaseCollector):
 
     def _get_sync_marker(self, focus_mode: bool) -> str:
         return f"{self.name}_focus" if focus_mode else self.name
+
+    async def _has_trade_date_coverage(self, trade_date: str, focus_mode: bool) -> bool:
+        if focus_mode:
+            focus_codes = await get_focus_stock_codes()
+            if not focus_codes:
+                return False
+            rows = await mongo_manager.find_many(
+                "daily_basic",
+                {"trade_date": trade_date, "ts_code": {"$in": focus_codes}},
+                projection={"ts_code": 1},
+            )
+            covered = {row.get("ts_code") for row in rows if row.get("ts_code")}
+            return all(code in covered for code in focus_codes)
+
+        rows = await mongo_manager.find_many(
+            "daily_basic",
+            {"trade_date": trade_date},
+            projection={"ts_code": 1},
+            limit=1,
+        )
+        return bool(rows)
 
     async def _determine_sync_range_for(
         self,

@@ -52,12 +52,22 @@ class IndexDailyCollector(BaseCollector):
         """执行采集"""
         latest_trade_date, _ = await data_source_manager.get_latest_trade_date()
         
-        if await mongo_manager.is_synced(self.name, latest_trade_date):
+        already_synced = await mongo_manager.is_synced(self.name, latest_trade_date)
+        coverage_ok = await self._has_trade_date_coverage(latest_trade_date)
+
+        if already_synced and coverage_ok:
             self.logger.info(f"Index daily {latest_trade_date} already synced, skipping")
             return {"count": 0, "message": f"Already synced {latest_trade_date}", "skipped": True}
-        
-        # 使用基类方法确定同步范围
-        sync_info = await self._determine_sync_range(latest_trade_date)
+
+        if already_synced and not coverage_ok:
+            self.logger.warning(
+                f"Sync marker {self.name} already points to {latest_trade_date}, "
+                "but index_daily coverage is incomplete; forcing latest-date resync"
+            )
+            sync_info = (latest_trade_date, latest_trade_date, False)
+        else:
+            # 使用基类方法确定同步范围
+            sync_info = await self._determine_sync_range(latest_trade_date)
         
         if sync_info is None:
             return {"count": 0, "message": f"Already synced {latest_trade_date}", "skipped": True}
@@ -98,12 +108,16 @@ class IndexDailyCollector(BaseCollector):
             retry_failures=True,
         )
         
-        # 记录同步完成
-        await mongo_manager.record_sync(
-            sync_type=self.name,
-            sync_date=end_date,
-            count=total_count,
-        )
+        if await self._has_trade_date_coverage(end_date):
+            await mongo_manager.record_sync(
+                sync_type=self.name,
+                sync_date=end_date,
+                count=total_count,
+            )
+        else:
+            self.logger.warning(
+                f"Skip recording sync marker for {self.name}: index_daily still lacks {end_date} coverage"
+            )
         
         return {
             "count": total_count,
@@ -114,3 +128,12 @@ class IndexDailyCollector(BaseCollector):
             "failed": result["failed"],
             "message": f"[{sync_type_desc}] Synced {total_count} records ({result['success']}/{result['total']} indices)",
         }
+
+    async def _has_trade_date_coverage(self, trade_date: str) -> bool:
+        rows = await mongo_manager.find_many(
+            "index_daily",
+            {"trade_date": trade_date, "ts_code": {"$in": self.CORE_INDICES}},
+            projection={"ts_code": 1},
+        )
+        covered = {row.get("ts_code") for row in rows if row.get("ts_code")}
+        return all(code in covered for code in self.CORE_INDICES)

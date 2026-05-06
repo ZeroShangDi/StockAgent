@@ -3,7 +3,12 @@
  */
 
 import { api } from '../client'
-import type { SystemStatusOverview, SystemStatusReport, SystemStatusSectionResponse } from '../types'
+import type {
+  SystemCozePluginStatusResponse,
+  SystemStatusOverview,
+  SystemStatusReport,
+  SystemStatusSectionResponse,
+} from '../types'
 
 export const systemApi = {
   getSystemStatus(): Promise<SystemStatusReport> {
@@ -21,6 +26,12 @@ export const systemApi = {
     forceRefresh = false,
   ): Promise<SystemStatusSectionResponse> {
     return api.get(`/system/status/sections/${section}`, {
+      params: { force_refresh: forceRefresh },
+    })
+  },
+
+  getCozePluginStatus(forceRefresh = false): Promise<SystemCozePluginStatusResponse> {
+    return api.get('/system/status/coze', {
       params: { force_refresh: forceRefresh },
     })
   },

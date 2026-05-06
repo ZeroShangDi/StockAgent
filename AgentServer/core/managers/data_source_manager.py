@@ -170,6 +170,8 @@ class DataSourceManager(BaseManager):
         preferred: List[str] = []
         has_coze = "coze" in self._adapter_map
         has_tushare = "tushare" in self._adapter_map
+        has_akshare = "akshare" in self._adapter_map
+        has_baostock = "baostock" in self._adapter_map
 
         ts_code = kwargs.get("ts_code")
         has_single_ts_code = bool(ts_code) and isinstance(ts_code, str) and "," not in ts_code
@@ -178,23 +180,62 @@ class DataSourceManager(BaseManager):
         if method_name == "get_daily":
             if has_single_ts_code and has_coze:
                 preferred.append("coze")
+                if has_akshare:
+                    preferred.append("akshare")
+                if has_baostock:
+                    preferred.append("baostock")
+                if has_tushare:
+                    preferred.append("tushare")
             elif is_full_market_daily and has_tushare:
+                # 当前真正支持按交易日整市场抓取的仍主要是 Tushare。
                 preferred.append("tushare")
         elif method_name == "get_stock_basic":
             if has_single_ts_code and has_coze:
                 preferred.append("coze")
+                if has_akshare:
+                    preferred.append("akshare")
+                if has_baostock:
+                    preferred.append("baostock")
+                if has_tushare:
+                    preferred.append("tushare")
+            else:
+                if has_akshare:
+                    preferred.append("akshare")
+                if has_baostock:
+                    preferred.append("baostock")
+                if has_coze:
+                    preferred.append("coze")
+                if has_tushare:
+                    preferred.append("tushare")
         elif method_name in {
             "get_realtime_quotes",
-            "get_realtime_index_quotes",
             "get_daily_basic",
             "get_financial_indicator",
             "get_financial_data",
             "get_trade_calendar",
             "get_latest_trade_date",
+            "get_kline",
         }:
             if has_coze:
                 preferred.append("coze")
+            if has_akshare:
+                preferred.append("akshare")
+            if has_baostock:
+                preferred.append("baostock")
+            if has_tushare:
+                preferred.append("tushare")
+        elif method_name == "get_realtime_index_quotes":
+            if has_coze:
+                preferred.append("coze")
+            if has_akshare:
+                preferred.append("akshare")
+            if has_tushare:
+                preferred.append("tushare")
         elif method_name == "get_index_daily":
+            if has_baostock:
+                preferred.append("baostock")
+            if has_akshare:
+                preferred.append("akshare")
             if has_tushare:
                 preferred.append("tushare")
 
