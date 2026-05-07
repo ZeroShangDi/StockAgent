@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 import uuid
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
@@ -120,7 +121,7 @@ class TradeReviewService:
             return {"category": "repo", "side": None, "is_trade_record": False}
         return {"category": "other", "side": None, "is_trade_record": False}
 
-    def _dedupe_key(self, row: Dict[str, Any], code: str, trade_date: str) -> str:
+    def _legacy_dedupe_key(self, row: Dict[str, Any], code: str, trade_date: str) -> str:
         parts = [
             trade_date,
             row.get("业务类型", "").strip(),
@@ -131,6 +132,18 @@ class TradeReviewService:
             str(row.get("发生金额", "")).strip(),
             str(row.get("备注", "")).strip(),
             str(row.get("数据来源", "")).strip(),
+        ]
+        return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+    def _dedupe_key(self, row: Dict[str, Any], code: str, trade_date: str) -> str:
+        normalized_row = {
+            str(key).strip(): str(value or "").strip()
+            for key, value in sorted(row.items(), key=lambda item: str(item[0]))
+        }
+        parts = [
+            trade_date,
+            code,
+            json.dumps(normalized_row, ensure_ascii=False, sort_keys=True),
         ]
         return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
@@ -493,6 +506,7 @@ class TradeReviewService:
             ts_code = symbol_map.get(code) or self._infer_ts_code(code) if code else ""
             classification = self._classify_record(business_type)
             dedupe_key = self._dedupe_key(row, code, trade_date)
+            legacy_dedupe_key = self._legacy_dedupe_key(row, code, trade_date)
 
             prepared_records.append(
                 {
@@ -527,6 +541,7 @@ class TradeReviewService:
                     "market_context": "",
                     "result_reasons": {"verdict": "", "reasons": []},
                     "dedupe_key": dedupe_key,
+                    "legacy_dedupe_key": legacy_dedupe_key,
                     "raw_row": row,
                     "created_at": datetime.now(UTC),
                     "updated_at": datetime.now(UTC),
@@ -545,14 +560,51 @@ class TradeReviewService:
 
         existing_docs = await mongo_manager.find_many(
             self.RECORD_COLLECTION,
-            {
-                "group_id": group_id,
-                "dedupe_key": {"$in": [item["dedupe_key"] for item in deduped_prepared_records]},
+            {"group_id": group_id},
+            projection={
+                "dedupe_key": 1,
+                "legacy_dedupe_key": 1,
+                "raw_row": 1,
+                "code": 1,
+                "trade_date": 1,
             },
-            projection={"dedupe_key": 1},
         )
-        existing_keys = {doc.get("dedupe_key") for doc in existing_docs if doc.get("dedupe_key")}
-        new_records = [item for item in deduped_prepared_records if item["dedupe_key"] not in existing_keys]
+        existing_exact_keys = set()
+        existing_legacy_counts = defaultdict(int)
+        for doc in existing_docs:
+            raw_row = doc.get("raw_row") or {}
+            existing_code = self._normalize_code(doc.get("code"))
+            existing_trade_date = str(doc.get("trade_date") or "")
+            existing_exact_key = self._dedupe_key(raw_row, existing_code, existing_trade_date)
+            existing_legacy_key = str(doc.get("legacy_dedupe_key") or "").strip() or self._legacy_dedupe_key(
+                raw_row,
+                existing_code,
+                existing_trade_date,
+            )
+            if existing_exact_key:
+                existing_exact_keys.add(existing_exact_key)
+            if existing_legacy_key:
+                existing_legacy_counts[existing_legacy_key] += 1
+
+        matched_existing_by_legacy = defaultdict(int)
+        new_records: List[Dict[str, Any]] = []
+        duplicate_existing = 0
+        for item in deduped_prepared_records:
+            exact_key = item["dedupe_key"]
+            legacy_key = item["legacy_dedupe_key"]
+
+            if exact_key in existing_exact_keys:
+                matched_existing_by_legacy[legacy_key] += 1
+                duplicate_existing += 1
+                continue
+
+            legacy_quota = existing_legacy_counts.get(legacy_key, 0)
+            if matched_existing_by_legacy[legacy_key] < legacy_quota:
+                matched_existing_by_legacy[legacy_key] += 1
+                duplicate_existing += 1
+                continue
+
+            new_records.append(item)
 
         batch_id = uuid.uuid4().hex
         if new_records:
@@ -568,7 +620,7 @@ class TradeReviewService:
             "imported_at": datetime.now(UTC),
             "total_rows": len(prepared_records),
             "imported_rows": len(new_records),
-            "duplicate_rows": duplicate_in_file + len(deduped_prepared_records) - len(new_records),
+            "duplicate_rows": duplicate_in_file + duplicate_existing,
             "trade_rows": sum(1 for item in new_records if item["is_trade_record"]),
         }
         await mongo_manager.update_one(
@@ -599,7 +651,7 @@ class TradeReviewService:
             "group": await self.get_group(user_id, group_id),
             "total_rows": len(prepared_records),
             "imported_rows": len(new_records),
-            "duplicate_rows": duplicate_in_file + len(deduped_prepared_records) - len(new_records),
+            "duplicate_rows": duplicate_in_file + duplicate_existing,
             "trade_rows": sum(1 for item in new_records if item["is_trade_record"]),
         }
 
