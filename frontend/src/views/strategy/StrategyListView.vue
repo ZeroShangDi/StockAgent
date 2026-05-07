@@ -53,6 +53,8 @@ const editParamsDialogVisible = ref(false)
 const editingStrategyType = ref<string>('')
 const editingParams = ref<Record<string, unknown>>({})
 const savingParams = ref(false)
+const transitionRulesDialogVisible = ref(false)
+const editingTransitionStrategyType = ref('')
 const availablePools = ref<StockPoolSummary[]>([])
 const poolLoading = ref(false)
 const editingTransitionRules = ref<StrategyTransitionRule[]>([])
@@ -119,6 +121,13 @@ function getStrategyName(strategyType: string): string {
 }
 
 function getParamDisplayValue(strategyType: string, key: string, fallback: unknown): string {
+  if (key === 'position_group_id') {
+    const sub = getSubscription(strategyType)
+    const groupName = sub?.params?.position_group_name
+    if (typeof groupName === 'string' && groupName.trim()) {
+      return groupName
+    }
+  }
   const strategy = availableStrategyTypes.value.find(s => s.type === strategyType)
   const param = strategy?.param_schema?.find(item => item.key === key)
   if (param?.options?.length) {
@@ -500,13 +509,21 @@ async function openEditParamsDialog(strategyType: string): Promise<void> {
   const sub = getSubscription(strategyType)
   if (!sub) return
   
-  await ensurePoolsLoaded()
   await ensureTradeReviewGroupsLoaded()
   editingStrategyType.value = strategyType
   // 复制当前参数
   editingParams.value = { ...sub.params }
-  editingTransitionRules.value = getTransitionRules(strategyType)
   editParamsDialogVisible.value = true
+}
+
+async function openTransitionRulesDialog(strategyType: string): Promise<void> {
+  const sub = getSubscription(strategyType)
+  if (!sub) return
+
+  await ensurePoolsLoaded()
+  editingTransitionStrategyType.value = strategyType
+  editingTransitionRules.value = getTransitionRules(strategyType)
+  transitionRulesDialogVisible.value = true
 }
 
 /** 保存策略参数（管理员） */
@@ -518,22 +535,6 @@ async function saveParams(): Promise<void> {
   
   savingParams.value = true
   try {
-    editingParams.value.transition_rules = editingTransitionRules.value.map((rule) => {
-      const targetPool = availablePools.value.find((pool) => pool.pool_id === rule.target_pool_id)
-      const sourcePools = availablePools.value.filter((pool) => rule.source_pool_ids.includes(pool.pool_id))
-      return {
-        rule_id: rule.rule_id,
-        enabled: rule.enabled,
-        target_pool_id: rule.target_pool_id,
-        target_pool_name: targetPool?.name || rule.target_pool_name || '',
-        source_pool_ids: rule.source_pool_ids,
-        source_pool_names: sourcePools.map((pool) => pool.name),
-        mode: rule.mode,
-        cooldown_days: Math.max(1, Number(rule.cooldown_days || 1)),
-        note: rule.note || '',
-      }
-    })
-
     await subscriptionApi.updateStrategyParams(
       editingStrategyType.value,
       editingParams.value
@@ -567,6 +568,52 @@ function normalizePoint(point: StrategyStockPoint): StrategyStockPoint {
   return {
     date: point.date,
     price: point.price === null || point.price === undefined || point.price === 0 ? null : Number(point.price),
+  }
+}
+
+async function saveTransitionRules(): Promise<void> {
+  if (!userStore.isAdmin) {
+    ElMessage.warning('需要管理员权限')
+    return
+  }
+
+  const sub = getSubscription(editingTransitionStrategyType.value)
+  if (!sub) return
+
+  savingParams.value = true
+  try {
+    const nextParams = {
+      ...sub.params,
+      transition_rules: editingTransitionRules.value.map((rule) => {
+        const targetPool = availablePools.value.find((pool) => pool.pool_id === rule.target_pool_id)
+        const sourcePools = availablePools.value.filter((pool) => rule.source_pool_ids.includes(pool.pool_id))
+        return {
+          rule_id: rule.rule_id,
+          enabled: rule.enabled,
+          target_pool_id: rule.target_pool_id,
+          target_pool_name: targetPool?.name || rule.target_pool_name || '',
+          source_pool_ids: rule.source_pool_ids,
+          source_pool_names: sourcePools.map((pool) => pool.name),
+          mode: rule.mode,
+          cooldown_days: Math.max(1, Number(rule.cooldown_days || 1)),
+          note: rule.note || '',
+        }
+      }),
+    }
+
+    await subscriptionApi.updateStrategyParams(
+      editingTransitionStrategyType.value,
+      nextParams
+    )
+
+    sub.params = { ...nextParams }
+    ElMessage.success('自动流转规则已保存')
+    transitionRulesDialogVisible.value = false
+  } catch (error) {
+    ElMessage.error('保存自动流转规则失败')
+    console.error(error)
+  } finally {
+    savingParams.value = false
   }
 }
 
@@ -827,6 +874,16 @@ onMounted(async () => {
           <div class="params-section transition-section">
             <div class="section-header">
               <h4 class="section-title">自动流转</h4>
+              <el-button
+                v-if="userStore.isAdmin"
+                type="primary"
+                size="small"
+                :icon="Edit"
+                plain
+                @click="openTransitionRulesDialog(st.type)"
+              >
+                编辑
+              </el-button>
             </div>
             <div class="param-item transition-summary-item">
               <span class="param-label">规则概览</span>
@@ -1334,6 +1391,31 @@ onMounted(async () => {
           </div>
         </div>
 
+      </div>
+      
+      <template #footer>
+        <el-button @click="editParamsDialogVisible = false">取消</el-button>
+        <el-button 
+          type="primary" 
+          :loading="savingParams"
+          @click="saveParams"
+        >
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="transitionRulesDialogVisible"
+      title="编辑自动流转规则"
+      width="720px"
+      :close-on-click-modal="false"
+    >
+      <div class="edit-params-form">
+        <p class="form-hint mb-4">
+          为 <strong>{{ getStrategyName(editingTransitionStrategyType) }}</strong> 配置触发后的股池流转动作。
+        </p>
+
         <div class="transition-rules-block">
           <div class="section-header">
             <h4 class="section-title">自动流转规则</h4>
@@ -1438,13 +1520,13 @@ onMounted(async () => {
           </div>
         </div>
       </div>
-      
+
       <template #footer>
-        <el-button @click="editParamsDialogVisible = false">取消</el-button>
-        <el-button 
-          type="primary" 
+        <el-button @click="transitionRulesDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
           :loading="savingParams"
-          @click="saveParams"
+          @click="saveTransitionRules"
         >
           保存
         </el-button>

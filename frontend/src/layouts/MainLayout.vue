@@ -77,38 +77,32 @@ const activeTaskCount = computed(() => taskStore.activeTaskCount)
 
 const menuSections = [
   {
-    key: 'featured',
-    title: '核心工作台',
+    key: 'customized',
+    title: '新增与改造',
     items: [
-      { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
       { path: '/market-weather', icon: Sunny, title: '市场晴雨表' },
       { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
-      { path: '/trade-review', icon: Document, title: '交割单复盘' },
-      { path: '/positions', icon: Star, title: '持仓股' },
-      { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
-      { path: '/watchlist', icon: Star, title: '自选股' },
       { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
+      { path: '/watchlist', icon: Star, title: '自选股' },
+      { path: '/positions', icon: Star, title: '持仓股' },
       { path: '/strategies', icon: TrendCharts, title: '市场监听' },
+      { path: '/trade-review', icon: Document, title: '交割单复盘' },
+      { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
+      { path: '/system-status', icon: WarningFilled, title: '能力状态' },
     ],
   },
   {
-    key: 'market',
-    title: '市场与跟踪',
+    key: 'original',
+    title: '原项目页面',
     items: [
+      { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
       { path: '/market', icon: Histogram, title: '行情分析' },
       { path: '/sector-strategy', icon: TrendCharts, title: '板块分析' },
       { path: '/hot-news', icon: Promotion, title: '热点追踪' },
-    ],
-  },
-  {
-    key: 'analysis',
-    title: '分析与系统',
-    items: [
       { path: '/analysis', icon: DataAnalysis, title: '分析任务' },
       { path: '/backtest', icon: DataAnalysis, title: '单股回测' },
       { path: '/factor-selection', icon: DataAnalysis, title: '因子选股' },
       { path: '/reports', icon: Document, title: '报告回顾' },
-      { path: '/system-status', icon: WarningFilled, title: '能力状态' },
       { path: '/settings', icon: Setting, title: '设置' },
     ],
   },

@@ -414,14 +414,9 @@ class ListenerNode(BaseNode):
             if sub.is_all_market():
                 has_all_market = True
                 # 继续遍历，收集其他策略的个股
-            
-            # 过滤掉 'ALL' 标识，只添加实际股票代码
-            for code in sub.watch_list:
-                if code != "ALL":
-                    watch_set.add(code)
 
-            position_codes = await self._get_position_watch_codes(sub)
-            watch_set.update(position_codes)
+            effective_watch_codes = await self._get_effective_watch_codes(sub)
+            watch_set.update(effective_watch_codes)
         
         if has_all_market:
             # 全市场监听：使用涨跌停列表中的股票 + 其他策略的个股
@@ -429,6 +424,21 @@ class ListenerNode(BaseNode):
             all_codes.update(watch_set)
             return list(all_codes)
         
+        return list(watch_set)
+
+    async def _get_effective_watch_codes(self, subscription: StrategySubscription) -> List[str]:
+        watch_set = {
+            str(code).upper()
+            for code in subscription.watch_list
+            if str(code).strip() and str(code).upper() != "ALL"
+        }
+
+        position_codes = await self._get_position_watch_codes(subscription)
+        watch_set.update(position_codes)
+
+        transition_source_codes = await self._get_transition_source_watch_codes(subscription)
+        watch_set.update(transition_source_codes)
+
         return list(watch_set)
 
     async def _get_position_watch_codes(self, subscription: StrategySubscription) -> List[str]:
@@ -453,6 +463,37 @@ class ListenerNode(BaseNode):
             for doc in docs
             if doc.get("ts_code")
         ]
+
+    async def _get_transition_source_watch_codes(self, subscription: StrategySubscription) -> List[str]:
+        rules = subscription.params.get("transition_rules") or []
+        if not isinstance(rules, list) or not rules:
+            return []
+
+        source_pool_ids: set[str] = set()
+        for rule in rules:
+            if not isinstance(rule, dict) or not rule.get("enabled", True):
+                continue
+            for pool_id in rule.get("source_pool_ids") or []:
+                normalized = str(pool_id or "").strip()
+                if normalized:
+                    source_pool_ids.add(normalized)
+
+        if not source_pool_ids:
+            return []
+
+        source_pools = await mongo_manager.find_many(
+            "stock_pools",
+            {"pool_id": {"$in": list(source_pool_ids)}},
+            projection={"stocks.ts_code": 1},
+        )
+
+        codes: set[str] = set()
+        for pool in source_pools:
+            for item in pool.get("stocks", []) or []:
+                ts_code = str(item.get("ts_code") or "").strip().upper()
+                if ts_code:
+                    codes.add(ts_code)
+        return list(codes)
     
     def _build_snapshot(
         self,
@@ -557,8 +598,18 @@ class ListenerNode(BaseNode):
                 continue
             
             try:
+                effective_watch_codes = await self._get_effective_watch_codes(subscription)
+                effective_subscription = subscription.copy(
+                    update={
+                        "watch_list": (
+                            ["ALL", *effective_watch_codes]
+                            if subscription.is_all_market()
+                            else effective_watch_codes
+                        )
+                    }
+                )
                 alerts = await strategy.evaluate(
-                    subscription=subscription,
+                    subscription=effective_subscription,
                     snapshot=self._current_snapshot,
                     previous_snapshot=self._previous_snapshot,
                 )
