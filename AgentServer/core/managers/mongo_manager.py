@@ -396,6 +396,15 @@ class MongoManager(BaseManager):
             IndexModel([("user_id", ASCENDING)]),
             IndexModel([("reviewed", ASCENDING)]),
         ])
+
+        # 交割单持仓快照
+        await self._safe_create_indexes("trade_review_positions", [
+            IndexModel([("position_id", ASCENDING)], unique=True),
+            IndexModel([("group_id", ASCENDING), ("ts_code", ASCENDING)], unique=True),
+            IndexModel([("group_id", ASCENDING), ("market_value", DESCENDING)]),
+            IndexModel([("group_id", ASCENDING), ("unrealized_pnl_pct", DESCENDING)]),
+            IndexModel([("user_id", ASCENDING)]),
+        ])
         
         self.logger.info("MongoDB indexes ensured")
     

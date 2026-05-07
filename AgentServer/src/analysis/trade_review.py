@@ -26,6 +26,7 @@ class TradeReviewService:
     GROUP_COLLECTION = "trade_review_groups"
     BATCH_COLLECTION = "trade_review_import_batches"
     RECORD_COLLECTION = "trade_review_records"
+    POSITION_COLLECTION = "trade_review_positions"
 
     REQUIRED_HEADERS = [
         "日期",
@@ -194,6 +195,270 @@ class TradeReviewService:
         )
         return self._serialize_group(group) if group else None
 
+    def _trade_fee(self, item: Dict[str, Any]) -> float:
+        return round(
+            float(item.get("commission", 0) or 0)
+            + float(item.get("stamp_tax", 0) or 0)
+            + float(item.get("other_fee", 0) or 0)
+            + float(item.get("transfer_fee", 0) or 0)
+            + float(item.get("clearing_fee", 0) or 0),
+            4,
+        )
+
+    async def _load_latest_price_map(self, ts_codes: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not ts_codes:
+            return {}
+
+        pipeline = [
+            {"$match": {"ts_code": {"$in": list(sorted(set(ts_codes)))}}},
+            {"$sort": {"ts_code": 1, "trade_date": -1}},
+            {
+                "$group": {
+                    "_id": "$ts_code",
+                    "close": {"$first": "$close"},
+                    "trade_date": {"$first": "$trade_date"},
+                }
+            },
+        ]
+        docs = await mongo_manager.aggregate("stock_daily", pipeline)
+        return {
+            str(doc.get("_id")): {
+                "latest_price": float(doc.get("close") or 0),
+                "latest_trade_date": str(doc.get("trade_date") or ""),
+            }
+            for doc in docs
+            if doc.get("_id")
+        }
+
+    async def _load_stock_basic_meta(self, ts_codes: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not ts_codes:
+            return {}
+        docs = await mongo_manager.find_many(
+            "stock_basic",
+            {"ts_code": {"$in": list(sorted(set(ts_codes)))}},
+            projection={"ts_code": 1, "name": 1, "market": 1},
+        )
+        return {
+            str(doc.get("ts_code")): {
+                "name": doc.get("name"),
+                "market": doc.get("market"),
+            }
+            for doc in docs
+            if doc.get("ts_code")
+        }
+
+    def _serialize_position(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "position_id": item.get("position_id"),
+            "group_id": item.get("group_id"),
+            "ts_code": item.get("ts_code"),
+            "code": item.get("code"),
+            "name": item.get("name"),
+            "quantity": int(item.get("quantity", 0) or 0),
+            "avg_cost": round(float(item.get("avg_cost", 0) or 0), 4),
+            "total_cost": round(float(item.get("total_cost", 0) or 0), 2),
+            "latest_price": round(float(item.get("latest_price", 0) or 0), 4) if item.get("latest_price") is not None else None,
+            "latest_trade_date": item.get("latest_trade_date"),
+            "market_value": round(float(item.get("market_value", 0) or 0), 2),
+            "unrealized_pnl": round(float(item.get("unrealized_pnl", 0) or 0), 2),
+            "unrealized_pnl_pct": round(float(item.get("unrealized_pnl_pct", 0) or 0), 2),
+            "buy_count": int(item.get("buy_count", 0) or 0),
+            "sell_count": int(item.get("sell_count", 0) or 0),
+            "total_buy_amount": round(float(item.get("total_buy_amount", 0) or 0), 2),
+            "total_sell_amount": round(float(item.get("total_sell_amount", 0) or 0), 2),
+            "first_trade_date": item.get("first_trade_date"),
+            "last_trade_date": item.get("last_trade_date"),
+            "price_source": item.get("price_source", "stock_daily_latest_close"),
+            "security_type": item.get("security_type", "other"),
+            "updated_at": item.get("updated_at"),
+        }
+
+    async def rebuild_positions(self, *, user_id: str, group_id: str) -> Dict[str, Any]:
+        group = await mongo_manager.find_one(self.GROUP_COLLECTION, {"group_id": group_id, "user_id": user_id})
+        if not group:
+            raise ValueError("交割单分组不存在")
+
+        trade_records = await mongo_manager.find_many(
+            self.RECORD_COLLECTION,
+            {
+                "group_id": group_id,
+                "user_id": user_id,
+                "is_trade_record": True,
+                "side": {"$in": ["buy", "sell"]},
+                "ts_code": {"$ne": ""},
+            },
+            sort=[("trade_date", 1), ("row_no", 1)],
+        )
+
+        buckets: Dict[str, Dict[str, Any]] = {}
+        for item in trade_records:
+            ts_code = str(item.get("ts_code") or "").upper().strip()
+            if not ts_code:
+                continue
+
+            state = buckets.setdefault(
+                ts_code,
+                {
+                    "position_id": uuid.uuid4().hex,
+                    "group_id": group_id,
+                    "user_id": user_id,
+                    "ts_code": ts_code,
+                    "code": item.get("code"),
+                    "name": item.get("security_name") or item.get("code"),
+                    "quantity": 0,
+                    "total_cost": 0.0,
+                    "buy_count": 0,
+                    "sell_count": 0,
+                    "total_buy_amount": 0.0,
+                    "total_sell_amount": 0.0,
+                    "first_trade_date": item.get("trade_date"),
+                    "last_trade_date": item.get("trade_date"),
+                },
+            )
+
+            quantity = abs(int(item.get("quantity", 0) or 0))
+            if quantity <= 0:
+                continue
+
+            amount = abs(float(item.get("amount", 0) or 0))
+            fee = self._trade_fee(item)
+            state["last_trade_date"] = item.get("trade_date")
+            if not state.get("first_trade_date"):
+                state["first_trade_date"] = item.get("trade_date")
+
+            if item.get("side") == "buy":
+                state["quantity"] += quantity
+                state["total_cost"] += amount + fee
+                state["buy_count"] += 1
+                state["total_buy_amount"] += amount
+            elif item.get("side") == "sell":
+                state["sell_count"] += 1
+                state["total_sell_amount"] += amount
+                current_qty = int(state.get("quantity", 0) or 0)
+                if current_qty <= 0:
+                    state["quantity"] = 0
+                    state["total_cost"] = 0.0
+                    continue
+                avg_cost = float(state.get("total_cost", 0) or 0) / current_qty if current_qty else 0.0
+                reduce_qty = min(current_qty, quantity)
+                state["quantity"] = current_qty - reduce_qty
+                state["total_cost"] = max(0.0, float(state.get("total_cost", 0) or 0) - avg_cost * reduce_qty)
+
+        active_positions = [item for item in buckets.values() if int(item.get("quantity", 0) or 0) > 0]
+        latest_price_map = await self._load_latest_price_map([item["ts_code"] for item in active_positions])
+        stock_basic_meta = await self._load_stock_basic_meta([item["ts_code"] for item in active_positions])
+
+        now = datetime.now(UTC)
+        position_docs: List[Dict[str, Any]] = []
+        total_cost = 0.0
+        total_market_value = 0.0
+        profitable_count = 0
+        loss_count = 0
+        latest_valuation_date = ""
+
+        for item in active_positions:
+            latest_info = latest_price_map.get(item["ts_code"], {})
+            latest_price = latest_info.get("latest_price")
+            latest_trade_date = latest_info.get("latest_trade_date")
+            latest_valuation_date = max(latest_valuation_date, latest_trade_date or "")
+            quantity = int(item.get("quantity", 0) or 0)
+            current_total_cost = round(float(item.get("total_cost", 0) or 0), 2)
+            avg_cost = round(current_total_cost / quantity, 4) if quantity > 0 else 0.0
+            market_value = round((latest_price or 0.0) * quantity, 2) if latest_price else 0.0
+            unrealized_pnl = round(market_value - current_total_cost, 2) if latest_price else 0.0
+            unrealized_pnl_pct = round((unrealized_pnl / current_total_cost * 100), 2) if latest_price and current_total_cost > 0 else 0.0
+            if latest_price:
+                if unrealized_pnl > 0:
+                    profitable_count += 1
+                elif unrealized_pnl < 0:
+                    loss_count += 1
+            total_cost += current_total_cost
+            total_market_value += market_value
+
+            position_docs.append(
+                {
+                    **item,
+                    "name": stock_basic_meta.get(item["ts_code"], {}).get("name") or item.get("name"),
+                    "avg_cost": avg_cost,
+                    "total_cost": current_total_cost,
+                    "latest_price": latest_price,
+                    "latest_trade_date": latest_trade_date,
+                    "market_value": market_value,
+                    "unrealized_pnl": unrealized_pnl,
+                    "unrealized_pnl_pct": unrealized_pnl_pct,
+                    "price_source": "stock_daily_latest_close",
+                    "security_type": "stock" if item["ts_code"] in stock_basic_meta else "other",
+                    "updated_at": now,
+                }
+            )
+
+        await mongo_manager.delete_many(self.POSITION_COLLECTION, {"group_id": group_id, "user_id": user_id})
+        if position_docs:
+            await mongo_manager.insert_many(self.POSITION_COLLECTION, position_docs)
+
+        summary = {
+            "position_count": len(position_docs),
+            "total_cost": round(total_cost, 2),
+            "total_market_value": round(total_market_value, 2),
+            "total_unrealized_pnl": round(total_market_value - total_cost, 2),
+            "total_unrealized_pnl_pct": round(((total_market_value - total_cost) / total_cost * 100), 2) if total_cost > 0 else 0.0,
+            "profitable_count": profitable_count,
+            "loss_count": loss_count,
+            "latest_valuation_date": latest_valuation_date or None,
+            "updated_at": now,
+        }
+
+        await mongo_manager.update_one(
+            self.GROUP_COLLECTION,
+            {"group_id": group_id, "user_id": user_id},
+            {
+                "$set": {
+                    "position_summary": summary,
+                    "positions_updated_at": now,
+                    "updated_at": now,
+                }
+            },
+        )
+
+        refreshed_group = await mongo_manager.find_one(self.GROUP_COLLECTION, {"group_id": group_id, "user_id": user_id})
+        return {
+            "group": self._serialize_group(refreshed_group or group),
+            "summary": summary,
+            "items": [self._serialize_position(item) for item in sorted(position_docs, key=lambda doc: float(doc.get("market_value", 0) or 0), reverse=True)],
+        }
+
+    async def get_positions(self, *, user_id: str, group_id: str, force_refresh: bool = False) -> Dict[str, Any]:
+        group = await mongo_manager.find_one(self.GROUP_COLLECTION, {"group_id": group_id, "user_id": user_id})
+        if not group:
+            raise ValueError("交割单分组不存在")
+
+        if force_refresh:
+            return await self.rebuild_positions(user_id=user_id, group_id=group_id)
+
+        docs = await mongo_manager.find_many(
+            self.POSITION_COLLECTION,
+            {"group_id": group_id, "user_id": user_id},
+            sort=[("market_value", -1), ("unrealized_pnl_pct", -1)],
+        )
+        if not docs and int(group.get("trade_record_count", 0) or 0) > 0:
+            return await self.rebuild_positions(user_id=user_id, group_id=group_id)
+
+        return {
+            "group": self._serialize_group(group),
+            "summary": group.get("position_summary") or {
+                "position_count": 0,
+                "total_cost": 0.0,
+                "total_market_value": 0.0,
+                "total_unrealized_pnl": 0.0,
+                "total_unrealized_pnl_pct": 0.0,
+                "profitable_count": 0,
+                "loss_count": 0,
+                "latest_valuation_date": None,
+                "updated_at": group.get("positions_updated_at"),
+            },
+            "items": [self._serialize_position(item) for item in docs],
+        }
+
     async def import_csv(
         self,
         *,
@@ -241,7 +506,7 @@ class TradeReviewService:
                     "code": code,
                     "ts_code": ts_code,
                     "security_name": str(row.get("证券名称", "")).strip() or None,
-                    "quantity": self._safe_int(row.get("成交数量")),
+                    "quantity": abs(self._safe_int(row.get("成交数量"))) if classification["is_trade_record"] else self._safe_int(row.get("成交数量")),
                     "price": self._safe_float(row.get("成交均价")),
                     "commission": self._safe_float(row.get("佣金")),
                     "stamp_tax": self._safe_float(row.get("印花税")),
@@ -327,6 +592,8 @@ class TradeReviewService:
             },
         )
 
+        await self.rebuild_positions(user_id=user_id, group_id=group_id)
+
         return {
             "batch_id": batch_id,
             "group": await self.get_group(user_id, group_id),
@@ -373,6 +640,8 @@ class TradeReviewService:
         }
 
     def _serialize_record(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        is_trade_record = bool(item.get("is_trade_record"))
+        quantity = int(item.get("quantity", 0) or 0)
         return {
             "record_id": item.get("record_id"),
             "group_id": item.get("group_id"),
@@ -383,7 +652,7 @@ class TradeReviewService:
             "code": item.get("code"),
             "ts_code": item.get("ts_code"),
             "security_name": item.get("security_name"),
-            "quantity": item.get("quantity", 0),
+            "quantity": abs(quantity) if is_trade_record else quantity,
             "price": item.get("price", 0),
             "commission": item.get("commission", 0),
             "stamp_tax": item.get("stamp_tax", 0),
@@ -397,7 +666,7 @@ class TradeReviewService:
             "source_label": item.get("source_label"),
             "category": item.get("category"),
             "side": item.get("side"),
-            "is_trade_record": bool(item.get("is_trade_record")),
+            "is_trade_record": is_trade_record,
             "reviewed": bool(item.get("reviewed")),
             "operation_reason": item.get("operation_reason", ""),
             "mindset": item.get("mindset", ""),

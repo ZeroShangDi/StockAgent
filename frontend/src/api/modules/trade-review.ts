@@ -84,6 +84,47 @@ export interface TradeReviewStatsResult {
   }
 }
 
+export interface TradeReviewPositionItem {
+  position_id: string
+  group_id: string
+  ts_code: string
+  code: string
+  name?: string | null
+  quantity: number
+  avg_cost: number
+  total_cost: number
+  latest_price?: number | null
+  latest_trade_date?: string | null
+  market_value: number
+  unrealized_pnl: number
+  unrealized_pnl_pct: number
+  buy_count: number
+  sell_count: number
+  total_buy_amount: number
+  total_sell_amount: number
+  first_trade_date?: string | null
+  last_trade_date?: string | null
+  price_source?: string
+  security_type?: 'stock' | 'other'
+  updated_at?: string
+}
+
+export interface TradeReviewPositionResult {
+  group: TradeReviewGroupSummary
+  summary: {
+    position_count: number
+    total_cost: number
+    total_market_value: number
+    total_unrealized_pnl: number
+    total_unrealized_pnl_pct: number
+    profitable_count: number
+    loss_count: number
+    latest_valuation_date?: string | null
+    updated_at?: string
+  }
+  items: TradeReviewPositionItem[]
+}
+
 export interface TradeReviewKlineMarker {
   record_id: string
   trade_date: string
@@ -161,6 +202,14 @@ export const tradeReviewApi = {
 
   getStats(groupId: string): Promise<TradeReviewStatsResult> {
     return api.get(`/trade-review/groups/${groupId}/stats`)
+  },
+
+  getPositions(groupId: string, forceRefresh = false): Promise<TradeReviewPositionResult> {
+    return api.get(`/trade-review/groups/${groupId}/positions`, { params: { force_refresh: forceRefresh } })
+  },
+
+  rebuildPositions(groupId: string): Promise<TradeReviewPositionResult> {
+    return api.post(`/trade-review/groups/${groupId}/positions/rebuild`)
   },
 
   getKline(

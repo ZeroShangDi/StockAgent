@@ -128,6 +128,33 @@ async def get_trade_review_stats(
     return await trade_review_service.get_stats(user_id=user_id, group_id=group_id)
 
 
+@router.get("/groups/{group_id}/positions")
+async def get_trade_review_positions(
+    group_id: str,
+    force_refresh: bool = Query(default=False),
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    try:
+        return await trade_review_service.get_positions(
+            user_id=user_id,
+            group_id=group_id,
+            force_refresh=force_refresh,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/groups/{group_id}/positions/rebuild")
+async def rebuild_trade_review_positions(
+    group_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    try:
+        return await trade_review_service.rebuild_positions(user_id=user_id, group_id=group_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/records/{record_id}/kline")
 async def get_trade_review_kline_context(
     record_id: str,
