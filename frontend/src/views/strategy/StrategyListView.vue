@@ -33,6 +33,7 @@ const userStore = useUserStore()
 
 const subscriptions = ref<StrategySubscription[]>([])
 const loading = ref(true)
+const viewMode = ref<'compact' | 'detail' | 'table'>('compact')
 
 // 可用策略类型（从服务端加载）
 const availableStrategyTypes = ref<StrategyTypeInfo[]>([])
@@ -79,6 +80,12 @@ const trendTypeOptions = [
 const transitionModeOptions = [
   { label: '移动到目标池', value: 'move' },
   { label: '复制到目标池', value: 'copy' },
+]
+
+const viewModeOptions = [
+  { label: '紧凑卡片', value: 'compact' },
+  { label: '详细卡片', value: 'detail' },
+  { label: '表格模式', value: 'table' },
 ]
 
 // ==================== 方法 ====================
@@ -162,6 +169,60 @@ function getStrategyParamDefs(strategyType: string): StrategyParamDef[] {
 /** 获取策略订阅数据 */
 function getSubscription(strategyType: string): StrategySubscription | undefined {
   return subscriptions.value.find(s => s.strategy_type === strategyType)
+}
+
+function isStrategyActive(strategyType: string): boolean {
+  return getSubscription(strategyType)?.is_active !== false
+}
+
+function getWatchCount(strategyType: string): number {
+  const sub = getSubscription(strategyType)
+  return sub?.effective_watch_count ?? sub?.watch_list_info?.length ?? 0
+}
+
+function getWatchCountSummary(strategyType: string): string {
+  const sub = getSubscription(strategyType)
+  if (!sub) return '暂无监听'
+  const effective = sub.effective_watch_count ?? sub.watch_list_info?.length ?? 0
+  const manual = sub.manual_watch_count ?? sub.watch_list_info?.length ?? 0
+  const positionGroup = sub.effective_watch_breakdown?.position_group || 0
+  const sourcePools = sub.effective_watch_breakdown?.source_pools || 0
+
+  const segments = [`实际 ${effective} 只`, `手动 ${manual} 只`]
+  if (positionGroup > 0) {
+    segments.push(`持仓分组 ${positionGroup} 只`)
+  }
+  if (sourcePools > 0) {
+    segments.push(`来源股池 ${sourcePools} 只`)
+  }
+  return segments.join(' · ')
+}
+
+function getEnabledTransitionRuleCount(strategyType: string): number {
+  return getTransitionRules(strategyType).filter(rule => rule.enabled).length
+}
+
+function getStrategyParamSummary(strategyType: string): string {
+  const defs = getStrategyParamDefs(strategyType)
+  if (!defs.length) return '无额外参数'
+  const subscription = getSubscription(strategyType)
+  const preview = defs.slice(0, 2).map((param) => {
+    const value = subscription?.params[param.key] ?? param.default
+    return `${param.label}：${getParamDisplayValue(strategyType, param.key, value)}`
+  })
+  return defs.length > 2 ? `${preview.join(' · ')} 等 ${defs.length} 项` : preview.join(' · ')
+}
+
+function getCompactBasicSummary(strategyType: string): string {
+  const meta = getStrategyMeta(strategyType)
+  const parts = [`监听频率：${meta?.schedule_label || '盘中轮询'}`]
+  const basicDefs = getBasicParamDefs(strategyType)
+  const subscription = getSubscription(strategyType)
+  for (const param of basicDefs) {
+    const value = subscription?.params[param.key] ?? param.default
+    parts.push(`${param.label}：${getParamDisplayValue(strategyType, param.key, value)}`)
+  }
+  return parts.join(' · ')
 }
 
 function isSupportResistanceStrategy(strategyType: string): boolean {
@@ -776,9 +837,127 @@ onMounted(async () => {
         </el-tag>
       </div>
     </header>
+
+    <section v-if="!loading" class="view-toolbar">
+      <div class="toolbar-stats">
+        <div class="toolbar-stat-card">
+          <span class="toolbar-stat-label">策略总数</span>
+          <strong class="toolbar-stat-value">{{ availableStrategyTypes.length }}</strong>
+        </div>
+        <div class="toolbar-stat-card">
+          <span class="toolbar-stat-label">已启用</span>
+          <strong class="toolbar-stat-value">
+            {{ availableStrategyTypes.filter((st) => isStrategyActive(st.type)).length }}
+          </strong>
+        </div>
+        <div class="toolbar-stat-card">
+          <span class="toolbar-stat-label">有监听股票</span>
+          <strong class="toolbar-stat-value">
+            {{ availableStrategyTypes.filter((st) => getWatchCount(st.type) > 0).length }}
+          </strong>
+        </div>
+        <div class="toolbar-stat-card">
+          <span class="toolbar-stat-label">配置流转</span>
+          <strong class="toolbar-stat-value">
+            {{ availableStrategyTypes.filter((st) => getEnabledTransitionRuleCount(st.type) > 0).length }}
+          </strong>
+        </div>
+      </div>
+      <el-radio-group v-model="viewMode" size="small" class="view-mode-switch">
+        <el-radio-button
+          v-for="option in viewModeOptions"
+          :key="option.value"
+          :label="option.value"
+        >
+          {{ option.label }}
+        </el-radio-button>
+      </el-radio-group>
+    </section>
     
-    <!-- 策略列表 -->
-    <div v-if="!loading" class="strategies-grid">
+    <!-- 紧凑卡片 -->
+    <div v-if="!loading && viewMode === 'compact'" class="compact-strategy-list">
+      <article
+        v-for="st in availableStrategyTypes"
+        :key="`compact-${st.type}`"
+        class="compact-strategy-card"
+        :class="{ 'is-inactive': !isStrategyActive(st.type) }"
+      >
+        <div class="compact-card-main">
+          <div class="compact-card-top">
+            <div class="compact-card-title-block">
+              <h3 class="compact-card-title">{{ st.name }}</h3>
+              <p class="compact-card-desc">{{ st.description }}</p>
+            </div>
+            <div class="compact-card-status">
+              <div
+                class="status-indicator"
+                :class="isStrategyActive(st.type) ? 'active' : 'inactive'"
+              >
+                <span class="status-dot"></span>
+                <span class="status-text">
+                  {{ isStrategyActive(st.type) ? '运行中' : '已停用' }}
+                </span>
+              </div>
+              <el-tag size="small" effect="plain">实际监听 {{ getWatchCount(st.type) }} 只</el-tag>
+            </div>
+          </div>
+
+          <div class="compact-summary-grid">
+            <div class="compact-summary-item">
+              <span class="compact-summary-label">监听基础配置</span>
+              <span class="compact-summary-value">{{ getCompactBasicSummary(st.type) }}</span>
+            </div>
+            <div class="compact-summary-item">
+              <span class="compact-summary-label">策略参数</span>
+              <span class="compact-summary-value">{{ getStrategyParamSummary(st.type) }}</span>
+            </div>
+            <div class="compact-summary-item">
+              <span class="compact-summary-label">监听范围</span>
+              <span class="compact-summary-value">{{ getWatchCountSummary(st.type) }}</span>
+            </div>
+            <div class="compact-summary-item">
+              <span class="compact-summary-label">自动流转</span>
+              <span class="compact-summary-value">{{ getTransitionSummary(st.type) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="compact-card-actions">
+          <el-button type="primary" size="small" plain @click="openAddStockDialog(st.type)">
+            添加股票
+          </el-button>
+          <el-button
+            v-if="userStore.isAdmin"
+            type="primary"
+            size="small"
+            plain
+            @click="openEditParamsDialog(st.type)"
+          >
+            编辑参数
+          </el-button>
+          <el-button
+            v-if="userStore.isAdmin"
+            type="primary"
+            size="small"
+            plain
+            @click="openTransitionRulesDialog(st.type)"
+          >
+            编辑流转
+          </el-button>
+          <el-button
+            v-if="userStore.isAdmin"
+            size="small"
+            :type="isStrategyActive(st.type) ? 'warning' : 'success'"
+            @click="toggleSubscription(st.type)"
+          >
+            {{ isStrategyActive(st.type) ? '停用' : '启用' }}
+          </el-button>
+        </div>
+      </article>
+    </div>
+
+    <!-- 详细卡片 -->
+    <div v-else-if="!loading && viewMode === 'detail'" class="strategies-grid">
       <article
         v-for="st in availableStrategyTypes"
         :key="st.type"
@@ -899,7 +1078,7 @@ onMounted(async () => {
               <h4 class="section-title">
                 监听股票
                 <el-badge 
-                  :value="getSubscription(st.type)?.watch_list_info?.length || 0" 
+                  :value="getWatchCount(st.type)" 
                   :max="99"
                   class="stock-count-badge"
                 />
@@ -919,6 +1098,9 @@ onMounted(async () => {
               v-if="getSubscription(st.type)?.watch_list_info?.length"
               :class="isPerStockConfigStrategy(st.type) ? 'stock-config-list' : 'stock-tags'"
             >
+              <div class="watch-count-hint">
+                {{ getWatchCountSummary(st.type) }}
+              </div>
               <template v-if="isPerStockConfigStrategy(st.type)">
                 <div
                   v-for="stock in getDisplayStockInfos(getSubscription(st.type)!)"
@@ -985,6 +1167,82 @@ onMounted(async () => {
           </div>
         </div>
       </article>
+    </div>
+
+    <!-- 表格模式 -->
+    <div v-else-if="!loading && viewMode === 'table'" class="strategy-table-wrapper">
+      <el-table :data="availableStrategyTypes" border stripe class="strategy-table">
+        <el-table-column label="策略" min-width="180">
+          <template #default="{ row }">
+            <div class="table-strategy-cell">
+              <strong class="table-strategy-name">{{ row.name }}</strong>
+              <span class="table-strategy-desc">{{ row.description }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="isStrategyActive(row.type) ? 'success' : 'info'" size="small">
+              {{ isStrategyActive(row.type) ? '运行中' : '已停用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="监听基础配置" min-width="240">
+          <template #default="{ row }">
+            {{ getCompactBasicSummary(row.type) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="策略参数" min-width="240">
+          <template #default="{ row }">
+            {{ getStrategyParamSummary(row.type) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="监听股票" width="100" align="center">
+          <template #default="{ row }">
+            {{ getWatchCount(row.type) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="自动流转" min-width="180">
+          <template #default="{ row }">
+            {{ getTransitionSummary(row.type) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="260" fixed="right">
+          <template #default="{ row }">
+            <div class="table-action-group">
+              <el-button size="small" plain type="primary" @click="openAddStockDialog(row.type)">
+                添加股票
+              </el-button>
+              <el-button
+                v-if="userStore.isAdmin"
+                size="small"
+                plain
+                type="primary"
+                @click="openEditParamsDialog(row.type)"
+              >
+                编辑参数
+              </el-button>
+              <el-button
+                v-if="userStore.isAdmin"
+                size="small"
+                plain
+                type="primary"
+                @click="openTransitionRulesDialog(row.type)"
+              >
+                编辑流转
+              </el-button>
+              <el-button
+                v-if="userStore.isAdmin"
+                size="small"
+                :type="isStrategyActive(row.type) ? 'warning' : 'success'"
+                @click="toggleSubscription(row.type)"
+              >
+                {{ isStrategyActive(row.type) ? '停用' : '启用' }}
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
     
     <!-- 加载状态 -->
@@ -1561,6 +1819,132 @@ onMounted(async () => {
   @apply flex items-center gap-3;
 }
 
+.view-toolbar {
+  @apply flex items-end justify-between gap-4 mb-6 flex-wrap;
+}
+
+.toolbar-stats {
+  @apply grid gap-3;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.toolbar-stat-card {
+  @apply rounded-xl px-4 py-3 min-w-[120px];
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+}
+
+.toolbar-stat-label {
+  @apply text-xs block mb-1;
+  color: var(--text-tertiary);
+}
+
+.toolbar-stat-value {
+  @apply text-lg font-semibold;
+  color: var(--text-primary);
+}
+
+.view-mode-switch {
+  @apply shrink-0;
+}
+
+.compact-strategy-list {
+  @apply flex flex-col gap-4;
+}
+
+.compact-strategy-card {
+  @apply rounded-xl p-4 flex items-start justify-between gap-4 transition-all duration-300;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+}
+
+.compact-strategy-card:hover {
+  border-color: var(--border-muted);
+  box-shadow: var(--shadow-md);
+}
+
+.compact-strategy-card.is-inactive {
+  opacity: 0.66;
+}
+
+.compact-card-main {
+  @apply flex-1 min-w-0;
+}
+
+.compact-card-top {
+  @apply flex items-start justify-between gap-4 mb-3;
+}
+
+.compact-card-title-block {
+  @apply min-w-0;
+}
+
+.compact-card-title {
+  @apply text-base font-semibold mb-1;
+  color: var(--text-primary);
+}
+
+.compact-card-desc {
+  @apply text-sm leading-5;
+  color: var(--text-tertiary);
+}
+
+.compact-card-status {
+  @apply flex items-center gap-2 shrink-0;
+}
+
+.compact-summary-grid {
+  @apply grid gap-3;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.compact-summary-item {
+  @apply rounded-lg px-3 py-3 min-w-0;
+  background: var(--bg-muted);
+}
+
+.compact-summary-label {
+  @apply text-xs block mb-1;
+  color: var(--text-tertiary);
+}
+
+.compact-summary-value {
+  @apply text-sm leading-5 break-words;
+  color: var(--text-primary);
+}
+
+.compact-card-actions {
+  @apply flex flex-wrap items-center justify-end gap-2 shrink-0;
+  max-width: 280px;
+}
+
+.strategy-table-wrapper {
+  @apply rounded-xl overflow-hidden;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+}
+
+.strategy-table {
+  width: 100%;
+}
+
+.table-strategy-cell {
+  @apply flex flex-col gap-1 py-1;
+}
+
+.table-strategy-name {
+  color: var(--text-primary);
+}
+
+.table-strategy-desc {
+  @apply text-xs leading-5;
+  color: var(--text-tertiary);
+}
+
+.table-action-group {
+  @apply flex flex-wrap gap-2 py-1;
+}
+
 /* 策略网格 */
 .strategies-grid {
   @apply grid gap-6;
@@ -1698,6 +2082,11 @@ onMounted(async () => {
 
 .stock-tags {
   @apply flex flex-wrap gap-2;
+}
+
+.watch-count-hint {
+  @apply w-full text-xs mb-2;
+  color: var(--text-tertiary);
 }
 
 .stock-tag {
@@ -1892,6 +2281,10 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
+  .toolbar-stats {
+    grid-template-columns: 1fr;
+  }
+
   .stock-config-item {
     @apply flex-col;
   }
@@ -1908,6 +2301,27 @@ onMounted(async () => {
 
   .transition-summary-text {
     max-width: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .toolbar-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .compact-strategy-card {
+    @apply flex-col;
+  }
+
+  .compact-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-card-actions {
+    max-width: none;
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 </style>

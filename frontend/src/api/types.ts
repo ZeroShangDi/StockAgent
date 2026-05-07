@@ -312,6 +312,13 @@ export interface StrategySubscription {
   strategy_type: StrategyType | string
   watch_list: string[]
   watch_list_info: StockInfoBrief[]  // 包含股票名称的列表
+  manual_watch_count: number
+  effective_watch_count: number
+  effective_watch_breakdown: {
+    manual?: number
+    position_group?: number
+    source_pools?: number
+  }
   params: Record<string, unknown>
   is_active: boolean
   user_id?: string

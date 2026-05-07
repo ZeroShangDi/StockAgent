@@ -324,6 +324,9 @@ class SubscriptionResponse(BaseModel):
     strategy_type: str
     watch_list: List[str]  # 保持原有字段兼容
     watch_list_info: List[StockInfo]  # 新增：包含名称的股票列表
+    manual_watch_count: int = 0
+    effective_watch_count: int = 0
+    effective_watch_breakdown: Dict[str, int] = Field(default_factory=dict)
     params: dict
     is_active: bool
     created_at: str
@@ -394,11 +397,81 @@ async def _get_stock_names(ts_codes: List[str]) -> dict:
     return {s["ts_code"]: s.get("name", s["ts_code"]) for s in stocks}
 
 
+async def _get_position_watch_codes_from_record(record: dict) -> List[str]:
+    params = record.get("params") or {}
+    group_id = str(params.get("position_group_id") or "").strip()
+    if not group_id:
+        return []
+
+    docs = await mongo_manager.find_many(
+        "trade_review_positions",
+        {
+            "group_id": group_id,
+            "quantity": {"$gt": 0},
+            "$or": [
+                {"security_type": {"$exists": False}},
+                {"security_type": "stock"},
+            ],
+        },
+        projection={"ts_code": 1},
+    )
+    return [
+        str(doc.get("ts_code")).upper()
+        for doc in docs
+        if doc.get("ts_code")
+    ]
+
+
+async def _get_transition_source_watch_codes_from_record(record: dict) -> List[str]:
+    params = record.get("params") or {}
+    rules = params.get("transition_rules") or []
+    if not isinstance(rules, list) or not rules:
+        return []
+
+    source_pool_ids: set[str] = set()
+    for rule in rules:
+        if not isinstance(rule, dict) or not rule.get("enabled", True):
+            continue
+        for pool_id in rule.get("source_pool_ids") or []:
+            normalized = str(pool_id or "").strip()
+            if normalized:
+                source_pool_ids.add(normalized)
+
+    if not source_pool_ids:
+        return []
+
+    source_pools = await mongo_manager.find_many(
+        "stock_pools",
+        {"pool_id": {"$in": list(source_pool_ids)}},
+        projection={"stocks.ts_code": 1},
+    )
+
+    codes: set[str] = set()
+    for pool in source_pools:
+        for item in pool.get("stocks", []) or []:
+            ts_code = str(item.get("ts_code") or "").strip().upper()
+            if ts_code:
+                codes.add(ts_code)
+    return list(codes)
+
+
 async def _to_response(record: dict) -> SubscriptionResponse:
     """将 MongoDB 记录转换为响应模型"""
     created_at = record.get("created_at")
     updated_at = record.get("updated_at")
     watch_list = record.get("watch_list", [])
+    manual_watch_codes = [
+        str(code).upper()
+        for code in watch_list
+        if str(code).strip() and str(code).upper() != "ALL"
+    ]
+    position_watch_codes = await _get_position_watch_codes_from_record(record)
+    transition_watch_codes = await _get_transition_source_watch_codes_from_record(record)
+    effective_watch_codes = {
+        *manual_watch_codes,
+        *position_watch_codes,
+        *transition_watch_codes,
+    }
     
     # 获取股票名称
     stock_names = await _get_stock_names(watch_list)
@@ -414,6 +487,13 @@ async def _to_response(record: dict) -> SubscriptionResponse:
         strategy_type=record.get("strategy_type", ""),
         watch_list=watch_list,
         watch_list_info=watch_list_info,
+        manual_watch_count=len(manual_watch_codes),
+        effective_watch_count=len(effective_watch_codes),
+        effective_watch_breakdown={
+            "manual": len(set(manual_watch_codes)),
+            "position_group": len(set(position_watch_codes)),
+            "source_pools": len(set(transition_watch_codes)),
+        },
         params=record.get("params", {}),
         is_active=record.get("is_active", True),
         created_at=created_at.isoformat() if isinstance(created_at, datetime) else str(created_at or ""),
