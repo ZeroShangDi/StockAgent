@@ -73,6 +73,30 @@ STRATEGIES = [
             "stock_configs": {},
         },
     },
+    {
+        "strategy_type": StrategyType.POSITION_PNL.value,
+        "strategy_name": "持仓盈亏阈值",
+        "params": {
+            "position_group_id": "",
+            "position_group_name": "",
+            "loss_threshold_pct": 3.0,
+            "profit_threshold_pct": 8.0,
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+    },
+    {
+        "strategy_type": StrategyType.POSITION_INTRADAY_PNL.value,
+        "strategy_name": "盘中持仓盈亏变化",
+        "params": {
+            "position_group_id": "",
+            "position_group_name": "",
+            "swing_threshold_pct": 2.0,
+            "direction": "both",
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+    },
 ]
 
 
@@ -202,6 +226,7 @@ async def show_current_state():
 async def main():
     """主函数"""
     try:
+        await mongo_manager.initialize()
         await cleanup_duplicates()
         await init_strategies()
         await show_current_state()

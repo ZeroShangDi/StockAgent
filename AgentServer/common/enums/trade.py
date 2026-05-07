@@ -21,6 +21,8 @@ class StrategyType(str, Enum):
     SUPPORT_RESISTANCE = "support_resistance"  # 撑压线
     FIXED_STOP_LOSS = "fixed_stop_loss"  # 固定止损
     TRAILING_STOP_LOSS = "trailing_stop_loss"  # 移动止损
+    POSITION_PNL = "position_pnl"       # 持仓总盈亏阈值
+    POSITION_INTRADAY_PNL = "position_intraday_pnl"  # 盘中持仓盈亏变化
     VOLUME_SURGE = "volume_surge"       # 放量突破
     MA_CROSS = "ma_cross"               # 均线交叉
     MA5_BUY = "ma5_buy"                 # 5日线低吸

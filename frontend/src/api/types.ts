@@ -289,6 +289,8 @@ export enum StrategyType {
   SUPPORT_RESISTANCE = 'support_resistance',
   FIXED_STOP_LOSS = 'fixed_stop_loss',
   TRAILING_STOP_LOSS = 'trailing_stop_loss',
+  POSITION_PNL = 'position_pnl',
+  POSITION_INTRADAY_PNL = 'position_intraday_pnl',
   VOLUME_SURGE = 'volume_surge',
   MA_CROSS = 'ma_cross',
   MA5_BUY = 'ma5_buy',
@@ -353,6 +355,7 @@ export interface StrategyParamDef {
   label: string
   type: 'number' | 'float' | 'boolean' | 'string'
   default: number | boolean | string
+  options?: Array<{ label: string; value: string }>
 }
 
 export interface StrategyStockPoint {

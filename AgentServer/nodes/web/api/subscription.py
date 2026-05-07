@@ -38,6 +38,8 @@ IMPLEMENTED_STRATEGIES = [
     StrategyType.SUPPORT_RESISTANCE, # 撑压线
     StrategyType.FIXED_STOP_LOSS, # 固定止损
     StrategyType.TRAILING_STOP_LOSS, # 移动止损
+    StrategyType.POSITION_PNL, # 持仓总盈亏阈值
+    StrategyType.POSITION_INTRADAY_PNL, # 盘中持仓盈亏变化
 ]
 
 IMPLEMENTED_STRATEGY_VALUES = [s.value for s in IMPLEMENTED_STRATEGIES]
@@ -112,6 +114,52 @@ STRATEGY_META = {
         },
         "param_schema": [
             {"key": "default_trail_pct", "label": "默认回撤比例 (%)", "type": "float", "default": 6.0},
+            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
+        ],
+    },
+    StrategyType.POSITION_PNL.value: {
+        "name": "持仓盈亏阈值",
+        "description": "按交割单推导的当前持仓成本，监控总浮盈亏达到指定阈值",
+        "default_params": {
+            "position_group_id": "",
+            "position_group_name": "",
+            "loss_threshold_pct": 3.0,
+            "profit_threshold_pct": 8.0,
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+        "param_schema": [
+            {"key": "position_group_id", "label": "持仓分组", "type": "string", "default": ""},
+            {"key": "loss_threshold_pct", "label": "亏损提醒阈值 (%)", "type": "float", "default": 3.0},
+            {"key": "profit_threshold_pct", "label": "盈利提醒阈值 (%)", "type": "float", "default": 8.0},
+            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
+        ],
+    },
+    StrategyType.POSITION_INTRADAY_PNL.value: {
+        "name": "盘中持仓盈亏变化",
+        "description": "按昨收到现价的变化，监控盘中持仓收益波动",
+        "default_params": {
+            "position_group_id": "",
+            "position_group_name": "",
+            "swing_threshold_pct": 2.0,
+            "direction": "both",
+            "once_per_day": True,
+            "stock_configs": {},
+        },
+        "param_schema": [
+            {"key": "position_group_id", "label": "持仓分组", "type": "string", "default": ""},
+            {"key": "swing_threshold_pct", "label": "盘中波动阈值 (%)", "type": "float", "default": 2.0},
+            {
+                "key": "direction",
+                "label": "波动方向",
+                "type": "string",
+                "default": "both",
+                "options": [
+                    {"label": "双向", "value": "both"},
+                    {"label": "仅向上", "value": "up"},
+                    {"label": "仅向下", "value": "down"},
+                ],
+            },
             {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
         ],
     },
@@ -638,6 +686,38 @@ async def _normalize_transition_rules(
     return normalized_params
 
 
+async def _normalize_position_group_params(
+    user_id: str,
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    normalized_params = dict(params)
+    position_group_id = str(normalized_params.get("position_group_id") or "").strip()
+    if not position_group_id:
+        normalized_params["position_group_id"] = ""
+        normalized_params["position_group_name"] = ""
+        return normalized_params
+
+    group = await mongo_manager.find_one(
+        "trade_review_groups",
+        {"group_id": position_group_id, "user_id": user_id},
+        projection={"group_id": 1, "name": 1},
+    )
+    if not group:
+        raise HTTPException(status_code=400, detail="持仓分组不存在或无权限访问")
+
+    normalized_params["position_group_id"] = position_group_id
+    normalized_params["position_group_name"] = str(group.get("name") or position_group_id)
+
+    direction = normalized_params.get("direction")
+    if direction is not None:
+        direction_text = str(direction or "both").strip().lower()
+        if direction_text not in {"both", "up", "down"}:
+            raise HTTPException(status_code=400, detail="direction 只支持 both / up / down")
+        normalized_params["direction"] = direction_text
+
+    return normalized_params
+
+
 async def _validate_stock_exists(ts_code: str) -> dict:
     stock = await mongo_manager.find_one(
         "stock_basic",
@@ -778,6 +858,7 @@ async def update_strategy_params(
     if "transition_rules" in current_params and "transition_rules" not in updated_params:
         updated_params["transition_rules"] = current_params["transition_rules"]
     updated_params = await _normalize_transition_rules(admin.user_id, updated_params)
+    updated_params = await _normalize_position_group_params(admin.user_id, updated_params)
     
     # 更新参数
     await mongo_manager.update_one(

@@ -8,6 +8,8 @@
 - SupportResistanceStrategy: 撑压线策略
 - FixedStopLossStrategy: 固定止损策略
 - TrailingStopLossStrategy: 移动止损策略
+- PositionPnlStrategy: 持仓总盈亏阈值策略
+- PositionIntradayPnlStrategy: 盘中持仓盈亏变化策略
 """
 
 from .base import BaseStrategy
@@ -17,6 +19,8 @@ from .ma5_buy import MA5BuyStrategy
 from .support_resistance import SupportResistanceStrategy
 from .fixed_stop_loss import FixedStopLossStrategy
 from .trailing_stop_loss import TrailingStopLossStrategy
+from .position_pnl import PositionPnlStrategy
+from .position_intraday_pnl import PositionIntradayPnlStrategy
 
 __all__ = [
     "BaseStrategy",
@@ -26,4 +30,6 @@ __all__ = [
     "SupportResistanceStrategy",
     "FixedStopLossStrategy",
     "TrailingStopLossStrategy",
+    "PositionPnlStrategy",
+    "PositionIntradayPnlStrategy",
 ]

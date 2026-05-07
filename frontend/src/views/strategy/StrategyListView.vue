@@ -11,7 +11,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Refresh, Edit } from '@element-plus/icons-vue'
-import { subscriptionApi, stockApi, stockPickerApi } from '@/api'
+import { subscriptionApi, stockApi, stockPickerApi, tradeReviewApi } from '@/api'
 import { useUserStore } from '@/stores/user'
 import { StrategyType } from '@/api/types'
 import type {
@@ -24,6 +24,7 @@ import type {
   StrategyTransitionRule,
 } from '@/api/types'
 import type { StockPoolSummary } from '@/api/modules/stock-picker'
+import type { TradeReviewGroupSummary } from '@/api/modules/trade-review'
 
 // ==================== 状态 ====================
 
@@ -54,6 +55,8 @@ const savingParams = ref(false)
 const availablePools = ref<StockPoolSummary[]>([])
 const poolLoading = ref(false)
 const editingTransitionRules = ref<StrategyTransitionRule[]>([])
+const tradeReviewGroups = ref<TradeReviewGroupSummary[]>([])
+const tradeReviewGroupLoading = ref(false)
 
 // 单股撑压线配置弹窗
 const stockConfigDialogVisible = ref(false)
@@ -448,12 +451,24 @@ async function ensurePoolsLoaded(): Promise<void> {
   }
 }
 
+async function ensureTradeReviewGroupsLoaded(): Promise<void> {
+  if (tradeReviewGroups.value.length > 0) return
+  tradeReviewGroupLoading.value = true
+  try {
+    const response = await tradeReviewApi.listGroups()
+    tradeReviewGroups.value = response.items || []
+  } finally {
+    tradeReviewGroupLoading.value = false
+  }
+}
+
 /** 打开编辑参数弹窗（管理员） */
 async function openEditParamsDialog(strategyType: string): Promise<void> {
   const sub = getSubscription(strategyType)
   if (!sub) return
   
   await ensurePoolsLoaded()
+  await ensureTradeReviewGroupsLoaded()
   editingStrategyType.value = strategyType
   // 复制当前参数
   editingParams.value = { ...sub.params }
@@ -551,6 +566,17 @@ function getNumberParamValue(key: string, defaultValue: boolean | string | numbe
   }
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function getStringParamValue(key: string, defaultValue: boolean | string | number): string {
+  const value = editingParams.value[key]
+  if (typeof value === 'string') {
+    return value
+  }
+  if (typeof defaultValue === 'string') {
+    return defaultValue
+  }
+  return value == null ? '' : String(value)
 }
 
 function setEditingParam(key: string, value: boolean | number | string | undefined): void {
@@ -1166,10 +1192,38 @@ onMounted(async () => {
               :active-text="'是'"
               :inactive-text="'否'"
             />
+
+            <el-select
+              v-else-if="param.key === 'position_group_id'"
+              :model-value="getStringParamValue(param.key, param.default)"
+              :loading="tradeReviewGroupLoading"
+              placeholder="请选择交割单分组"
+              @update:model-value="setEditingParam(param.key, $event)"
+            >
+              <el-option
+                v-for="group in tradeReviewGroups"
+                :key="group.group_id"
+                :label="`${group.name} (${group.trade_record_count} 笔成交)`"
+                :value="group.group_id"
+              />
+            </el-select>
+
+            <el-select
+              v-else-if="param.type === 'string' && param.options?.length"
+              :model-value="getStringParamValue(param.key, param.default)"
+              @update:model-value="setEditingParam(param.key, $event)"
+            >
+              <el-option
+                v-for="option in param.options"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
             
             <!-- 数字类型 -->
             <el-input-number
-              v-else
+              v-else-if="param.type === 'number' || param.type === 'float'"
               :model-value="getNumberParamValue(param.key, param.default)"
               @update:model-value="setEditingParam(param.key, $event)"
               :step="param.type === 'float' ? 0.01 : 1"
@@ -1177,6 +1231,12 @@ onMounted(async () => {
               :min="0"
               size="default"
               controls-position="right"
+            />
+
+            <el-input
+              v-else
+              :model-value="getStringParamValue(param.key, param.default)"
+              @update:model-value="setEditingParam(param.key, $event)"
             />
           </div>
         </div>

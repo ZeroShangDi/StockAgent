@@ -37,6 +37,8 @@ from .strategies import (
     SupportResistanceStrategy,
     FixedStopLossStrategy,
     TrailingStopLossStrategy,
+    PositionPnlStrategy,
+    PositionIntradayPnlStrategy,
 )
 
 
@@ -193,6 +195,8 @@ class ListenerNode(BaseNode):
             StrategyType.SUPPORT_RESISTANCE.value: SupportResistanceStrategy(),
             StrategyType.FIXED_STOP_LOSS.value: FixedStopLossStrategy(),
             StrategyType.TRAILING_STOP_LOSS.value: TrailingStopLossStrategy(),
+            StrategyType.POSITION_PNL.value: PositionPnlStrategy(),
+            StrategyType.POSITION_INTRADAY_PNL.value: PositionIntradayPnlStrategy(),
         }
         self.logger.info(f"Registered strategies: {list(self._strategies.keys())}")
     
@@ -257,7 +261,7 @@ class ListenerNode(BaseNode):
         index_quotes, index_source = await data_source_manager.get_realtime_index_quotes()
         
         # 3. 获取需要监听的股票列表
-        watch_codes = self._get_all_watch_codes()
+        watch_codes = await self._get_all_watch_codes()
         if not watch_codes:
             self.logger.warning(
                 f"No stocks to watch, skipping. "
@@ -392,7 +396,7 @@ class ListenerNode(BaseNode):
         except Exception as e:
             self.logger.error(f"Failed to fetch limit prices: {e}")
     
-    def _get_all_watch_codes(self) -> List[str]:
+    async def _get_all_watch_codes(self) -> List[str]:
         """
         获取所有需要监听的股票代码
         
@@ -415,6 +419,9 @@ class ListenerNode(BaseNode):
             for code in sub.watch_list:
                 if code != "ALL":
                     watch_set.add(code)
+
+            position_codes = await self._get_position_watch_codes(sub)
+            watch_set.update(position_codes)
         
         if has_all_market:
             # 全市场监听：使用涨跌停列表中的股票 + 其他策略的个股
@@ -423,6 +430,29 @@ class ListenerNode(BaseNode):
             return list(all_codes)
         
         return list(watch_set)
+
+    async def _get_position_watch_codes(self, subscription: StrategySubscription) -> List[str]:
+        group_id = str(subscription.params.get("position_group_id") or "").strip()
+        if not group_id:
+            return []
+
+        docs = await mongo_manager.find_many(
+            "trade_review_positions",
+            {
+                "group_id": group_id,
+                "quantity": {"$gt": 0},
+                "$or": [
+                    {"security_type": {"$exists": False}},
+                    {"security_type": "stock"},
+                ],
+            },
+            projection={"ts_code": 1},
+        )
+        return [
+            str(doc.get("ts_code")).upper()
+            for doc in docs
+            if doc.get("ts_code")
+        ]
     
     def _build_snapshot(
         self,
