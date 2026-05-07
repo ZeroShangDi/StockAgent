@@ -33,6 +33,7 @@ from .strategies import (
     BaseStrategy,
     LimitOpenStrategy,
     PriceChangeStrategy,
+    IntradayPriceMoveStrategy,
     MA5BuyStrategy,
     SupportResistanceStrategy,
     FixedStopLossStrategy,
@@ -191,6 +192,7 @@ class ListenerNode(BaseNode):
         self._strategies = {
             StrategyType.LIMIT_OPEN.value: LimitOpenStrategy(),
             StrategyType.PRICE_CHANGE.value: PriceChangeStrategy(),
+            StrategyType.INTRADAY_PRICE_MOVE.value: IntradayPriceMoveStrategy(),
             StrategyType.MA5_BUY.value: MA5BuyStrategy(),
             StrategyType.SUPPORT_RESISTANCE.value: SupportResistanceStrategy(),
             StrategyType.FIXED_STOP_LOSS.value: FixedStopLossStrategy(),

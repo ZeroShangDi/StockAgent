@@ -35,6 +35,7 @@ IMPLEMENTED_STRATEGIES = [
     StrategyType.MA5_BUY,      # 5日线低吸
     StrategyType.LIMIT_OPEN,   # 涨跌停打开
     StrategyType.PRICE_CHANGE, # 涨跌幅阈值
+    StrategyType.INTRADAY_PRICE_MOVE, # 分钟异动
     StrategyType.SUPPORT_RESISTANCE, # 撑压线
     StrategyType.FIXED_STOP_LOSS, # 固定止损
     StrategyType.TRAILING_STOP_LOSS, # 移动止损
@@ -111,6 +112,36 @@ STRATEGY_META = {
         },
         "param_schema": [
             {"key": "threshold", "label": "涨跌阈值 (%)", "type": "float", "default": 5.0},
+            {
+                "key": "direction",
+                "label": "监控方向",
+                "type": "string",
+                "default": "both",
+                "options": [
+                    {"label": "仅上涨", "value": "up"},
+                    {"label": "仅下跌", "value": "down"},
+                    {"label": "双向", "value": "both"},
+                ],
+            },
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
+        ],
+    },
+    StrategyType.INTRADAY_PRICE_MOVE.value: {
+        "name": "分钟异动",
+        "description": "最近 N 分钟内涨跌幅超过阈值时提醒，适合短线异动监控",
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["alert_frequency"],
+        "default_params": {
+            "interval_minutes": 5,
+            "threshold_pct": 2.0,
+            "direction": "both",
+            "once_per_day": True,
+            "alert_frequency": "daily_once",
+        },
+        "param_schema": [
+            {"key": "interval_minutes", "label": "区间分钟数", "type": "number", "default": 5},
+            {"key": "threshold_pct", "label": "涨跌幅阈值 (%)", "type": "float", "default": 2.0},
             {
                 "key": "direction",
                 "label": "监控方向",

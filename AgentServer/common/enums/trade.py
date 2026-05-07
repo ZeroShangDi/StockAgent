@@ -18,6 +18,7 @@ class StrategyType(str, Enum):
     """监听策略类型 (Listener 节点使用)"""
     LIMIT_OPEN = "limit_open"           # 涨跌停打开
     PRICE_CHANGE = "price_change"       # 涨跌幅阈值
+    INTRADAY_PRICE_MOVE = "intraday_price_move"  # 分钟异动
     SUPPORT_RESISTANCE = "support_resistance"  # 撑压线
     FIXED_STOP_LOSS = "fixed_stop_loss"  # 固定止损
     TRAILING_STOP_LOSS = "trailing_stop_loss"  # 移动止损

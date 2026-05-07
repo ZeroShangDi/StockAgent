@@ -47,6 +47,17 @@ STRATEGIES = [
         },
     },
     {
+        "strategy_type": StrategyType.INTRADAY_PRICE_MOVE.value,
+        "strategy_name": "分钟异动",
+        "params": {
+            "interval_minutes": 5,
+            "threshold_pct": 2.0,
+            "direction": "both",
+            "once_per_day": True,
+            "alert_frequency": "daily_once",
+        },
+    },
+    {
         "strategy_type": StrategyType.SUPPORT_RESISTANCE.value,
         "strategy_name": "撑压线",
         "params": {

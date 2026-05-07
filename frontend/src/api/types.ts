@@ -286,6 +286,7 @@ export interface CreateStrategyRequest {
 export enum StrategyType {
   LIMIT_OPEN = 'limit_open',
   PRICE_CHANGE = 'price_change',
+  INTRADAY_PRICE_MOVE = 'intraday_price_move',
   SUPPORT_RESISTANCE = 'support_resistance',
   FIXED_STOP_LOSS = 'fixed_stop_loss',
   TRAILING_STOP_LOSS = 'trailing_stop_loss',
