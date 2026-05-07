@@ -368,15 +368,20 @@ class TushareAdapter(AsyncDataSourceAdapter):
                     for _, row in df.iterrows():
                         ts_code = row.get("TS_CODE") or row.get("ts_code", "")
                         if ts_code:
-                            code6 = self._extract_code(ts_code)
-                            result[code6] = {
-                                "ts_code": ts_code,
-                                "close": self._safe_float(row.get("PRICE") or row.get("price")),
+                            close = self._safe_float(row.get("PRICE") or row.get("price"))
+                            pre_close = self._safe_float(row.get("PRE_CLOSE") or row.get("pre_close"))
+                            pct_chg = self._safe_float(row.get("PCT_CHANGE") or row.get("pct_change"))
+                            if pct_chg is None and close is not None and pre_close not in (None, 0):
+                                pct_chg = round((close - pre_close) / pre_close * 100, 4)
+                            normalized_ts_code = str(ts_code).upper()
+                            result[normalized_ts_code] = {
+                                "ts_code": normalized_ts_code,
+                                "close": close,
                                 "open": self._safe_float(row.get("OPEN") or row.get("open")),
                                 "high": self._safe_float(row.get("HIGH") or row.get("high")),
                                 "low": self._safe_float(row.get("LOW") or row.get("low")),
-                                "pre_close": self._safe_float(row.get("PRE_CLOSE") or row.get("pre_close")),
-                                "pct_chg": self._safe_float(row.get("PCT_CHANGE") or row.get("pct_change")),
+                                "pre_close": pre_close,
+                                "pct_chg": pct_chg,
                                 "vol": self._safe_float(row.get("VOL") or row.get("vol")),
                                 "amount": self._safe_float(row.get("AMOUNT") or row.get("amount")),
                             }

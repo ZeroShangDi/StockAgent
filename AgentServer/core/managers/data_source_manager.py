@@ -207,8 +207,16 @@ class DataSourceManager(BaseManager):
                     preferred.append("coze")
                 if has_tushare:
                     preferred.append("tushare")
+        elif method_name == "get_realtime_quotes":
+            if has_coze:
+                preferred.append("coze")
+            if has_tushare:
+                preferred.append("tushare")
+            if has_akshare:
+                preferred.append("akshare")
+            if has_baostock:
+                preferred.append("baostock")
         elif method_name in {
-            "get_realtime_quotes",
             "get_daily_basic",
             "get_financial_indicator",
             "get_financial_data",
