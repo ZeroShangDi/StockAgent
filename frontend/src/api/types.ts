@@ -399,6 +399,9 @@ export interface StrategyTypeInfo {
   type: string
   name: string
   description: string
+  schedule_type?: string
+  schedule_label?: string
+  basic_param_keys?: string[]
   param_schema: StrategyParamDef[]
 }
 

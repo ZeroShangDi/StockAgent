@@ -6,6 +6,7 @@
 
 from typing import List, Dict, Any, Optional
 import logging
+from datetime import date
 
 from .base import BaseStrategy
 from core.protocols import (
@@ -70,6 +71,7 @@ class LimitOpenStrategy(BaseStrategy):
         
         alerts = []
         limit_type = subscription.params.get("limit_type", "both")
+        today_key = date.today().strftime("%Y%m%d")
         watch_stocks = self._get_watch_stocks(subscription, snapshot)
         
         self.logger.info(
@@ -85,6 +87,9 @@ class LimitOpenStrategy(BaseStrategy):
         no_price_count = 0
         
         for ts_code, quote in watch_stocks.items():
+            if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
+                continue
+
             # 获取涨跌停价格
             limit_info = snapshot.limit_stocks.get(ts_code)
             if not limit_info:
@@ -138,6 +143,12 @@ class LimitOpenStrategy(BaseStrategy):
                         },
                     )
                     alerts.append(alert)
+                    await self._record_alert_trigger(
+                        subscription=subscription,
+                        ts_code=ts_code,
+                        today_key=today_key,
+                        extra_updates={"last_trigger_type": "up_limit_open"},
+                    )
                 elif is_at_up_limit:
                     # 记录当前封板中的股票（用于调试）
                     self.logger.debug(
@@ -166,6 +177,12 @@ class LimitOpenStrategy(BaseStrategy):
                         },
                     )
                     alerts.append(alert)
+                    await self._record_alert_trigger(
+                        subscription=subscription,
+                        ts_code=ts_code,
+                        today_key=today_key,
+                        extra_updates={"last_trigger_type": "down_limit_open"},
+                    )
         
         self.logger.info(
             f"[LIMIT_OPEN] evaluate done: checked={checked_count}, "

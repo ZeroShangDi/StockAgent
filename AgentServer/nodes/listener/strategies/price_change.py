@@ -6,6 +6,7 @@
 
 from typing import List, Dict, Any, Optional
 import logging
+from datetime import date
 
 from .base import BaseStrategy
 from core.protocols import (
@@ -66,19 +67,12 @@ class PriceChangeStrategy(BaseStrategy):
             "change_threshold",
         )
         direction = subscription.params.get("direction", "both")
-        once_per_day = subscription.params.get("once_per_day", True)
+        today_key = date.today().strftime("%Y%m%d")
         
         watch_stocks = self._get_watch_stocks(subscription, snapshot)
         
-        # 获取该策略的触发记录
-        strategy_key = subscription.strategy_id
-        if strategy_key not in self._triggered_today:
-            self._triggered_today[strategy_key] = set()
-        triggered_set = self._triggered_today[strategy_key]
-        
         for ts_code, quote in watch_stocks.items():
-            # 检查是否今日已触发
-            if once_per_day and ts_code in triggered_set:
+            if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
                 continue
             
             pct_chg = quote.get("pct_chg", 0)
@@ -117,7 +111,11 @@ class PriceChangeStrategy(BaseStrategy):
                     },
                 )
                 alerts.append(alert)
-                triggered_set.add(ts_code)
+                await self._record_alert_trigger(
+                    subscription=subscription,
+                    ts_code=ts_code,
+                    today_key=today_key,
+                )
                 self.logger.info(f"[ALERT] {ts_code} {stock_name}: {reason}")
         
         return alerts

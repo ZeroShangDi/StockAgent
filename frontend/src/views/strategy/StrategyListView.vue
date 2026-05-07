@@ -18,6 +18,7 @@ import type {
   StrategySubscription,
   StockBasic,
   StrategyTypeInfo,
+  StrategyParamDef,
   StockInfoBrief,
   StrategyStockConfig,
   StrategyStockPoint,
@@ -115,6 +116,38 @@ function getDisplayStockInfos(sub: StrategySubscription): StockInfoBrief[] {
 function getStrategyName(strategyType: string): string {
   const st = availableStrategyTypes.value.find(s => s.type === strategyType)
   return st?.name || strategyType
+}
+
+function getParamDisplayValue(strategyType: string, key: string, fallback: unknown): string {
+  const strategy = availableStrategyTypes.value.find(s => s.type === strategyType)
+  const param = strategy?.param_schema?.find(item => item.key === key)
+  if (param?.options?.length) {
+    const matched = param.options.find(option => option.value === fallback)
+    if (matched) return matched.label
+  }
+  if (typeof fallback === 'boolean') {
+    return fallback ? '是' : '否'
+  }
+  if (fallback == null || fallback === '') {
+    return '-'
+  }
+  return String(fallback)
+}
+
+function getStrategyMeta(strategyType: string): StrategyTypeInfo | undefined {
+  return availableStrategyTypes.value.find(s => s.type === strategyType)
+}
+
+function getBasicParamDefs(strategyType: string): StrategyParamDef[] {
+  const strategy = getStrategyMeta(strategyType)
+  const basicKeys = new Set(strategy?.basic_param_keys || [])
+  return (strategy?.param_schema || []).filter(param => basicKeys.has(param.key))
+}
+
+function getStrategyParamDefs(strategyType: string): StrategyParamDef[] {
+  const strategy = getStrategyMeta(strategyType)
+  const basicKeys = new Set(strategy?.basic_param_keys || [])
+  return (strategy?.param_schema || []).filter(param => !basicKeys.has(param.key))
 }
 
 /** 获取策略订阅数据 */
@@ -738,6 +771,30 @@ onMounted(async () => {
         
         <!-- 卡片主体 -->
         <div class="card-body">
+          <div class="params-section">
+            <div class="section-header">
+              <h4 class="section-title">监听基础配置</h4>
+            </div>
+            <div class="params-grid">
+              <div class="param-item">
+                <span class="param-label">监听频率</span>
+                <span class="param-value">
+                  {{ getStrategyMeta(st.type)?.schedule_label || '盘中轮询' }}
+                </span>
+              </div>
+              <div
+                v-for="param in getBasicParamDefs(st.type)"
+                :key="`basic-${param.key}`"
+                class="param-item"
+              >
+                <span class="param-label">{{ param.label }}</span>
+                <span class="param-value">
+                  {{ getParamDisplayValue(st.type, param.key, getSubscription(st.type)?.params[param.key] ?? param.default) }}
+                </span>
+              </div>
+            </div>
+          </div>
+
           <!-- 策略参数 -->
           <div class="params-section">
             <div class="section-header">
@@ -755,13 +812,13 @@ onMounted(async () => {
             </div>
             <div class="params-grid">
               <div 
-                v-for="param in st.param_schema" 
+                v-for="param in getStrategyParamDefs(st.type)" 
                 :key="param.key"
                 class="param-item"
               >
                 <span class="param-label">{{ param.label }}</span>
                 <span class="param-value">
-                  {{ getSubscription(st.type)?.params[param.key] ?? param.default }}
+                  {{ getParamDisplayValue(st.type, param.key, getSubscription(st.type)?.params[param.key] ?? param.default) }}
                 </span>
               </div>
             </div>
@@ -1177,8 +1234,44 @@ onMounted(async () => {
         
         <!-- 动态参数表单 -->
         <div class="params-form-grid">
+        <div 
+            v-for="param in getBasicParamDefs(editingStrategyType)"
+            :key="`basic-edit-${param.key}`"
+            class="param-form-item"
+          >
+            <label class="param-form-label">{{ param.label }}</label>
+
+            <el-select
+              v-if="param.type === 'string' && param.options?.length"
+              :model-value="getStringParamValue(param.key, param.default)"
+              @update:model-value="setEditingParam(param.key, $event)"
+            >
+              <el-option
+                v-for="option in param.options"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+
+            <el-switch
+              v-else-if="param.type === 'boolean'"
+              :model-value="getBooleanParamValue(param.key, param.default)"
+              @update:model-value="setEditingParam(param.key, $event)"
+              :active-text="'是'"
+              :inactive-text="'否'"
+            />
+          </div>
+
+          <div
+            v-if="getStrategyParamDefs(editingStrategyType).length"
+            class="param-form-section-label"
+          >
+            策略参数
+          </div>
+
           <div 
-            v-for="param in availableStrategyTypes.find(s => s.type === editingStrategyType)?.param_schema || []"
+            v-for="param in getStrategyParamDefs(editingStrategyType)"
             :key="param.key"
             class="param-form-item"
           >
@@ -1662,6 +1755,11 @@ onMounted(async () => {
 .transition-note-item :deep(.el-select),
 .transition-note-item :deep(.el-input-number) {
   width: 100%;
+}
+
+.param-form-section-label {
+  @apply text-sm font-medium pt-2;
+  color: var(--text-secondary);
 }
 
 .param-form-item {

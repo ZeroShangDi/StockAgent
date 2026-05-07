@@ -95,7 +95,7 @@ class MA5BuyStrategy(BaseStrategy):
         stable_periods = int(
             self._get_numeric_param(subscription.params, "stable_periods", 2.0)
         )
-        once_per_day = subscription.params.get("once_per_day", True)
+        today_key = date.today().strftime("%Y%m%d")
         
         # 确保缓存数据是今天的
         await self._ensure_cache_updated()
@@ -112,7 +112,7 @@ class MA5BuyStrategy(BaseStrategy):
                     subscription=subscription,
                     touch_range=touch_range,
                     stable_periods=stable_periods,
-                    once_per_day=once_per_day,
+                    today_key=today_key,
                 )
                 if alert:
                     alerts.append(alert)
@@ -129,7 +129,7 @@ class MA5BuyStrategy(BaseStrategy):
         subscription: StrategySubscription,
         touch_range: float,
         stable_periods: int,
-        once_per_day: bool,
+        today_key: str,
     ) -> Optional[StrategyAlert]:
         """评估单只股票"""
         
@@ -152,8 +152,7 @@ class MA5BuyStrategy(BaseStrategy):
             self._trackers[ts_code] = StockTracker()
         tracker = self._trackers[ts_code]
         
-        # 检查是否今日已触发
-        if once_per_day and tracker.alerted_today:
+        if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
             return None
         
         # 当前价格
@@ -192,7 +191,7 @@ class MA5BuyStrategy(BaseStrategy):
                 # 达到企稳条件
                 if tracker.stable_count >= stable_periods:
                     tracker.state = StockState.STABILIZED
-                    tracker.alerted_today = True
+                    tracker.alerted_today = self._get_alert_frequency(subscription.params) != self.ALERT_FREQUENCY_UNLIMITED
                     
                     self.logger.info(
                         f"[ALERT] {ts_code} 5日线企稳! "
@@ -200,7 +199,7 @@ class MA5BuyStrategy(BaseStrategy):
                     )
                     
                     # 创建预警
-                    return self._create_alert(
+                    alert = self._create_alert(
                         subscription=subscription,
                         ts_code=ts_code,
                         stock_name=stock_name,
@@ -214,6 +213,12 @@ class MA5BuyStrategy(BaseStrategy):
                             "touch_time": tracker.touch_time.strftime("%H:%M:%S") if tracker.touch_time else "",
                         },
                     )
+                    await self._record_alert_trigger(
+                        subscription=subscription,
+                        ts_code=ts_code,
+                        today_key=today_key,
+                    )
+                    return alert
             else:
                 # 跌破5日线，重置状态
                 if current_price < ma5 * (1 - touch_range):

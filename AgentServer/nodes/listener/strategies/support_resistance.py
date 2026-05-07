@@ -37,7 +37,6 @@ class SupportResistanceStrategy(BaseStrategy):
         self.logger = logging.getLogger("strategy.support_resistance")
         self._trade_date_cache: Dict[str, List[str]] = {}
         self._cache_date: Optional[str] = None
-        self._triggered_today: Dict[str, set[str]] = {}
 
     @property
     def strategy_type(self) -> str:
@@ -59,17 +58,12 @@ class SupportResistanceStrategy(BaseStrategy):
         breakout_threshold = self._normalize_percentage_param(
             self._get_numeric_param(subscription.params, "breakout_threshold_pct", 0.5)
         )
-        once_per_day = bool(subscription.params.get("once_per_day", True))
         stock_configs = subscription.params.get("stock_configs", {}) or {}
         if not isinstance(stock_configs, dict):
             return alerts
 
         watch_stocks = self._get_watch_stocks(subscription, snapshot)
         today_key = date.today().strftime("%Y%m%d")
-        strategy_key = subscription.strategy_id
-        if strategy_key not in self._triggered_today:
-            self._triggered_today[strategy_key] = set()
-        triggered_set = self._triggered_today[strategy_key]
 
         for ts_code, quote in watch_stocks.items():
             config = stock_configs.get(ts_code)
@@ -83,9 +77,7 @@ class SupportResistanceStrategy(BaseStrategy):
                 config=config,
                 near_threshold=near_threshold,
                 breakout_threshold=breakout_threshold,
-                once_per_day=once_per_day,
                 today_key=today_key,
-                triggered_set=triggered_set,
             )
             alerts.extend(stock_alerts)
 
@@ -97,7 +89,6 @@ class SupportResistanceStrategy(BaseStrategy):
             return
         self._cache_date = today
         self._trade_date_cache.clear()
-        self._triggered_today.clear()
 
     async def _evaluate_stock(
         self,
@@ -107,13 +98,14 @@ class SupportResistanceStrategy(BaseStrategy):
         config: Dict[str, Any],
         near_threshold: float,
         breakout_threshold: float,
-        once_per_day: bool,
         today_key: str,
-        triggered_set: set[str],
     ) -> List[StrategyAlert]:
         stock_name = quote.get("name", ts_code)
         current_price = self._safe_float(quote.get("price") or quote.get("close"))
         if current_price is None or current_price <= 0:
+            return []
+
+        if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
             return []
 
         current_high = self._safe_float(quote.get("high")) or current_price
@@ -134,6 +126,7 @@ class SupportResistanceStrategy(BaseStrategy):
                 line_defs.append(LineDefinition("resistance", resistance_points))
 
         alerts: List[StrategyAlert] = []
+        frequency = self._get_alert_frequency(subscription.params)
         for line_def in line_defs:
             line_price = self._project_line_price(line_def.points, trade_dates, today_key)
             if line_price is None or line_price <= 0:
@@ -149,10 +142,6 @@ class SupportResistanceStrategy(BaseStrategy):
                 breakout_threshold=breakout_threshold,
             )
             if not event_type or not reason:
-                continue
-
-            trigger_key = f"{today_key}:{ts_code}:{line_def.line_type}:{event_type}"
-            if once_per_day and trigger_key in triggered_set:
                 continue
 
             alerts.append(
@@ -175,7 +164,17 @@ class SupportResistanceStrategy(BaseStrategy):
                     },
                 )
             )
-            triggered_set.add(trigger_key)
+            if frequency != self.ALERT_FREQUENCY_UNLIMITED:
+                await self._record_alert_trigger(
+                    subscription=subscription,
+                    ts_code=ts_code,
+                    today_key=today_key,
+                    extra_updates={
+                        "last_trigger_line_type": line_def.line_type,
+                        "last_trigger_event_type": event_type,
+                    },
+                )
+                break
 
         return alerts
 

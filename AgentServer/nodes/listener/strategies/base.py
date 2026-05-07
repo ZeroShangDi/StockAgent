@@ -6,15 +6,25 @@
 
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
+from datetime import UTC, datetime
 
 from core.protocols import (
     StrategySubscription,
     StrategyAlert,
     MarketSnapshot,
 )
+from core.managers import mongo_manager
 
 
 class BaseStrategy(ABC):
+    ALERT_FREQUENCY_DAILY_ONCE = "daily_once"
+    ALERT_FREQUENCY_ONCE_THEN_DISABLE = "once_then_disable"
+    ALERT_FREQUENCY_UNLIMITED = "unlimited"
+    VALID_ALERT_FREQUENCIES = {
+        ALERT_FREQUENCY_DAILY_ONCE,
+        ALERT_FREQUENCY_ONCE_THEN_DISABLE,
+        ALERT_FREQUENCY_UNLIMITED,
+    }
     """
     策略基类
     
@@ -93,6 +103,17 @@ class BaseStrategy(ABC):
                 ts_code: quote
                 for ts_code, quote in stocks.items()
                 if not self._is_st_stock(quote)
+            }
+
+        stock_configs = subscription.params.get("stock_configs", {}) or {}
+        if isinstance(stock_configs, dict):
+            stocks = {
+                ts_code: quote
+                for ts_code, quote in stocks.items()
+                if not (
+                    isinstance(stock_configs.get(ts_code), dict)
+                    and stock_configs.get(ts_code, {}).get("enabled") is False
+                )
             }
         
         return stocks
@@ -178,3 +199,90 @@ class BaseStrategy(ABC):
         - 2 表示 2%
         """
         return value / 100 if value > 1 else value
+
+    def _get_alert_frequency(self, params: Dict[str, Any]) -> str:
+        raw_value = str(params.get("alert_frequency") or "").strip().lower()
+        if raw_value in self.VALID_ALERT_FREQUENCIES:
+            return raw_value
+
+        if "once_per_day" in params:
+            return self.ALERT_FREQUENCY_DAILY_ONCE if bool(params.get("once_per_day", True)) else self.ALERT_FREQUENCY_UNLIMITED
+
+        return self.ALERT_FREQUENCY_DAILY_ONCE
+
+    def _get_stock_runtime_config(
+        self,
+        subscription: StrategySubscription,
+        ts_code: str,
+    ) -> Dict[str, Any]:
+        stock_configs = subscription.params.get("stock_configs", {}) or {}
+        if not isinstance(stock_configs, dict):
+            return {}
+        config = stock_configs.get(ts_code) or {}
+        return dict(config) if isinstance(config, dict) else {}
+
+    def _should_skip_by_alert_frequency(
+        self,
+        subscription: StrategySubscription,
+        ts_code: str,
+        today_key: str,
+    ) -> bool:
+        frequency = self._get_alert_frequency(subscription.params)
+        config = self._get_stock_runtime_config(subscription, ts_code)
+
+        if frequency == self.ALERT_FREQUENCY_UNLIMITED:
+            return False
+
+        if frequency == self.ALERT_FREQUENCY_ONCE_THEN_DISABLE:
+            return config.get("enabled") is False or bool(config.get("frequency_disabled"))
+
+        last_triggered_date = str(config.get("last_triggered_date") or "")
+        return last_triggered_date == today_key
+
+    async def _record_alert_trigger(
+        self,
+        subscription: StrategySubscription,
+        ts_code: str,
+        today_key: str,
+        extra_updates: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        frequency = self._get_alert_frequency(subscription.params)
+        current_config = self._get_stock_runtime_config(subscription, ts_code)
+        trigger_count = int(current_config.get("trigger_count", 0) or 0) + 1
+        updates: Dict[str, Any] = {
+            "last_triggered_date": today_key,
+            "last_triggered_at": datetime.now(UTC).isoformat(),
+            "trigger_count": trigger_count,
+        }
+        if frequency == self.ALERT_FREQUENCY_ONCE_THEN_DISABLE:
+            updates.update(
+                {
+                    "enabled": False,
+                    "frequency_disabled": True,
+                    "disabled_reason": "once_then_disable",
+                }
+            )
+        if extra_updates:
+            updates.update(extra_updates)
+        await self._persist_stock_runtime_fields(subscription, ts_code, updates)
+
+    async def _persist_stock_runtime_fields(
+        self,
+        subscription: StrategySubscription,
+        ts_code: str,
+        updates: Dict[str, Any],
+    ) -> None:
+        params = dict(subscription.params or {})
+        stock_configs = dict(params.get("stock_configs", {}) or {})
+        current_config = dict(stock_configs.get(ts_code, {}) or {})
+        current_config.update(updates)
+        stock_configs[ts_code] = current_config
+        params["stock_configs"] = stock_configs
+
+        subscription.params = params
+
+        await mongo_manager.update_one(
+            "strategy_subscriptions",
+            {"strategy_id": subscription.strategy_id},
+            {"$set": {"params": params}},
+        )

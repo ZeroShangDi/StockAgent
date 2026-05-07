@@ -16,7 +16,6 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from common.enums import StrategyType
-from core.managers import mongo_manager
 from core.protocols import MarketSnapshot, StrategyAlert, StrategySubscription
 
 from .base import BaseStrategy
@@ -45,7 +44,6 @@ class TrailingStopLossStrategy(BaseStrategy):
         if not isinstance(stock_configs, dict):
             return alerts
 
-        once_per_day = bool(subscription.params.get("once_per_day", True))
         today_key = date.today().strftime("%Y%m%d")
         watch_stocks = self._get_watch_stocks(subscription, snapshot)
 
@@ -78,10 +76,8 @@ class TrailingStopLossStrategy(BaseStrategy):
                 0.0,
             )
             trigger_price = highest_price * (1 - trail_pct)
-            last_triggered_date = str(config.get("last_triggered_date") or "")
-
             if current_price <= trigger_price or (current_low is not None and current_low <= trigger_price):
-                if not (once_per_day and last_triggered_date == today_key):
+                if not self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
                     alerts.append(
                         self._create_alert(
                             subscription=subscription,
@@ -107,43 +103,25 @@ class TrailingStopLossStrategy(BaseStrategy):
                             },
                         )
                     )
-                    runtime_updates["last_triggered_date"] = today_key
+                    runtime_updates["__triggered__"] = True
 
             if runtime_updates:
-                await self._persist_runtime_fields(
+                triggered = bool(runtime_updates.pop("__triggered__", False))
+                if triggered:
+                    await self._record_alert_trigger(
+                        subscription=subscription,
+                        ts_code=ts_code,
+                        today_key=today_key,
+                        extra_updates=runtime_updates,
+                    )
+                    continue
+                await self._persist_stock_runtime_fields(
                     subscription=subscription,
                     ts_code=ts_code,
                     updates=runtime_updates,
                 )
 
         return alerts
-
-    async def _persist_runtime_fields(
-        self,
-        subscription: StrategySubscription,
-        ts_code: str,
-        updates: Dict[str, Any],
-    ) -> None:
-        record = await mongo_manager.find_one(
-            "strategy_subscriptions",
-            {"strategy_id": subscription.strategy_id},
-            projection={"params": 1},
-        )
-        if not record:
-            return
-
-        params = dict(record.get("params", {}) or {})
-        stock_configs = dict(params.get("stock_configs", {}) or {})
-        current_config = dict(stock_configs.get(ts_code, {}) or {})
-        current_config.update(updates)
-        stock_configs[ts_code] = current_config
-        params["stock_configs"] = stock_configs
-
-        await mongo_manager.update_one(
-            "strategy_subscriptions",
-            {"strategy_id": subscription.strategy_id},
-            {"$set": {"params": params}},
-        )
 
     def _safe_float(self, value: Any) -> Optional[float]:
         if value is None or value == "":

@@ -43,6 +43,7 @@ STRATEGIES = [
             "threshold": 5.0,
             "direction": "both",
             "once_per_day": True,
+            "alert_frequency": "daily_once",
         },
     },
     {
@@ -52,6 +53,7 @@ STRATEGIES = [
             "near_threshold_pct": 1.0,
             "breakout_threshold_pct": 0.5,
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
     },
@@ -61,6 +63,7 @@ STRATEGIES = [
         "params": {
             "default_stop_loss_pct": 8.0,
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
     },
@@ -70,6 +73,7 @@ STRATEGIES = [
         "params": {
             "default_trail_pct": 6.0,
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
     },
@@ -82,6 +86,7 @@ STRATEGIES = [
             "loss_threshold_pct": 3.0,
             "profit_threshold_pct": 8.0,
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
     },
@@ -94,6 +99,7 @@ STRATEGIES = [
             "swing_threshold_pct": 2.0,
             "direction": "both",
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
     },

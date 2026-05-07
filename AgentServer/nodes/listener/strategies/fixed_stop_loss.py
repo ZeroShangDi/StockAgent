@@ -16,7 +16,6 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from common.enums import StrategyType
-from core.managers import mongo_manager
 from core.protocols import MarketSnapshot, StrategyAlert, StrategySubscription
 
 from .base import BaseStrategy
@@ -45,7 +44,6 @@ class FixedStopLossStrategy(BaseStrategy):
         if not isinstance(stock_configs, dict):
             return alerts
 
-        once_per_day = bool(subscription.params.get("once_per_day", True))
         watch_stocks = self._get_watch_stocks(subscription, snapshot)
         today_key = date.today().strftime("%Y%m%d")
 
@@ -70,9 +68,7 @@ class FixedStopLossStrategy(BaseStrategy):
                 0.0,
             )
             trigger_price = reference_price * (1 - stop_loss_pct)
-            last_triggered_date = str(config.get("last_triggered_date") or "")
-
-            if once_per_day and last_triggered_date == today_key:
+            if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
                 continue
 
             if current_price > trigger_price and (current_low is None or current_low > trigger_price):
@@ -99,40 +95,13 @@ class FixedStopLossStrategy(BaseStrategy):
                 )
             )
 
-            await self._persist_runtime_fields(
+            await self._record_alert_trigger(
                 subscription=subscription,
                 ts_code=ts_code,
-                updates={"last_triggered_date": today_key},
+                today_key=today_key,
             )
 
         return alerts
-
-    async def _persist_runtime_fields(
-        self,
-        subscription: StrategySubscription,
-        ts_code: str,
-        updates: Dict[str, Any],
-    ) -> None:
-        record = await mongo_manager.find_one(
-            "strategy_subscriptions",
-            {"strategy_id": subscription.strategy_id},
-            projection={"params": 1},
-        )
-        if not record:
-            return
-
-        params = dict(record.get("params", {}) or {})
-        stock_configs = dict(params.get("stock_configs", {}) or {})
-        current_config = dict(stock_configs.get(ts_code, {}) or {})
-        current_config.update(updates)
-        stock_configs[ts_code] = current_config
-        params["stock_configs"] = stock_configs
-
-        await mongo_manager.update_one(
-            "strategy_subscriptions",
-            {"strategy_id": subscription.strategy_id},
-            {"$set": {"params": params}},
-        )
 
     def _safe_float(self, value: Any) -> Optional[float]:
         if value is None or value == "":

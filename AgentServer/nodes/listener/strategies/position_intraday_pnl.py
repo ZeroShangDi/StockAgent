@@ -11,7 +11,6 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from common.enums import StrategyType
-from core.managers import mongo_manager
 from core.protocols import MarketSnapshot, StrategyAlert, StrategySubscription
 
 from .base import BaseStrategy
@@ -38,11 +37,9 @@ class PositionIntradayPnlStrategy(BaseStrategy):
         if not position_map:
             return []
 
-        once_per_day = bool(subscription.params.get("once_per_day", True))
         threshold_pct = abs(self._get_numeric_param(subscription.params, "swing_threshold_pct", 2.0))
         direction = str(subscription.params.get("direction") or "both").strip().lower()
         today_key = date.today().strftime("%Y%m%d")
-        stock_configs = subscription.params.get("stock_configs", {}) or {}
 
         alerts: List[StrategyAlert] = []
         for ts_code, position in position_map.items():
@@ -62,8 +59,6 @@ class PositionIntradayPnlStrategy(BaseStrategy):
 
             intraday_pnl_amount = (current_price - pre_close) * quantity
             intraday_pnl_pct = intraday_pnl_amount / total_cost * 100
-            config = stock_configs.get(ts_code, {}) if isinstance(stock_configs, dict) else {}
-            last_triggered_date = str((config or {}).get("last_triggered_date") or "")
 
             triggered = False
             if direction in {"both", "up"} and intraday_pnl_pct >= threshold_pct:
@@ -73,7 +68,7 @@ class PositionIntradayPnlStrategy(BaseStrategy):
             if not triggered:
                 continue
 
-            if once_per_day and last_triggered_date == today_key:
+            if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
                 continue
 
             alerts.append(
@@ -100,10 +95,10 @@ class PositionIntradayPnlStrategy(BaseStrategy):
                 )
             )
 
-            await self._persist_runtime_fields(
+            await self._record_alert_trigger(
                 subscription=subscription,
                 ts_code=ts_code,
-                updates={"last_triggered_date": today_key},
+                today_key=today_key,
             )
 
         return alerts
@@ -131,33 +126,6 @@ class PositionIntradayPnlStrategy(BaseStrategy):
             for doc in docs
             if doc.get("ts_code")
         }
-
-    async def _persist_runtime_fields(
-        self,
-        subscription: StrategySubscription,
-        ts_code: str,
-        updates: Dict[str, Any],
-    ) -> None:
-        record = await mongo_manager.find_one(
-            "strategy_subscriptions",
-            {"strategy_id": subscription.strategy_id},
-            projection={"params": 1},
-        )
-        if not record:
-            return
-
-        params = dict(record.get("params", {}) or {})
-        stock_configs = dict(params.get("stock_configs", {}) or {})
-        current_config = dict(stock_configs.get(ts_code, {}) or {})
-        current_config.update(updates)
-        stock_configs[ts_code] = current_config
-        params["stock_configs"] = stock_configs
-
-        await mongo_manager.update_one(
-            "strategy_subscriptions",
-            {"strategy_id": subscription.strategy_id},
-            {"$set": {"params": params}},
-        )
 
     def _safe_float(self, value: Any) -> Optional[float]:
         if value is None or value == "":

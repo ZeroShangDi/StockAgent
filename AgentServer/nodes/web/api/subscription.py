@@ -43,107 +43,176 @@ IMPLEMENTED_STRATEGIES = [
 ]
 
 IMPLEMENTED_STRATEGY_VALUES = [s.value for s in IMPLEMENTED_STRATEGIES]
+ALERT_FREQUENCY_OPTIONS = [
+    {"label": "每日一次", "value": "daily_once"},
+    {"label": "提醒后关闭", "value": "once_then_disable"},
+    {"label": "不限次数", "value": "unlimited"},
+]
 
 # 策略元信息（名称、描述、默认参数）
 STRATEGY_META = {
     StrategyType.MA5_BUY.value: {
         "name": "5日线低吸",
         "description": "当价格触及5日均线时提醒，适合低吸策略",
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["alert_frequency"],
         "default_params": {
             "touch_range": 2.0,
             "stable_periods": 2,
+            "once_per_day": True,
+            "alert_frequency": "daily_once",
+            "stock_configs": {},
         },
         "param_schema": [
             {"key": "touch_range", "label": "触及范围 (%)", "type": "float", "default": 2.0},
             {"key": "stable_periods", "label": "企稳周期数", "type": "number", "default": 2},
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
         ],
     },
     StrategyType.LIMIT_OPEN.value: {
         "name": "涨跌停打开",
         "description": "涨停或跌停打开时提醒，适合打板策略",
-        "default_params": {},
-        "param_schema": [],
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["alert_frequency"],
+        "default_params": {
+            "limit_type": "both",
+            "once_per_day": True,
+            "alert_frequency": "daily_once",
+            "stock_configs": {},
+        },
+        "param_schema": [
+            {
+                "key": "limit_type",
+                "label": "监控方向",
+                "type": "string",
+                "default": "both",
+                "options": [
+                    {"label": "涨停打开", "value": "up"},
+                    {"label": "跌停打开", "value": "down"},
+                    {"label": "双向", "value": "both"},
+                ],
+            },
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
+        ],
     },
     StrategyType.PRICE_CHANGE.value: {
         "name": "涨跌幅阈值",
         "description": "涨跌幅超过阈值时提醒",
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["alert_frequency"],
         "default_params": {
             "threshold": 5.0,
             "direction": "both",
             "once_per_day": True,
+            "alert_frequency": "daily_once",
         },
         "param_schema": [
             {"key": "threshold", "label": "涨跌阈值 (%)", "type": "float", "default": 5.0},
+            {
+                "key": "direction",
+                "label": "监控方向",
+                "type": "string",
+                "default": "both",
+                "options": [
+                    {"label": "仅上涨", "value": "up"},
+                    {"label": "仅下跌", "value": "down"},
+                    {"label": "双向", "value": "both"},
+                ],
+            },
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
         ],
     },
     StrategyType.SUPPORT_RESISTANCE.value: {
         "name": "撑压线",
         "description": "根据每只股票单独配置的支撑线/压力线，在接近或突破时提醒",
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["alert_frequency"],
         "default_params": {
             "near_threshold_pct": 1.0,
             "breakout_threshold_pct": 0.5,
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
         "param_schema": [
             {"key": "near_threshold_pct", "label": "接近阈值 (%)", "type": "float", "default": 1.0},
             {"key": "breakout_threshold_pct", "label": "突破阈值 (%)", "type": "float", "default": 0.5},
-            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
         ],
     },
     StrategyType.FIXED_STOP_LOSS.value: {
         "name": "固定止损",
         "description": "从加入监听时的基准价开始计算，跌到固定比例时提醒",
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["alert_frequency"],
         "default_params": {
             "default_stop_loss_pct": 8.0,
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
         "param_schema": [
             {"key": "default_stop_loss_pct", "label": "默认止损比例 (%)", "type": "float", "default": 8.0},
-            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
         ],
     },
     StrategyType.TRAILING_STOP_LOSS.value: {
         "name": "移动止损",
         "description": "跟踪加入后最高价，回撤到固定比例时提醒",
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["alert_frequency"],
         "default_params": {
             "default_trail_pct": 6.0,
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
         "param_schema": [
             {"key": "default_trail_pct", "label": "默认回撤比例 (%)", "type": "float", "default": 6.0},
-            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
         ],
     },
     StrategyType.POSITION_PNL.value: {
         "name": "持仓盈亏阈值",
         "description": "按交割单推导的当前持仓成本，监控总浮盈亏达到指定阈值",
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["alert_frequency"],
         "default_params": {
             "position_group_id": "",
             "position_group_name": "",
             "loss_threshold_pct": 3.0,
             "profit_threshold_pct": 8.0,
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
         "param_schema": [
             {"key": "position_group_id", "label": "持仓分组", "type": "string", "default": ""},
             {"key": "loss_threshold_pct", "label": "亏损提醒阈值 (%)", "type": "float", "default": 3.0},
             {"key": "profit_threshold_pct", "label": "盈利提醒阈值 (%)", "type": "float", "default": 8.0},
-            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
         ],
     },
     StrategyType.POSITION_INTRADAY_PNL.value: {
         "name": "盘中持仓盈亏变化",
         "description": "按昨收到现价的变化，监控盘中持仓收益波动",
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["alert_frequency"],
         "default_params": {
             "position_group_id": "",
             "position_group_name": "",
             "swing_threshold_pct": 2.0,
             "direction": "both",
             "once_per_day": True,
+            "alert_frequency": "daily_once",
             "stock_configs": {},
         },
         "param_schema": [
@@ -160,7 +229,7 @@ STRATEGY_META = {
                     {"label": "仅向下", "value": "down"},
                 ],
             },
-            {"key": "once_per_day", "label": "单日仅提醒一次", "type": "boolean", "default": True},
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
         ],
     },
 }
@@ -235,6 +304,9 @@ class StrategyTypeInfo(BaseModel):
     type: str
     name: str
     description: str
+    schedule_type: str = "intraday_minute"
+    schedule_label: str = "盘中轮询"
+    basic_param_keys: List[str] = Field(default_factory=list)
     param_schema: List[dict]
 
 
@@ -718,6 +790,21 @@ async def _normalize_position_group_params(
     return normalized_params
 
 
+def _normalize_alert_frequency(params: Dict[str, Any]) -> Dict[str, Any]:
+    normalized_params = dict(params)
+    raw_value = str(normalized_params.get("alert_frequency") or "").strip().lower()
+    if raw_value:
+        if raw_value not in {"daily_once", "once_then_disable", "unlimited"}:
+            raise HTTPException(status_code=400, detail="alert_frequency 只支持 daily_once / once_then_disable / unlimited")
+        normalized_params["alert_frequency"] = raw_value
+        normalized_params["once_per_day"] = raw_value == "daily_once"
+        return normalized_params
+
+    if "once_per_day" in normalized_params:
+        normalized_params["alert_frequency"] = "daily_once" if bool(normalized_params.get("once_per_day", True)) else "unlimited"
+    return normalized_params
+
+
 async def _validate_stock_exists(ts_code: str) -> dict:
     stock = await mongo_manager.find_one(
         "stock_basic",
@@ -782,6 +869,9 @@ async def get_available_strategy_types():
             type=st.value,
             name=meta.get("name", st.value),
             description=meta.get("description", ""),
+            schedule_type=meta.get("schedule_type", "intraday_minute"),
+            schedule_label=meta.get("schedule_label", "盘中轮询"),
+            basic_param_keys=meta.get("basic_param_keys", []),
             param_schema=meta.get("param_schema", []),
         ))
     return result
@@ -859,6 +949,7 @@ async def update_strategy_params(
         updated_params["transition_rules"] = current_params["transition_rules"]
     updated_params = await _normalize_transition_rules(admin.user_id, updated_params)
     updated_params = await _normalize_position_group_params(admin.user_id, updated_params)
+    updated_params = _normalize_alert_frequency(updated_params)
     
     # 更新参数
     await mongo_manager.update_one(
