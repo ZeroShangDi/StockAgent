@@ -10,8 +10,8 @@
     Destination directory (default: E:\AgentStudy\stockAgent_backup)
 
 .EXAMPLE
-    .\backup.ps1
-    .\backup.ps1 -Dest "D:\backup"
+    .\tools\windows\backup.ps1
+    .\tools\windows\backup.ps1 -Dest "D:\backup"
 #>
 
 param(

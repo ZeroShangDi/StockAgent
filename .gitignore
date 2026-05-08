@@ -48,9 +48,11 @@ env/
 
 # ============ Environment Variables ============
 .env
+.env.docker
 .env.local
 .env.*.local
 !.env.example
+!.env.docker.example
 !env.example
 
 # ============ Logs ============

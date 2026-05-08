@@ -1,0 +1,283 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: stock-agent-frontend
+    depends_on:
+      web:
+        condition: service_started
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: stock-agent-web
+    command: ["python", "main.py", "--node-type", "web"]
+    env_file:
+      - .env.docker
+    environment:
+      NODE_TYPE: web
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 8000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - backend_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  data-sync:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: stock-agent-data-sync
+    command: ["python", "main.py", "--node-type", "data_sync"]
+    env_file:
+      - .env.docker
+    environment:
+      NODE_TYPE: data_sync
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - backend_logs:/app/logs
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  inference:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: stock-agent-inference
+    command: ["python", "main.py", "--node-type", "inference"]
+    env_file:
+      - .env.docker
+    environment:
+      NODE_TYPE: inference
+      MAX_CONCURRENT_TASKS: "${MAX_CONCURRENT_TASKS:-5}"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_started
+    volumes:
+      - backend_logs:/app/logs
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  listener:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: stock-agent-listener
+    command: ["python", "main.py", "--node-type", "listener"]
+    env_file:
+      - .env.docker
+    environment:
+      NODE_TYPE: listener
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - backend_logs:/app/logs
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  backtest:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: stock-agent-backtest
+    command: ["python", "main.py", "--node-type", "backtest"]
+    env_file:
+      - .env.docker
+    environment:
+      NODE_TYPE: backtest
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - backend_logs:/app/logs
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  mcp:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: stock-agent-mcp
+    command: ["python", "main.py", "--node-type", "mcp"]
+    env_file:
+      - .env.docker
+    environment:
+      NODE_TYPE: mcp
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_started
+    volumes:
+      - backend_logs:/app/logs
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7.0
+    container_name: stock-agent-mongo
+    env_file:
+      - .env.docker
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "${MONGO_INITDB_ROOT_USERNAME:-admin}"
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD:-change-me}"
+      MONGO_INITDB_DATABASE: "${MONGO_INITDB_DATABASE:-stock_agent}"
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./AgentServer/deploy/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--host", "localhost", "--username", "${MONGO_INITDB_ROOT_USERNAME:-admin}", "--password", "${MONGO_INITDB_ROOT_PASSWORD:-change-me}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 20s
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: stock-agent-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: stock-agent-etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: >
+      etcd
+      -advertise-client-urls=http://127.0.0.1:2379
+      -listen-client-urls=http://0.0.0.0:2379
+      --data-dir /etcd
+    volumes:
+      - etcd_data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+    container_name: stock-agent-minio
+    env_file:
+      - .env.docker
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin123}"
+    command: ["minio", "server", "/data", "--console-address", ":9001"]
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: stock-agent-milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 8
+      start_period: 90s
+    networks:
+      - stock-agent-network
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+  redis_data:
+  etcd_data:
+  minio_data:
+  milvus_data:
+  backend_logs:
+
+networks:
+  stock-agent-network:
+    driver: bridge

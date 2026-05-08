@@ -1,5 +1,5 @@
 # StockAgent Service Manager
-# Usage: .\manager.ps1
+# Usage: .\tools\windows\manager.ps1
 
 # ==================== Config ====================
 

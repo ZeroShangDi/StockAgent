@@ -219,6 +219,69 @@
 
 ---
 
+## 🐳 Docker Compose 一键部署
+
+项目根目录已经补齐了完整的 Docker Compose 部署文件，包含：
+
+- `frontend`：Vue 生产构建 + Nginx 静态服务
+- `web`：FastAPI 网关
+- `data-sync` / `inference` / `listener` / `backtest` / `mcp`：后端节点
+- `mongodb` / `redis` / `milvus` / `etcd` / `minio`：基础设施
+
+### 1. 准备环境文件
+
+```bash
+cp .env.docker.example .env.docker
+```
+
+然后至少修改这些配置：
+
+- `JWT_SECRET`
+- `MONGO_PASSWORD`
+- `MONGO_INITDB_ROOT_PASSWORD`
+- `TUSHARE_TOKEN`
+- `LLM_API_KEY`
+
+### 2. 一键启动
+
+```bash
+docker compose --env-file .env.docker up -d --build
+```
+
+### 3. 查看状态
+
+```bash
+docker compose --env-file .env.docker ps
+docker compose --env-file .env.docker logs -f web
+```
+
+### 4. 访问入口
+
+- 前端：`http://localhost`
+- 后端健康检查：`http://localhost:8000/health`
+- MongoDB：`localhost:27017`
+- Redis：`localhost:6379`
+
+### 5. 停止服务
+
+```bash
+docker compose --env-file .env.docker down
+```
+
+如果要连数据卷一起删除：
+
+```bash
+docker compose --env-file .env.docker down -v
+```
+
+说明：
+
+- 前端容器会把 `/api` 和 `/ws` 自动反向代理到后端 `web` 服务。
+- 若要扩容推理节点，建议使用 `docker compose --env-file .env.docker up -d --scale inference=2`。
+- 本地构建时会使用根目录 `.dockerignore`，避免把 `node_modules`、日志和 Git 元数据一并打进镜像。
+
+---
+
 ## 🚀 快速开始
 
 ### 环境要求
@@ -293,7 +356,7 @@ npm install
 ```powershell
 # 进入项目根目录
 cd stockAgent
-.\manager.ps1
+.\tools\windows\manager.ps1
 ```
 
 ```
@@ -376,8 +439,10 @@ StockAgent/
 │   │   └── router/              # 路由配置
 │   └── ...
 │
-├── manager.ps1                  # Windows 管理脚本
-├── backup.ps1                   # 备份脚本
+├── tools/
+│   └── windows/
+│       ├── manager.ps1          # Windows 管理脚本
+│       └── backup.ps1           # 备份脚本
 └── README.md                    # 本文件
 ```
 
