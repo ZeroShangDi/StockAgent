@@ -4,7 +4,7 @@
  * 支持 Light/Dark 主题切换
  */
 
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ElContainer,
@@ -55,6 +55,7 @@ const themeStore = useThemeStore()
 // ==================== 状态 ====================
 
 const isCollapsed = ref(false)
+const focusModeEnabled = ref(false)
 
 // ==================== 计算属性 ====================
 
@@ -72,6 +73,7 @@ const activeMenu = computed(() => {
 })
 
 const activeTaskCount = computed(() => taskStore.activeTaskCount)
+const isFocusMode = computed(() => focusModeEnabled.value)
 
 // ==================== 菜单项 ====================
 
@@ -113,6 +115,12 @@ const menuSections = [
 onMounted(() => {
   // 初始化主题
   themeStore.initTheme()
+  focusModeEnabled.value = typeof window !== 'undefined' && window.localStorage.getItem('stockagent.focus_mode') === '1'
+  window.addEventListener('stockagent-focus-mode-change', handleFocusModeChange)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('stockagent-focus-mode-change', handleFocusModeChange)
 })
 
 // ==================== 方法 ====================
@@ -132,12 +140,16 @@ function toggleTheme(): void {
 async function handleLogout(): Promise<void> {
   await logout()
 }
+
+function handleFocusModeChange(): void {
+  focusModeEnabled.value = typeof window !== 'undefined' && window.localStorage.getItem('stockagent.focus_mode') === '1'
+}
 </script>
 
 <template>
-  <ElContainer class="main-layout">
+  <ElContainer class="main-layout" :class="{ 'focus-mode': isFocusMode }">
     <!-- 侧边栏 -->
-    <ElAside :width="isCollapsed ? '64px' : '220px'" class="sidebar">
+    <ElAside v-show="!isFocusMode" :width="isCollapsed ? '64px' : '220px'" class="sidebar">
       <div class="logo" :class="{ collapsed: isCollapsed }">
         <img src="/logo.svg" alt="Logo" class="logo-img" />
         <span v-if="!isCollapsed" class="logo-text">StockAgent</span>
@@ -187,7 +199,7 @@ async function handleLogout(): Promise<void> {
     <!-- 主内容区 -->
     <ElContainer class="main-container">
       <!-- 顶部栏 -->
-      <ElHeader class="header">
+      <ElHeader v-show="!isFocusMode" class="header">
         <div class="header-left">
           <h2 class="page-title">{{ $route.meta.title }}</h2>
         </div>
@@ -245,6 +257,17 @@ async function handleLogout(): Promise<void> {
 .main-layout {
   min-height: 100vh;
   overflow: hidden;
+}
+
+.main-layout.focus-mode {
+  .main-container {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .main-content {
+    padding: 0;
+  }
 }
 
 .sidebar {

@@ -4,20 +4,12 @@
       <header class="session-header">
         <div class="title-block">
           <p class="eyebrow">Pool Review</p>
-          <h1>{{ context?.stock.name || context?.stock.ts_code || '股池沉浸复盘' }}</h1>
-          <div class="subtitle-row">
-            <p class="subtitle">
-              {{ context?.pool.name || '股池' }}
-              <span v-if="context?.navigation.position">· 第 {{ context.navigation.position }} / {{ context.navigation.total }} 只</span>
-              <span v-if="context?.stock.latest_trade_date">· {{ formatTradeDate(context.stock.latest_trade_date) }}</span>
-            </p>
-            <div class="shortcut-inline-note">
-              快捷键：<kbd>←</kbd>/<kbd>→</kbd> 切换，<kbd>↑</kbd>/<kbd>↓</kbd> 缩放，<kbd>W</kbd> 自选，<kbd>A</kbd> 监听，<kbd>X</kbd> 移除，<kbd>C</kbd> 复制，<kbd>M</kbd> 移动。
-            </div>
-          </div>
         </div>
         <div class="header-right">
           <div class="header-actions">
+            <el-button plain @click="toggleFocusMode">
+              {{ isFocusMode ? '退出专注' : '专注模式' }}
+            </el-button>
             <el-button @click="backToPool">返回股池</el-button>
             <el-button :disabled="!context?.navigation.previous_ts_code" @click="jumpToPrevious">上一只</el-button>
             <el-button
@@ -27,6 +19,16 @@
             >
               下一只
             </el-button>
+          </div>
+        </div>
+        <div class="header-footer">
+          <p class="subtitle">
+            {{ context?.pool.name || '股池' }}
+            <span v-if="context?.navigation.position">· 第 {{ context.navigation.position }} / {{ context.navigation.total }} 只</span>
+            <span v-if="context?.stock.latest_trade_date">· {{ formatTradeDate(context.stock.latest_trade_date) }}</span>
+          </p>
+          <div class="shortcut-inline-note">
+            快捷键：<kbd>←</kbd>/<kbd>→</kbd> 切换，<kbd>↑</kbd>/<kbd>↓</kbd> 缩放，<kbd>W</kbd> 自选，<kbd>A</kbd> 监听，<kbd>X</kbd> 移除，<kbd>C</kbd> 复制，<kbd>M</kbd> 移动。
           </div>
         </div>
       </header>
@@ -90,9 +92,22 @@
                 <el-button type="primary" plain :loading="watchlistLoading" @click="addCurrentToWatchlist">
                   加入自选
                 </el-button>
+                <el-button
+                  type="warning"
+                  plain
+                  :loading="repairLoading"
+                  @click="startRepairTask"
+                >
+                  单股补数更新
+                </el-button>
                 <el-button type="danger" plain :loading="removeLoading" @click="removeCurrentFromPool">
                   从当前股池移除
                 </el-button>
+              </div>
+              <div v-if="repairTask" class="task-inline-status" :class="repairTask.status">
+                <span class="task-status-pill">{{ getRepairStatusLabel(repairTask.status) }}</span>
+                <span>{{ repairTask.current_step || repairTask.message || '处理中' }}</span>
+                <span>{{ repairTask.progress ?? 0 }}%</span>
               </div>
             </div>
 
@@ -181,12 +196,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { stockPickerApi, subscriptionApi } from '@/api'
+import { stockApi, stockPickerApi, subscriptionApi } from '@/api'
 import { useUserStore } from '@/stores/user'
 import StockChart from '@/components/charts/StockChart.vue'
 import type { StockDaily } from '@/api'
 import type { StrategyTypeInfo } from '@/api/types'
 import type { StockPoolReviewContext, StockPoolSummary } from '@/api/modules/stock-picker'
+import type { StockRepairTaskStatus } from '@/api/modules/stock'
 
 const route = useRoute()
 const router = useRouter()
@@ -199,6 +215,7 @@ const listenerLoading = ref(false)
 const watchlistLoading = ref(false)
 const moveLoading = ref(false)
 const removeLoading = ref(false)
+const repairLoading = ref(false)
 
 const context = ref<StockPoolReviewContext | null>(null)
 const strategyTypes = ref<StrategyTypeInfo[]>([])
@@ -206,9 +223,12 @@ const targetPools = ref<StockPoolSummary[]>([])
 const selectedStrategyType = ref('')
 const selectedTargetPoolId = ref('')
 const chartRef = ref<InstanceType<typeof StockChart> | null>(null)
+const repairTask = ref<StockRepairTaskStatus | null>(null)
+let repairTaskTimer: number | null = null
 
 const currentPoolId = computed(() => String(route.params.poolId || ''))
 const currentTsCode = computed(() => String(route.params.tsCode || '').toUpperCase())
+const isFocusMode = ref(false)
 const chartDaily = computed<StockDaily[]>(() => {
   return (context.value?.daily || []).map((item) => ({
     ts_code: item.ts_code,
@@ -259,6 +279,61 @@ function getSourceModuleLabel(sourceModule?: string): string {
   }
   if (!sourceModule) return '-'
   return mapping[sourceModule] || sourceModule
+}
+
+function getRepairStatusLabel(status?: string): string {
+  const mapping: Record<string, string> = {
+    queued: '排队中',
+    running: '进行中',
+    completed: '已完成',
+    failed: '失败',
+  }
+  return mapping[status || ''] || status || '未知'
+}
+
+function stopRepairTaskPolling(): void {
+  if (repairTaskTimer != null) {
+    window.clearTimeout(repairTaskTimer)
+    repairTaskTimer = null
+  }
+}
+
+async function pollRepairTask(taskId: string): Promise<void> {
+  try {
+    const status = await stockApi.getStockRepairTask(taskId)
+    repairTask.value = status
+    if (status.status === 'completed') {
+      ElMessage.success(`${context.value?.stock.name || context.value?.stock.ts_code} 补数完成`)
+      await loadContext()
+      stopRepairTaskPolling()
+      return
+    }
+    if (status.status === 'failed') {
+      ElMessage.error(status.error_message || '单股补数失败')
+      stopRepairTaskPolling()
+      return
+    }
+    stopRepairTaskPolling()
+    repairTaskTimer = window.setTimeout(() => {
+      void pollRepairTask(taskId)
+    }, 2000)
+  } catch (error) {
+    stopRepairTaskPolling()
+    ElMessage.error('查询单股补数状态失败')
+  }
+}
+
+async function startRepairTask(): Promise<void> {
+  if (!context.value) return
+  repairLoading.value = true
+  try {
+    const response = await stockApi.createStockRepairTask(context.value.stock.ts_code)
+    ElMessage.success(response.message || '已创建单股补数任务')
+    stopRepairTaskPolling()
+    await pollRepairTask(response.task_id)
+  } finally {
+    repairLoading.value = false
+  }
 }
 
 async function loadContext(): Promise<void> {
@@ -324,6 +399,12 @@ function jumpToNext(): void {
 
 function backToPool(): void {
   router.push({ name: 'StockPools' })
+}
+
+function toggleFocusMode(): void {
+  isFocusMode.value = !isFocusMode.value
+  window.localStorage.setItem('stockagent.focus_mode', isFocusMode.value ? '1' : '0')
+  window.dispatchEvent(new Event('stockagent-focus-mode-change'))
 }
 
 async function addCurrentToWatchlist(): Promise<void> {
@@ -495,6 +576,7 @@ watch(
 )
 
 onMounted(() => {
+  isFocusMode.value = typeof window !== 'undefined' && window.localStorage.getItem('stockagent.focus_mode') === '1'
   window.addEventListener('keydown', handleKeydown)
   loadContext()
   ensureStrategyTypesLoaded()
@@ -503,12 +585,13 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
+  stopRepairTaskPolling()
 })
 </script>
 
 <style scoped lang="scss">
 .stock-pool-session {
-  padding: 1.5rem;
+  padding: 1rem 1.25rem 1.25rem;
   min-width: 0;
 }
 
@@ -532,8 +615,8 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
-  gap: 16px;
-  padding: 20px 22px;
+  gap: 10px 16px;
+  padding: 14px 18px;
 }
 
 .eyebrow {
@@ -553,25 +636,25 @@ onBeforeUnmount(() => {
   color: var(--el-text-color-secondary);
 }
 
-.subtitle-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
 .header-actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
 .header-right {
-  display: grid;
-  gap: 8px;
-  justify-items: end;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.header-footer {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .shortcut-inline-note {
@@ -579,12 +662,13 @@ onBeforeUnmount(() => {
   color: var(--el-text-color-secondary);
   line-height: 1.7;
   text-align: right;
+  align-self: flex-end;
 }
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.9fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.85fr);
+  gap: 12px;
   flex: 1;
   min-width: 0;
   align-items: stretch;
@@ -601,17 +685,17 @@ onBeforeUnmount(() => {
 
 .chart-card,
 .action-card {
-  padding: 18px 20px;
+  padding: 14px 16px;
   min-width: 0;
   overflow: hidden;
 }
 
 .chart-card {
   flex: 1;
-  min-height: 760px;
+  min-height: 700px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .chart-meta {
@@ -638,7 +722,7 @@ onBeforeUnmount(() => {
 }
 
 .stock-chip {
-  padding: 6px 10px;
+  padding: 5px 9px;
   border-radius: 999px;
   background: rgba(15, 23, 42, 0.05);
   color: var(--el-text-color-secondary);
@@ -647,7 +731,7 @@ onBeforeUnmount(() => {
 
 .chart-wrap {
   flex: 1;
-  min-height: 640px;
+  min-height: 600px;
   min-width: 0;
   overflow: hidden;
 }
@@ -655,21 +739,21 @@ onBeforeUnmount(() => {
 .action-card {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
   flex: 1;
-  min-height: 760px;
+  min-height: 700px;
 }
 
 .info-grid {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .info-item {
   display: grid;
-  gap: 6px;
-  padding: 12px 14px;
+  gap: 4px;
+  padding: 10px 12px;
   border-radius: 14px;
   background: rgba(15, 23, 42, 0.04);
 }
@@ -681,7 +765,7 @@ onBeforeUnmount(() => {
 
 .block {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .block label {
@@ -692,8 +776,37 @@ onBeforeUnmount(() => {
 
 .block-actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
+}
+
+.task-inline-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.task-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+
+.task-inline-status.completed .task-status-pill {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+}
+
+.task-inline-status.failed .task-status-pill {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
 }
 
 .full-width {
@@ -702,8 +815,8 @@ onBeforeUnmount(() => {
 
 .source-box {
   display: grid;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: 6px;
+  padding: 10px 12px;
   border-radius: 14px;
   background: rgba(15, 23, 42, 0.04);
   min-width: 0;
@@ -769,8 +882,11 @@ kbd {
 
   .header-right,
   .shortcut-inline-note {
-    justify-items: start;
     text-align: left;
+  }
+
+  .header-footer {
+    align-items: flex-start;
   }
 
   .info-grid {
