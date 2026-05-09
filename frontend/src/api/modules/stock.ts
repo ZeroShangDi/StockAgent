@@ -5,6 +5,27 @@
 import { api } from '../client'
 import type { StockBasic, StockDaily, StockQuote, MarketOverview } from '../types'
 
+export interface StockRepairTaskStartResponse {
+  task_id: string
+  status: string
+  message: string
+}
+
+export interface StockRepairTaskStatus {
+  task_id: string
+  task_type: string
+  ts_code: string
+  status: string
+  progress: number
+  current_step: string
+  message?: string
+  created_at: string
+  started_at?: string | null
+  completed_at?: string | null
+  result?: Record<string, any> | null
+  error_message?: string | null
+}
+
 export const stockApi = {
   /** 搜索股票 */
   searchStocks(keyword: string, limit = 20): Promise<StockBasic[]> {
@@ -19,6 +40,16 @@ export const stockApi = {
   /** 获取日线数据 */
   getStockDaily(tsCode: string, params?: { start_date?: string; end_date?: string; limit?: number }): Promise<StockDaily[]> {
     return api.get(`/stocks/${tsCode}/daily`, { params })
+  },
+
+  /** 发起单股数据补数任务 */
+  createStockRepairTask(tsCode: string): Promise<StockRepairTaskStartResponse> {
+    return api.post(`/stocks/${tsCode}/repair-sync`)
+  },
+
+  /** 查询单股数据补数任务状态 */
+  getStockRepairTask(taskId: string): Promise<StockRepairTaskStatus> {
+    return api.get(`/stocks/repair-tasks/${taskId}`)
   },
   
   /** 获取实时行情 */

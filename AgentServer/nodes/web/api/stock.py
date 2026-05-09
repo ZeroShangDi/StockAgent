@@ -2,15 +2,24 @@
 股票 API
 """
 
-from typing import Optional, List
+from __future__ import annotations
 
-from fastapi import APIRouter, Query, HTTPException
-from pydantic import BaseModel
+import asyncio
+import uuid
+from datetime import datetime, UTC
+from typing import Optional, List, Dict, Any
 
-from core.managers import mongo_manager
+from fastapi import APIRouter, Query, HTTPException, Depends
+from pydantic import BaseModel, Field
+
+from core.managers import mongo_manager, data_source_manager
+from nodes.data_sync.collectors.stock.basic import _add_financial_metrics
+from nodes.data_sync.collectors.stock.daily_basic import _clean_daily_basic_record
+from .auth import get_current_user_id
 
 
 router = APIRouter()
+_stock_repair_runtime_tasks: set[asyncio.Task] = set()
 
 
 # ==================== 模型 ====================
@@ -59,6 +68,230 @@ class StockQuote(BaseModel):
 class RealtimeQuoteRequest(BaseModel):
     """实时行情请求"""
     ts_codes: List[str]
+
+
+class StockRepairTaskStartResponse(BaseModel):
+    """单股补数任务启动响应"""
+    task_id: str
+    status: str
+    message: str
+
+
+class StockRepairTaskStatus(BaseModel):
+    """单股补数任务状态"""
+    task_id: str
+    task_type: str
+    ts_code: str
+    status: str
+    progress: int = Field(default=0, ge=0, le=100)
+    current_step: str = ""
+    message: Optional[str] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    result: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+
+
+def _normalize_ts_code(code: str) -> str:
+    normalized = str(code or "").strip().upper()
+    if "." in normalized:
+        return normalized
+    if normalized.startswith("6"):
+        return f"{normalized}.SH"
+    if normalized.startswith(("0", "3")):
+        return f"{normalized}.SZ"
+    return normalized
+
+
+async def _ensure_data_source_manager_ready() -> None:
+    if not getattr(data_source_manager, "_initialized", False):
+        await data_source_manager.initialize()
+
+
+async def _update_stock_repair_task(task_id: str, **fields: Any) -> None:
+    await mongo_manager.update_one("tasks", {"task_id": task_id}, {"$set": fields})
+
+
+async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> None:
+    started_at = datetime.now(UTC)
+    warnings: List[str] = []
+
+    async def step(progress: int, current_step: str, message: Optional[str] = None) -> None:
+        payload: Dict[str, Any] = {
+            "status": "running",
+            "progress": progress,
+            "current_step": current_step,
+            "started_at": started_at,
+        }
+        if message:
+            payload["message"] = message
+        await _update_stock_repair_task(task_id, **payload)
+
+    try:
+        await step(5, "初始化数据源", "正在准备单股补数任务")
+        await _ensure_data_source_manager_ready()
+
+        normalized_ts_code = _normalize_ts_code(ts_code)
+        existing_basic = await mongo_manager.find_one("stock_basic", {"ts_code": normalized_ts_code})
+        existing_daily = await mongo_manager.find_many(
+            "stock_daily",
+            {"ts_code": normalized_ts_code},
+            projection={"trade_date": 1, "_id": 0},
+            sort=[("trade_date", 1)],
+        )
+        existing_basic_count = 1 if existing_basic else 0
+        existing_daily_count = len(existing_daily)
+        existing_daily_basic_count = await mongo_manager.count("daily_basic", {"ts_code": normalized_ts_code})
+
+        await step(15, "同步基础信息", "正在获取股票基础信息")
+        stock_basic_records, stock_basic_source = await data_source_manager.get_stock_basic(ts_code=normalized_ts_code)
+        stock_basic_record = next(
+            (item for item in (stock_basic_records or []) if str(item.get("ts_code") or "").upper() == normalized_ts_code),
+            None,
+        ) or existing_basic
+        if not stock_basic_record:
+            raise ValueError(f"未找到 {normalized_ts_code} 的基础信息")
+
+        latest_trade_date, latest_trade_source = await data_source_manager.get_latest_trade_date()
+        list_date = str(stock_basic_record.get("list_date") or "").strip()
+        if not list_date:
+            list_date = existing_daily[0]["trade_date"] if existing_daily else "19900101"
+            warnings.append("基础信息缺少上市日期，已使用本地最早日线或 19900101 作为补数起点")
+        end_date = str(latest_trade_date or datetime.now().strftime("%Y%m%d"))
+
+        daily_basic_latest_record = None
+        daily_basic_source = None
+        if latest_trade_date:
+            latest_basic_records, daily_basic_source = await data_source_manager.get_daily_basic(
+                ts_code=normalized_ts_code,
+                trade_date=latest_trade_date,
+            )
+            if latest_basic_records:
+                daily_basic_latest_record = latest_basic_records[0]
+
+        stock_basic_doc = dict(stock_basic_record)
+        if daily_basic_latest_record:
+            _add_financial_metrics(stock_basic_doc, daily_basic_latest_record)
+        stock_basic_doc["ts_code"] = normalized_ts_code
+        await mongo_manager.bulk_upsert("stock_basic", [stock_basic_doc], key_fields=["ts_code"])
+
+        await _update_stock_repair_task(
+            task_id,
+            stock_names=[{"ts_code": normalized_ts_code, "name": stock_basic_doc.get("name", normalized_ts_code)}],
+            ts_codes=[normalized_ts_code],
+        )
+
+        await step(45, "同步日线数据", f"正在补充 {list_date} 到 {end_date} 的日线数据")
+        daily_records, daily_source = await data_source_manager.get_daily(
+            ts_code=normalized_ts_code,
+            start_date=list_date,
+            end_date=end_date,
+        )
+        if not daily_records:
+            raise ValueError(f"未能获取 {normalized_ts_code} 的日线数据")
+
+        for record in daily_records:
+            record["ts_code"] = normalized_ts_code
+        daily_upsert = await mongo_manager.bulk_upsert(
+            "stock_daily",
+            daily_records,
+            key_fields=["ts_code", "trade_date"],
+        )
+
+        await step(80, "同步每日指标", "正在补充单股 daily_basic 数据")
+        daily_basic_records, daily_basic_source_range = await data_source_manager.get_daily_basic(
+            ts_code=normalized_ts_code,
+            start_date=list_date,
+            end_date=end_date,
+        )
+        cleaned_daily_basic_records: List[Dict[str, Any]] = []
+        if daily_basic_records:
+            for record in daily_basic_records:
+                cleaned = _clean_daily_basic_record(record)
+                cleaned["ts_code"] = normalized_ts_code
+                if cleaned.get("trade_date"):
+                    cleaned_daily_basic_records.append(cleaned)
+        else:
+            warnings.append("未拉取到单股 daily_basic，已完成基础信息与日线补数")
+
+        daily_basic_upsert = {"matched": 0, "modified": 0, "upserted": 0, "total": 0}
+        if cleaned_daily_basic_records:
+            daily_basic_upsert = await mongo_manager.bulk_upsert(
+                "daily_basic",
+                cleaned_daily_basic_records,
+                key_fields=["ts_code", "trade_date"],
+            )
+
+        refreshed_daily = await mongo_manager.find_many(
+            "stock_daily",
+            {"ts_code": normalized_ts_code},
+            projection={"trade_date": 1, "_id": 0},
+            sort=[("trade_date", 1)],
+        )
+        refreshed_daily_basic_count = await mongo_manager.count("daily_basic", {"ts_code": normalized_ts_code})
+
+        result = {
+            "ts_code": normalized_ts_code,
+            "date_range": {"start_date": list_date, "end_date": end_date},
+            "sources": {
+                "stock_basic": stock_basic_source or "unknown",
+                "latest_trade_date": latest_trade_source or "unknown",
+                "stock_daily": daily_source or "unknown",
+                "daily_basic": daily_basic_source_range or daily_basic_source or "unknown",
+            },
+            "counts": {
+                "before": {
+                    "stock_basic": existing_basic_count,
+                    "stock_daily": existing_daily_count,
+                    "daily_basic": existing_daily_basic_count,
+                },
+                "after": {
+                    "stock_basic": 1,
+                    "stock_daily": len(refreshed_daily),
+                    "daily_basic": refreshed_daily_basic_count,
+                },
+                "upserted": {
+                    "stock_daily": daily_upsert["upserted"],
+                    "daily_basic": daily_basic_upsert["upserted"],
+                },
+                "modified": {
+                    "stock_daily": daily_upsert["modified"],
+                    "daily_basic": daily_basic_upsert["modified"],
+                },
+            },
+            "coverage": {
+                "stock_daily_start": refreshed_daily[0]["trade_date"] if refreshed_daily else None,
+                "stock_daily_end": refreshed_daily[-1]["trade_date"] if refreshed_daily else None,
+            },
+            "warnings": warnings,
+        }
+
+        await _update_stock_repair_task(
+            task_id,
+            status="completed",
+            progress=100,
+            current_step="完成",
+            message="单股补数完成",
+            completed_at=datetime.now(UTC),
+            execution_time_ms=(datetime.now(UTC) - started_at).total_seconds() * 1000,
+            result=result,
+        )
+    except Exception as exc:
+        await _update_stock_repair_task(
+            task_id,
+            status="failed",
+            progress=100,
+            current_step="失败",
+            message="单股补数失败",
+            completed_at=datetime.now(UTC),
+            execution_time_ms=(datetime.now(UTC) - started_at).total_seconds() * 1000,
+            error_message=str(exc),
+        )
+    finally:
+        current = asyncio.current_task()
+        if current in _stock_repair_runtime_tasks:
+            _stock_repair_runtime_tasks.discard(current)
 
 
 # ==================== API 端点 ====================
@@ -118,6 +351,98 @@ async def get_stock_basic(ts_code: str):
         industry=stock.get("industry"),
         market=stock.get("market"),
         list_date=stock.get("list_date"),
+    )
+
+
+@router.post("/{ts_code}/repair-sync", response_model=StockRepairTaskStartResponse)
+async def create_stock_repair_task(
+    ts_code: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """发起单股数据补充/更新任务"""
+    normalized_ts_code = _normalize_ts_code(ts_code)
+
+    existing_task = await mongo_manager.find_one(
+        "tasks",
+        {
+            "user_id": user_id,
+            "task_type": "stock_data_repair",
+            "status": {"$in": ["pending", "queued", "running"]},
+            "ts_codes": normalized_ts_code,
+        },
+        sort=[("created_at", -1)],
+    )
+    if existing_task:
+        return StockRepairTaskStartResponse(
+            task_id=existing_task["task_id"],
+            status=existing_task["status"],
+            message=f"{normalized_ts_code} 已有进行中的补数任务",
+        )
+
+    task_id = uuid.uuid4().hex
+    now = datetime.now(UTC)
+    await mongo_manager.insert_one(
+        "tasks",
+        {
+            "task_id": task_id,
+            "trace_id": uuid.uuid4().hex,
+            "task_type": "stock_data_repair",
+            "status": "queued",
+            "progress": 0,
+            "current_step": "排队中",
+            "message": "单股补数任务已创建",
+            "ts_codes": [normalized_ts_code],
+            "stock_names": [{"ts_code": normalized_ts_code, "name": normalized_ts_code}],
+            "query": None,
+            "params": {"mode": "full_refresh"},
+            "user_id": user_id,
+            "node_id": "web",
+            "started_at": None,
+            "completed_at": None,
+            "result": None,
+            "error_message": None,
+            "execution_time_ms": 0,
+            "created_at": now,
+        },
+    )
+
+    task = asyncio.create_task(_run_stock_repair_task(task_id, user_id, normalized_ts_code))
+    _stock_repair_runtime_tasks.add(task)
+
+    return StockRepairTaskStartResponse(
+        task_id=task_id,
+        status="queued",
+        message=f"已开始为 {normalized_ts_code} 异步补充本地数据",
+    )
+
+
+@router.get("/repair-tasks/{task_id}", response_model=StockRepairTaskStatus)
+async def get_stock_repair_task_status(
+    task_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """获取单股补数任务状态"""
+    task = await mongo_manager.find_one(
+        "tasks",
+        {"task_id": task_id, "user_id": user_id, "task_type": "stock_data_repair"},
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="补数任务不存在")
+
+    ts_codes = task.get("ts_codes", [])
+    return StockRepairTaskStatus(
+        task_id=task["task_id"],
+        task_type=task.get("task_type", "stock_data_repair"),
+        ts_code=(ts_codes[0] if ts_codes else ""),
+        status=task.get("status", "queued"),
+        progress=int(task.get("progress", 0) or 0),
+        current_step=task.get("current_step", ""),
+        message=task.get("message"),
+        created_at=task["created_at"],
+        started_at=task.get("started_at"),
+        completed_at=task.get("completed_at"),
+        result=task.get("result"),
+        error_message=task.get("error_message"),
     )
 
 
