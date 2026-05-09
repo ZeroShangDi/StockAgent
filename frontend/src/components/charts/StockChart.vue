@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -44,15 +44,27 @@ const props = defineProps<{
   initialZoomStart?: number
   initialZoomEnd?: number
   markers?: StockChartMarker[]
+  resetZoomOnTsCodeChange?: boolean
 }>()
 
 const themeStore = useThemeStore()
+const chartRef = ref<InstanceType<typeof VChart> | null>(null)
 const zoomRange = ref<{ start: number; end: number } | null>(null)
+const axisPointerTradeDate = ref<string | null>(null)
+
+const sortedData = computed(() => {
+  return [...(props.data || [])].sort((a, b) => a.trade_date.localeCompare(b.trade_date))
+})
+
+const tradeDates = computed(() => sortedData.value.map((item) => item.trade_date))
 
 watch(
   () => props.tsCode,
   () => {
-    zoomRange.value = null
+    axisPointerTradeDate.value = null
+    if (props.resetZoomOnTsCodeChange !== false) {
+      zoomRange.value = null
+    }
   }
 )
 
@@ -69,6 +81,129 @@ function handleDataZoom(event: { start?: number; end?: number; batch?: Array<{ s
     }
   }
 }
+
+function handleAxisPointer(event: { axesInfo?: Array<{ value?: string | number }> }): void {
+  const axisValue = event?.axesInfo?.[0]?.value
+  axisPointerTradeDate.value = axisValue == null ? null : String(axisValue)
+}
+
+function handleGlobalOut(): void {
+  axisPointerTradeDate.value = null
+}
+
+function getChartInstance(): any {
+  return (chartRef.value as any)?.chart
+}
+
+function bindChartEvents(): void {
+  const chart = getChartInstance()
+  if (!chart) return
+
+  chart.off('updateAxisPointer', handleAxisPointer)
+  chart.off('globalout', handleGlobalOut)
+  chart.on('updateAxisPointer', handleAxisPointer)
+  chart.on('globalout', handleGlobalOut)
+}
+
+onMounted(async () => {
+  await nextTick()
+  bindChartEvents()
+})
+
+watch(
+  () => props.data,
+  async () => {
+    await nextTick()
+    bindChartEvents()
+  }
+)
+
+onBeforeUnmount(() => {
+  const chart = getChartInstance()
+  if (!chart) return
+  chart.off('updateAxisPointer', handleAxisPointer)
+  chart.off('globalout', handleGlobalOut)
+})
+
+function getDefaultZoom(): { start: number; end: number } {
+  return {
+    start: props.initialZoomStart ?? 70,
+    end: props.initialZoomEnd ?? 100,
+  }
+}
+
+function normalizeZoom(range: { start: number; end: number }): { start: number; end: number } {
+  let start = Math.max(0, Math.min(100, Number(range.start)))
+  let end = Math.max(0, Math.min(100, Number(range.end)))
+
+  if (end <= start) {
+    end = Math.min(100, start + 5)
+    start = Math.max(0, end - 5)
+  }
+
+  return { start, end }
+}
+
+function setZoom(range: { start: number; end: number }): void {
+  zoomRange.value = normalizeZoom(range)
+}
+
+function zoomByFactor(factor: number): void {
+  const dates = tradeDates.value
+  if (!props.preserveZoom || dates.length === 0) return
+
+  const base = zoomRange.value ?? getDefaultZoom()
+  const currentSpan = Math.max(5, Math.min(100, base.end - base.start))
+  const targetSpan = Math.max(5, Math.min(100, Number((currentSpan * factor).toFixed(2))))
+
+  if (!axisPointerTradeDate.value) {
+    setZoom({
+      start: Math.max(0, 100 - targetSpan),
+      end: 100,
+    })
+    return
+  }
+
+  const focusIndex = dates.findIndex((item) => item === axisPointerTradeDate.value)
+  if (focusIndex === -1 || dates.length === 1) {
+    setZoom({
+      start: Math.max(0, 100 - targetSpan),
+      end: 100,
+    })
+    return
+  }
+
+  const anchorPct = (focusIndex / (dates.length - 1)) * 100
+  let start = anchorPct - targetSpan / 2
+  let end = anchorPct + targetSpan / 2
+
+  if (start < 0) {
+    end = Math.min(100, end - start)
+    start = 0
+  }
+  if (end > 100) {
+    start = Math.max(0, start - (end - 100))
+    end = 100
+  }
+
+  setZoom({ start, end })
+}
+
+function zoomIn(): void {
+  zoomByFactor(0.8)
+}
+
+function zoomOut(): void {
+  zoomByFactor(1.25)
+}
+
+defineExpose({
+  zoomIn,
+  zoomOut,
+  resetZoom: () => {
+    zoomRange.value = null
+  },
+})
 
 // 主题相关颜色
 const themeColors = computed(() => {
@@ -106,17 +241,15 @@ const option = computed(() => {
   
   const colors = themeColors.value
   
-  // 统一按交易日升序排序，兼容不同接口的返回顺序
-  const sortedData = [...props.data].sort((a, b) => a.trade_date.localeCompare(b.trade_date))
-  
   // 日期
-  const dates = sortedData.map((d) => d.trade_date)
+  const dates = tradeDates.value
+  const dailyData = sortedData.value
   
   // K线数据 [开, 收, 低, 高]
-  const klineData = sortedData.map((d) => [d.open, d.close, d.low, d.high])
+  const klineData = dailyData.map((d) => [d.open, d.close, d.low, d.high])
   
   // 成交量
-  const volumes = sortedData.map((d) => ({
+  const volumes = dailyData.map((d) => ({
     value: d.vol,
     itemStyle: {
       color: d.close >= d.open ? colors.upColor : colors.downColor,
@@ -124,9 +257,9 @@ const option = computed(() => {
   }))
   
   // MA 计算
-  const ma5 = calculateMA(sortedData, 5)
-  const ma10 = calculateMA(sortedData, 10)
-  const ma20 = calculateMA(sortedData, 20)
+  const ma5 = calculateMA(dailyData, 5)
+  const ma10 = calculateMA(dailyData, 10)
+  const ma20 = calculateMA(dailyData, 20)
   const markers = (props.markers || [])
     .filter((item) => item.trade_date && typeof item.price === 'number')
     .map((item) => ({
@@ -162,10 +295,7 @@ const option = computed(() => {
         scale: 1.4,
       },
     }))
-  const defaultZoom = {
-    start: props.initialZoomStart ?? 70,
-    end: props.initialZoomEnd ?? 100,
-  }
+  const defaultZoom = getDefaultZoom()
   const zoom = props.preserveZoom && zoomRange.value
     ? zoomRange.value
     : defaultZoom
@@ -432,7 +562,13 @@ function calculateMA(data: StockDaily[], period: number): (number | '-')[] {
 
 <template>
   <div class="stock-chart">
-    <VChart v-if="data.length > 0" :option="option" autoresize @datazoom="handleDataZoom" />
+    <VChart
+      v-if="data.length > 0"
+      ref="chartRef"
+      :option="option"
+      autoresize
+      @datazoom="handleDataZoom"
+    />
     <el-empty v-else description="暂无K线数据" />
   </div>
 </template>
@@ -442,5 +578,12 @@ function calculateMA(data: StockDaily[], period: number): (number | '-')[] {
   width: 100%;
   height: 100%;
   min-height: 400px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.stock-chart :deep(.echarts),
+.stock-chart :deep(canvas) {
+  max-width: 100%;
 }
 </style>

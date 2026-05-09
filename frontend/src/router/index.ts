@@ -134,6 +134,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '股池管理' },
       },
       {
+        path: 'stock-pools/:poolId/review/:tsCode',
+        name: 'StockPoolSession',
+        component: () => import('@/views/stock/StockPoolSessionView.vue'),
+        meta: { title: '股池沉浸复盘' },
+      },
+      {
         path: 'positions',
         name: 'PositionHoldings',
         component: () => import('@/views/stock/PositionHoldingsView.vue'),

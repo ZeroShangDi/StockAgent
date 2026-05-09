@@ -36,6 +36,7 @@ declare module 'vue' {
     ElTabPane: typeof import('element-plus/es')['ElTabPane']
     ElTabs: typeof import('element-plus/es')['ElTabs']
     ElTag: typeof import('element-plus/es')['ElTag']
+    ElTooltip: typeof import('element-plus/es')['ElTooltip']
     HotNewsBoard: typeof import('./components/dashboard/HotNewsBoard.vue')['default']
     MarketOverviewCard: typeof import('./components/dashboard/MarketOverviewCard.vue')['default']
     QuickActions: typeof import('./components/dashboard/QuickActions.vue')['default']

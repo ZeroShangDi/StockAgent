@@ -35,6 +35,8 @@ export interface StockPoolSummary {
   pool_type: string
   description?: string | null
   stock_count: number
+  avg_pct_chg?: number | null
+  latest_trade_date?: string | null
   updated_at?: string
 }
 
@@ -46,13 +48,57 @@ export interface StockPoolStock {
   source_module?: string
   source_run_id?: string
   source_query?: string
+  source_pool_name?: string
   added_at?: string
+  latest_pct_chg?: number | null
+  latest_price?: number | null
+  latest_trade_date?: string | null
 }
 
 export interface StockPoolDetail extends StockPoolSummary {
   stocks: StockPoolStock[]
   source_module?: string
   created_at?: string
+}
+
+export interface StockPoolReviewContext {
+  pool: StockPoolSummary
+  stock: {
+    ts_code: string
+    code: string
+    name: string
+    status?: string
+    source_module?: string
+    source_query?: string
+    source_pool_name?: string
+    latest_pct_chg?: number | null
+    latest_price?: number | null
+    latest_trade_date?: string | null
+    industry?: string | null
+    market?: string | null
+    list_date?: string | null
+    added_at?: string
+  }
+  daily: Array<{
+    ts_code: string
+    trade_date: string
+    open: number
+    high: number
+    low: number
+    close: number
+    pre_close?: number | null
+    change?: number | null
+    pct_chg?: number | null
+    vol?: number | null
+    amount?: number | null
+  }>
+  related_stocks: Array<StockPoolStock & { is_current?: boolean }>
+  navigation: {
+    position: number
+    total: number
+    previous_ts_code?: string | null
+    next_ts_code?: string | null
+  }
 }
 
 export interface StockPoolListResult {
@@ -70,6 +116,7 @@ export interface AddStocksToPoolRequest {
   source_run_id?: string
   source_query?: string
   source_module?: string
+  source_pool_name?: string
 }
 
 export interface AddStocksToPoolResult {
@@ -95,6 +142,10 @@ export const stockPickerApi = {
 
   getPoolDetail(poolId: string): Promise<StockPoolDetail> {
     return api.get(`/stock-picker/pools/${poolId}`)
+  },
+
+  getPoolReviewContext(poolId: string, tsCode: string): Promise<StockPoolReviewContext> {
+    return api.get(`/stock-picker/pools/${poolId}/review/${tsCode}`)
   },
 
   createPool(data: CreateStockPoolRequest): Promise<StockPoolSummary> {

@@ -615,6 +615,10 @@ class ListenerNode(BaseNode):
                     snapshot=self._current_snapshot,
                     previous_snapshot=self._previous_snapshot,
                 )
+                # 策略评估过程中可能会更新运行时参数（如 last_triggered_date、
+                # highest_price 等）。评估时使用的是复制后的订阅对象，这里
+                # 需要把 params 同步回原始订阅，避免下一轮轮询仍读取旧状态。
+                subscription.params = effective_subscription.params
                 all_alerts.extend(alerts)
                 
             except Exception as e:
@@ -780,6 +784,7 @@ class ListenerNode(BaseNode):
         ]
 
         removed_from: List[str] = []
+        removed_from_names: List[str] = []
         if mode == "move" and source_pool_ids:
             source_pools = await mongo_manager.find_many(
                 "stock_pools",
@@ -794,6 +799,7 @@ class ListenerNode(BaseNode):
                 if len(filtered_stocks) == len(stocks):
                     continue
                 removed_from.append(str(pool.get("pool_id")))
+                removed_from_names.append(str(pool.get("name") or pool.get("pool_id") or ""))
                 await mongo_manager.update_one(
                     "stock_pools",
                     {"pool_id": pool.get("pool_id")},
@@ -820,6 +826,7 @@ class ListenerNode(BaseNode):
             "status": "active",
             "source_module": "listener_transition",
             "source_query": alert.trigger_reason,
+            "source_pool_name": "、".join([name for name in removed_from_names if name]) or None,
             "source_type": "listener_alert",
             "source_strategy": subscription.strategy_type.value,
             "source_event_id": event_id,
@@ -867,6 +874,7 @@ class ListenerNode(BaseNode):
             status=status,
             reason=reason,
             from_pool_ids=removed_from,
+            from_pool_names=removed_from_names,
             to_pool_id=target_pool_id,
         )
 
@@ -913,6 +921,7 @@ class ListenerNode(BaseNode):
         status: str,
         reason: str,
         from_pool_ids: List[str],
+        from_pool_names: List[str],
         to_pool_id: str,
     ) -> None:
         await mongo_manager.insert_one(
@@ -928,6 +937,7 @@ class ListenerNode(BaseNode):
                 "stock_name": alert.stock_name,
                 "action_type": str(rule.get("mode", "move") or "move"),
                 "from_pool_ids": from_pool_ids,
+                "from_pool_names": [str(name) for name in from_pool_names if str(name).strip()],
                 "to_pool_id": to_pool_id,
                 "operator_type": "auto",
                 "status": status,

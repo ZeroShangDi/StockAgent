@@ -5,7 +5,7 @@
         <p class="eyebrow">Stock Pools</p>
         <h1>股池工作台</h1>
         <p class="description">
-          查看一句话选股、自定义观察等来源沉淀下来的本地股池，并快速浏览池内股票与来源线索。
+          按股池类型管理不同来源的观察名单，快速浏览池内涨跌表现，并进入沉浸式复盘与流转操作。
         </p>
       </div>
       <div class="hero-actions">
@@ -18,21 +18,39 @@
       <aside class="pool-list-card">
         <header>
           <h2>我的股池</h2>
-          <span>{{ pools.length }} 个</span>
         </header>
         <div v-if="pools.length === 0" class="empty-state">
           还没有股池，可以先去“一句话选股”里把结果加入某个池。
         </div>
-        <button
-          v-for="pool in pools"
-          :key="pool.pool_id"
-          type="button"
-          :class="['pool-item', { active: activePoolId === pool.pool_id }]"
-          @click="selectPool(pool.pool_id)"
-        >
-          <strong>{{ pool.name }}</strong>
-          <span>{{ pool.pool_type }} · {{ pool.stock_count }} 只</span>
-        </button>
+        <div v-else class="pool-groups">
+          <section
+            v-for="group in groupedPools"
+            :key="group.type"
+            class="pool-group"
+          >
+            <div class="pool-group-header">
+              <strong>{{ group.type }}</strong>
+            </div>
+            <button
+              v-for="pool in group.items"
+              :key="pool.pool_id"
+              type="button"
+              :class="['pool-item', { active: activePoolId === pool.pool_id }]"
+              @click="selectPool(pool.pool_id)"
+            >
+              <div class="pool-item-main">
+                <strong>{{ pool.name }}</strong>
+                <span>{{ pool.latest_trade_date ? formatTradeDate(pool.latest_trade_date) : '待估值' }}</span>
+              </div>
+              <span
+                class="pool-item-pct"
+                :class="getPnlClass(pool.avg_pct_chg)"
+              >
+                {{ formatSignedPct(pool.avg_pct_chg) }}
+              </span>
+            </button>
+          </section>
+        </div>
       </aside>
 
       <section class="pool-detail-card">
@@ -43,8 +61,17 @@
               <h2>{{ activePool.name }}</h2>
               <p class="detail-desc">{{ activePool.description || '暂无备注' }}</p>
             </div>
-            <div class="detail-meta">
+            <div class="detail-side">
               <div class="detail-actions">
+                <el-button
+                  type="primary"
+                  plain
+                  size="small"
+                  :disabled="!activePool.stocks.length"
+                  @click="() => openPoolReview()"
+                >
+                  沉浸复盘
+                </el-button>
                 <el-button
                   type="primary"
                   plain
@@ -72,24 +99,77 @@
                   删除股池
                 </el-button>
               </div>
-              <span>股票数 {{ activePool.stock_count }}</span>
-              <span v-if="selectedPoolStocks.length > 0">已勾选 {{ selectedPoolStocks.length }} 只</span>
-              <span v-if="activePool.updated_at">更新于 {{ formatDateTime(activePool.updated_at) }}</span>
+              <div class="detail-meta-row">
+                <span>股票数 {{ activePool.stock_count }}</span>
+                <span v-if="activePool.avg_pct_chg != null" :class="getPnlClass(activePool.avg_pct_chg)">
+                  平均涨跌 {{ formatSignedPct(activePool.avg_pct_chg) }}
+                </span>
+                <span v-if="selectedPoolStocks.length > 0">已勾选 {{ selectedPoolStocks.length }} 只</span>
+                <span v-if="activePool.latest_trade_date">估值日 {{ formatTradeDate(activePool.latest_trade_date) }}</span>
+                <span v-if="activePool.updated_at">更新于 {{ formatDateTime(activePool.updated_at) }}</span>
+              </div>
             </div>
           </header>
 
-          <el-table :data="activePool.stocks" stripe @selection-change="handleSelectionChange">
-            <el-table-column type="selection" width="52" />
-            <el-table-column prop="code" label="代码" width="120" />
-            <el-table-column prop="ts_code" label="TS 代码" width="150" />
-            <el-table-column prop="name" label="名称" width="140" />
-            <el-table-column prop="status" label="状态" width="100" />
-            <el-table-column prop="source_module" label="来源模块" width="140" />
-            <el-table-column prop="source_query" label="来源条件" min-width="260" show-overflow-tooltip />
-            <el-table-column prop="added_at" label="加入时间" width="180">
-              <template #default="{ row }">{{ row.added_at ? formatDateTime(row.added_at) : '-' }}</template>
-            </el-table-column>
-          </el-table>
+          <div class="detail-table-wrap">
+            <el-table :data="paginatedPoolStocks" stripe height="100%" @selection-change="handleSelectionChange">
+              <el-table-column type="selection" width="52" />
+              <el-table-column prop="code" label="代码" width="120" />
+              <el-table-column prop="ts_code" label="TS 代码" width="150" />
+              <el-table-column prop="name" label="名称" min-width="140" />
+              <el-table-column label="最新涨跌" width="110">
+                <template #default="{ row }">
+                  <span :class="getPnlClass(row.latest_pct_chg)">{{ formatSignedPct(row.latest_pct_chg) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="status" label="状态" width="100" />
+              <el-table-column label="来源模块" width="140">
+                <template #default="{ row }">
+                  {{ getSourceModuleLabel(row.source_module) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="来源股池" width="160">
+                <template #default="{ row }">
+                  <span>{{ row.source_pool_name || '-' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="来源条件" min-width="260">
+                <template #default="{ row }">
+                  <el-tooltip
+                    v-if="row.source_query"
+                    effect="light"
+                    placement="top-start"
+                    :show-after="100"
+                  >
+                    <template #content>
+                      <div class="source-query-tooltip">{{ row.source_query }}</div>
+                    </template>
+                    <div class="source-query-text">{{ row.source_query }}</div>
+                  </el-tooltip>
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="added_at" label="加入时间" width="180">
+                <template #default="{ row }">{{ row.added_at ? formatDateTime(row.added_at) : '-' }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="170" fixed="right">
+                <template #default="{ row }">
+                  <div class="row-actions">
+                    <el-button link type="primary" @click="openPoolReview(row.ts_code)">沉浸复盘</el-button>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <div v-if="activePool.stock_count > pageSize" class="detail-pagination">
+            <el-pagination
+              v-model:current-page="currentPage"
+              :page-size="pageSize"
+              layout="prev, pager, next, jumper, total"
+              :total="activePool.stock_count"
+              small
+            />
+          </div>
         </template>
         <template v-else>
           <el-empty description="请选择一个股池查看详情" />
@@ -207,14 +287,16 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { stockPickerApi, subscriptionApi } from '@/api'
 import { STOCK_POOL_TYPE_OPTIONS } from '@/api/modules/stock-picker'
-import type { StockPoolDetail, StockPoolSummary } from '@/api/modules/stock-picker'
-import type { StockPoolStock } from '@/api/modules/stock-picker'
+import type { StockPoolDetail, StockPoolSummary, StockPoolStock } from '@/api/modules/stock-picker'
 import type { StrategyTypeInfo } from '@/api/types'
+
+const router = useRouter()
 
 const loading = ref(false)
 const pools = ref<StockPoolSummary[]>([])
@@ -228,16 +310,76 @@ const batchAdding = ref(false)
 const selectedStrategyType = ref('')
 const createDialogVisible = ref(false)
 const creatingPool = ref(false)
+const currentPage = ref(1)
+const pageSize = 20
 const createForm = reactive({
   name: '',
   pool_type: STOCK_POOL_TYPE_OPTIONS[0],
   description: '',
 })
 
+const SOURCE_MODULE_LABELS: Record<string, string> = {
+  one_line_picker: '一句话选股',
+  listener_transition: '监听流转',
+  manual: '手动添加',
+  market_weather: '市场晴雨表',
+}
+
+const groupedPools = computed(() => {
+  const groups = new Map<string, StockPoolSummary[]>()
+  for (const type of STOCK_POOL_TYPE_OPTIONS) {
+    groups.set(type, [])
+  }
+  const extra: StockPoolSummary[] = []
+  for (const pool of pools.value) {
+    if (groups.has(pool.pool_type)) {
+      groups.get(pool.pool_type)!.push(pool)
+    } else {
+      extra.push(pool)
+    }
+  }
+  const result = Array.from(groups.entries())
+    .map(([type, items]) => ({ type, items }))
+    .filter((group) => group.items.length > 0)
+  if (extra.length > 0) {
+    result.push({ type: '其他', items: extra })
+  }
+  return result
+})
+
+const paginatedPoolStocks = computed(() => {
+  const stocks = activePool.value?.stocks || []
+  const start = (currentPage.value - 1) * pageSize
+  return stocks.slice(start, start + pageSize)
+})
+
 function formatDateTime(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatTradeDate(value?: string | null): string {
+  if (!value) return '-'
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+}
+
+function formatSignedPct(value?: number | null): string {
+  if (value == null || Number.isNaN(Number(value))) return '-'
+  const numeric = Number(value)
+  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(2)}%`
+}
+
+function getPnlClass(value?: number | null): string {
+  const numeric = Number(value || 0)
+  if (numeric > 0) return 'is-profit'
+  if (numeric < 0) return 'is-loss'
+  return ''
+}
+
+function getSourceModuleLabel(sourceModule?: string): string {
+  if (!sourceModule) return '-'
+  return SOURCE_MODULE_LABELS[sourceModule] || sourceModule
 }
 
 async function loadPools(): Promise<void> {
@@ -258,6 +400,7 @@ async function loadPools(): Promise<void> {
 
 async function selectPool(poolId: string): Promise<void> {
   activePoolId.value = poolId
+  currentPage.value = 1
   activePool.value = await stockPickerApi.getPoolDetail(poolId)
   selectedPoolStocks.value = []
 }
@@ -413,7 +556,24 @@ async function handleCreatePool(): Promise<void> {
   }
 }
 
-loadPools()
+function openPoolReview(tsCode?: string): void {
+  if (!activePool.value || activePool.value.stocks.length === 0) {
+    ElMessage.warning('当前股池没有可复盘的股票')
+    return
+  }
+  const targetCode = tsCode || activePool.value.stocks[0].ts_code
+  router.push({
+    name: 'StockPoolSession',
+    params: {
+      poolId: activePool.value.pool_id,
+      tsCode: targetCode,
+    },
+  })
+}
+
+onMounted(() => {
+  loadPools()
+})
 </script>
 
 <style scoped lang="scss">
@@ -473,12 +633,15 @@ h2 {
 
 .body-grid {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 340px 1fr;
   gap: 20px;
 }
 
 .pool-list-card,
 .pool-detail-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   padding: 24px 26px;
 }
 
@@ -490,17 +653,36 @@ h2 {
   margin-bottom: 16px;
 }
 
+.pool-groups {
+  display: grid;
+  gap: 18px;
+}
+
+.pool-group {
+  display: grid;
+  gap: 10px;
+}
+
+.pool-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #475569;
+  font-size: 13px;
+}
+
 .pool-item {
   width: 100%;
-  display: grid;
-  gap: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   text-align: left;
   padding: 14px 16px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.84);
   cursor: pointer;
-  margin-top: 12px;
 }
 
 .pool-item.active {
@@ -508,24 +690,48 @@ h2 {
   background: rgba(236, 253, 245, 0.95);
 }
 
-.pool-item span,
+.pool-item-main {
+  display: grid;
+  gap: 6px;
+}
+
+.pool-item-main span,
 .detail-type,
-.detail-meta {
+.detail-meta-row {
   color: #64748b;
   font-size: 13px;
 }
 
-.detail-meta {
-  display: grid;
-  gap: 6px;
-  text-align: right;
+.pool-item-pct {
+  font-size: 14px;
+  font-weight: 700;
 }
 
-.detail-actions {
+.detail-side {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.detail-actions,
+.detail-meta-row {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.detail-table-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+.detail-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
 }
 
 .dialog-body {
@@ -588,19 +794,53 @@ h2 {
   line-height: 1.7;
 }
 
+.is-profit {
+  color: #dc2626;
+}
+
+.is-loss {
+  color: #059669;
+}
+
+.source-query-text {
+  display: -webkit-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.5;
+  cursor: help;
+}
+
+.source-query-tooltip {
+  max-width: 320px;
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 @media (max-width: 960px) {
   .hero-card,
-  .detail-header,
   .body-grid {
     grid-template-columns: 1fr;
     flex-direction: column;
   }
 
-  .detail-meta {
-    text-align: left;
+  .detail-header {
+    flex-direction: column;
   }
 
-  .detail-actions {
+  .detail-side {
+    justify-items: start;
+  }
+
+  .detail-actions,
+  .detail-meta-row {
     justify-content: flex-start;
   }
 
