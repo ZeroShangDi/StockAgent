@@ -10,6 +10,7 @@
     python main.py --all
     python main.py --all --profile standard
     python main.py --all --nodes web,data_sync,listener
+    python main.py --all --reload
 """
 
 from __future__ import annotations
@@ -35,8 +36,9 @@ VALID_NODES = set().union(*DEV_STACK_PROFILES.values()) | set(OPTIONAL_NODES)
 
 
 class DevStackRunner:
-    def __init__(self, nodes: Iterable[str]):
+    def __init__(self, nodes: Iterable[str], reload_web: bool = False):
         self.nodes = tuple(nodes)
+        self.reload_web = reload_web
         self.repo_root = Path(__file__).resolve().parents[1]
         self._processes: dict[str, subprocess.Popen[str]] = {}
         self._stop_event = threading.Event()
@@ -76,7 +78,21 @@ class DevStackRunner:
         env["NODE_TYPE"] = node
         env.pop("PYTHONEXECUTABLE", None)
 
-        command = [sys.executable, "main.py", "--node-type", node]
+        if node == "web" and self.reload_web:
+            command = [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "nodes.web.app:create_app",
+                "--factory",
+                "--host",
+                env.get("WEB_HOST", "0.0.0.0"),
+                "--port",
+                env.get("WEB_PORT", "8000"),
+                "--reload",
+            ]
+        else:
+            command = [sys.executable, "main.py", "--node-type", node]
         process = subprocess.Popen(
             command,
             cwd=self.repo_root,
@@ -191,8 +207,12 @@ def run_dev_stack(
     profile: str = DEFAULT_PROFILE,
     include_backtest: bool = False,
     include_mcp: bool = False,
+    reload_web: bool = False,
 ) -> int:
-    runner = DevStackRunner(resolve_nodes(nodes, profile, include_backtest, include_mcp))
+    runner = DevStackRunner(
+        resolve_nodes(nodes, profile, include_backtest, include_mcp),
+        reload_web=reload_web,
+    )
     return runner.run()
 
 

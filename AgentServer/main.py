@@ -36,6 +36,7 @@ import asyncio
 import argparse
 import os
 import sys
+import subprocess
 
 from core.settings import settings
 from core.protocols import NodeType
@@ -74,7 +75,29 @@ def _create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="配合 --all 使用，同时启动 mcp 节点",
     )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="开发模式下为 web 节点开启热更新；单独启动 web 或配合 --all 时生效",
+    )
     return parser
+
+
+def _run_web_reload() -> int:
+    command = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "nodes.web.app:create_app",
+        "--factory",
+        "--host",
+        settings.web.host,
+        "--port",
+        str(settings.web.port),
+        "--reload",
+    ]
+    completed = subprocess.run(command, check=False)
+    return completed.returncode
 
 
 def main():
@@ -93,6 +116,7 @@ def main():
             profile=args.profile,
             include_backtest=args.include_backtest,
             include_mcp=args.include_mcp,
+            reload_web=(args.reload or settings.web.reload),
         )
 
     # 从环境变量或配置获取节点类型
@@ -106,6 +130,7 @@ def main():
             profile=args.profile,
             include_backtest=args.include_backtest,
             include_mcp=args.include_mcp,
+            reload_web=(args.reload or settings.web.reload),
         )
 
     try:
@@ -116,6 +141,10 @@ def main():
         sys.exit(1)
     
     print(f"Starting {node_type.value} node...")
+
+    if node_type == NodeType.WEB and (args.reload or settings.web.reload):
+        print("Starting web node in reload mode...")
+        sys.exit(_run_web_reload())
     
     # 根据节点类型创建并启动节点
     if node_type == NodeType.WEB:
