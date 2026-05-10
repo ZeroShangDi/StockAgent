@@ -137,6 +137,12 @@ class MarketWeatherService:
             "说明": note,
         }
 
+    def rebuild_signal_for_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        indicator = record.get("indicator")
+        if isinstance(indicator, dict) and indicator:
+            return self._build_signal(indicator)
+        return record.get("signal") or {}
+
     def _build_record(self, indicator: Dict[str, Any], raw_payload: Dict[str, Any], source: str = "coze") -> Dict[str, Any]:
         display_date = str(indicator.get("数据截止日期") or "").strip()
         if not display_date:
@@ -199,6 +205,38 @@ class MarketWeatherService:
         )
         history.reverse()
         return history
+
+    async def list_history_range(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 0,
+    ) -> List[Dict[str, Any]]:
+        query: Dict[str, Any] = {}
+        trade_date_query: Dict[str, str] = {}
+        if start_date:
+            trade_date_query["$gte"] = self._to_trade_date(start_date)
+        if end_date:
+            trade_date_query["$lte"] = self._to_trade_date(end_date)
+        if trade_date_query:
+            query["trade_date"] = trade_date_query
+
+        history = await mongo_manager.find_many(
+            self.COLLECTION,
+            query,
+            sort=[("trade_date", 1)],
+            limit=limit,
+        )
+        return history
+
+    async def get_trade_dates_between(self, start_date: str, end_date: str) -> List[str]:
+        if not await data_source_manager.health_check():
+            await data_source_manager.initialize()
+        trade_dates, _ = await data_source_manager.get_trade_calendar(
+            self._to_trade_date(start_date),
+            self._to_trade_date(end_date),
+        )
+        return trade_dates or []
 
     async def get_recent_trade_dates(self, days: int = 30) -> List[str]:
         if not await data_source_manager.health_check():
@@ -265,6 +303,99 @@ class MarketWeatherService:
     async def sync_recent(self, days: int = 30, overwrite: bool = False) -> Dict[str, Any]:
         trade_dates = await self.get_recent_trade_dates(days)
         return await self.sync_trade_dates(trade_dates, overwrite=overwrite)
+
+    async def sync_range(
+        self,
+        start_date: str,
+        end_date: str,
+        overwrite: bool = False,
+        descending: bool = True,
+        sleep_seconds: float = 0.35,
+        stop_on_empty_streak: Optional[int] = 30,
+        request_timeout_seconds: float = 12.0,
+    ) -> Dict[str, Any]:
+        trade_dates = await self.get_trade_dates_between(start_date, end_date)
+        if descending:
+            trade_dates = list(reversed(trade_dates))
+
+        success = 0
+        skipped = 0
+        failed = 0
+        empty = 0
+        empty_streak = 0
+        stopped_early = False
+        stop_reason = ""
+        first_success: Optional[str] = None
+        last_success: Optional[str] = None
+        errors: List[Dict[str, str]] = []
+
+        for trade_date in trade_dates:
+            if not overwrite:
+                existing = await mongo_manager.find_one(
+                    self.COLLECTION,
+                    {"trade_date": trade_date},
+                    projection={"trade_date": 1},
+                )
+                if existing:
+                    skipped += 1
+                    continue
+
+            try:
+                record = await asyncio.wait_for(
+                    self.fetch_one(trade_date),
+                    timeout=request_timeout_seconds,
+                )
+                await self.store_record(record)
+                success += 1
+                empty_streak = 0
+                if not first_success:
+                    first_success = record["trade_date"]
+                last_success = record["trade_date"]
+            except Exception as exc:
+                if isinstance(exc, TimeoutError):
+                    message = f"请求超时（>{request_timeout_seconds:.1f}s）"
+                else:
+                    message = str(exc)
+                errors.append({"trade_date": trade_date, "error": message})
+                if "返回空结果" in message:
+                    empty += 1
+                    empty_streak += 1
+                    if stop_on_empty_streak and empty_streak >= stop_on_empty_streak:
+                        stopped_early = True
+                        stop_reason = f"连续 {empty_streak} 个交易日返回空结果，推测已超出 Coze 历史可用范围"
+                        break
+                else:
+                    failed += 1
+                    empty_streak = 0
+
+            if sleep_seconds > 0:
+                await asyncio.sleep(sleep_seconds)
+
+        return {
+            "requested": len(trade_dates),
+            "success": success,
+            "skipped": skipped,
+            "failed": failed,
+            "empty": empty,
+            "stopped_early": stopped_early,
+            "stop_reason": stop_reason,
+            "first_success": first_success,
+            "last_success": last_success,
+            "errors": errors[:50],
+        }
+
+    async def get_coverage_summary(self) -> Dict[str, Any]:
+        collection = mongo_manager.db[self.COLLECTION]
+        count = await collection.count_documents({})
+        earliest = await mongo_manager.find_one(self.COLLECTION, {}, sort=[("trade_date", 1)])
+        latest = await mongo_manager.find_one(self.COLLECTION, {}, sort=[("trade_date", -1)])
+        return {
+            "count": count,
+            "earliest_trade_date": earliest.get("trade_date") if earliest else None,
+            "latest_trade_date": latest.get("trade_date") if latest else None,
+            "earliest_display_trade_date": earliest.get("display_trade_date") if earliest else None,
+            "latest_display_trade_date": latest.get("display_trade_date") if latest else None,
+        }
 
 
 market_weather_service = MarketWeatherService()
