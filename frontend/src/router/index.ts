@@ -215,6 +215,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/system/SystemStatusView.vue'),
         meta: { title: '能力状态' },
       },
+      {
+        path: 'automation-overview',
+        name: 'AutomationOverview',
+        component: () => import('@/views/system/AutomationOverviewView.vue'),
+        meta: { title: '自动任务总览' },
+      },
     ],
   },
   

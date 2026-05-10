@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.diagnostics import (
+    build_automation_overview,
     build_capability_audit,
     build_capability_overview,
     build_capability_section,
@@ -49,3 +50,9 @@ async def get_coze_plugin_status(
 ):
     """返回 Coze 全量插件探测状态，便于单独重复刷新。"""
     return await build_coze_plugin_status(force_refresh=force_refresh)
+
+
+@router.get("/automations")
+async def get_automation_overview(_user_id: str = Depends(get_current_user_id)):
+    """返回项目内已启用和预留的自动任务/自动流程总览。"""
+    return await build_automation_overview()

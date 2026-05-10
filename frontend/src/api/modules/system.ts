@@ -4,6 +4,7 @@
 
 import { api } from '../client'
 import type {
+  AutomationOverviewResponse,
   SystemCozePluginStatusResponse,
   SystemStatusOverview,
   SystemStatusReport,
@@ -34,6 +35,10 @@ export const systemApi = {
     return api.get('/system/status/coze', {
       params: { force_refresh: forceRefresh },
     })
+  },
+
+  getAutomationOverview(): Promise<AutomationOverviewResponse> {
+    return api.get('/system/automations')
   },
 }
 

@@ -42,6 +42,7 @@ import {
   CollectionTag,
   DataLine,
   ChatDotRound,
+  AlarmClock,
 } from '@element-plus/icons-vue'
 import { useAuth } from '@/hooks'
 import { useUserStore, useTaskStore, useThemeStore } from '@/stores'
@@ -64,6 +65,7 @@ const activeMenu = computed(() => {
   const path = route.path
   if (path.startsWith('/analysis')) return '/analysis'
   if (path.startsWith('/assistant')) return '/assistant'
+  if (path.startsWith('/automation-overview')) return '/automation-overview'
   if (path.startsWith('/stock-picker')) return '/stock-picker'
   if (path.startsWith('/stock-pools')) return '/stock-pools'
   if (path.startsWith('/positions')) return '/positions'
@@ -94,6 +96,7 @@ const menuSections = [
       { path: '/trade-review', icon: Document, title: '交割单复盘' },
       { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
       { path: '/system-status', icon: WarningFilled, title: '能力状态' },
+      { path: '/automation-overview', icon: AlarmClock, title: '自动任务总览' },
     ],
   },
   {

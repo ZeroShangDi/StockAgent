@@ -531,3 +531,34 @@ export interface SystemDataSourceMatrix {
   adapters: SystemDataSourceMatrixAdapter[]
   rows: SystemDataSourceMatrixRow[]
 }
+
+export type AutomationTriggerType = 'cron' | 'interval' | 'event'
+export type AutomationRuntimeMode = 'active' | 'standby'
+export type AutomationSectionKey = 'scheduled' | 'daemon' | 'event' | 'standby'
+
+export interface AutomationOverviewItem {
+  key: string
+  name: string
+  description: string
+  automation_type: 'scheduled' | 'daemon' | 'event'
+  trigger_type: AutomationTriggerType
+  trigger_value: string
+  runtime_mode: AutomationRuntimeMode
+  source: string
+  file: string
+  run_at_startup: boolean
+}
+
+export interface AutomationOverviewSummary {
+  total_active: number
+  scheduled: number
+  daemon: number
+  event: number
+  standby: number
+}
+
+export interface AutomationOverviewResponse {
+  generated_at: string
+  summary: AutomationOverviewSummary
+  sections: Record<AutomationSectionKey, AutomationOverviewItem[]>
+}
