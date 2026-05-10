@@ -5,6 +5,34 @@
 import { api } from '../client'
 import type { StockBasic, StockDaily, StockQuote, MarketOverview } from '../types'
 
+export interface StockSectorTag {
+  ts_code: string
+  name: string
+  sector_type?: string | null
+  type_name?: string | null
+}
+
+export interface StockReviewContext {
+  stock: {
+    ts_code: string
+    symbol?: string
+    name: string
+    area?: string | null
+    industry?: string | null
+    market?: string | null
+    list_date?: string | null
+    latest_trade_date?: string | null
+    latest_price?: number | null
+    latest_pct_chg?: number | null
+    recent_30d_pct_chg?: number | null
+    concepts: StockSectorTag[]
+    sectors: StockSectorTag[]
+  }
+  daily: StockDaily[]
+  weekly: StockDaily[]
+  monthly: StockDaily[]
+}
+
 export interface StockRepairTaskStartResponse {
   task_id: string
   status: string
@@ -40,6 +68,11 @@ export const stockApi = {
   /** 获取日线数据 */
   getStockDaily(tsCode: string, params?: { start_date?: string; end_date?: string; limit?: number }): Promise<StockDaily[]> {
     return api.get(`/stocks/${tsCode}/daily`, { params })
+  },
+
+  /** 获取个股详情沉浸上下文 */
+  getStockReviewContext(tsCode: string): Promise<StockReviewContext> {
+    return api.get(`/stocks/${tsCode}/review-context`)
   },
 
   /** 发起单股数据补数任务 */

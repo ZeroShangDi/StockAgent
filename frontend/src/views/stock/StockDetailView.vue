@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
 import { useUserStore } from '@/stores/user'
@@ -13,6 +13,7 @@ import {
 } from '@element-plus/icons-vue'
 import { StrategyType } from '@/api/types'
 import type { StockQuote, StrategySubscription, StockDaily, StrategyTypeInfo } from '@/api/types'
+import type { StockRepairTaskStatus, StockReviewContext } from '@/api/modules/stock'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,19 +26,32 @@ const tsCode = computed(() => route.params.code as string)
 // ==================== 状态 ====================
 
 const quote = ref<StockQuote | null>(null)
-const stockInfo = ref<{
-  name?: string
-  industry?: string
-  ts_code?: string
-  area?: string
-  market?: string
-} | null>(null)
-const klineData = ref<StockDaily[]>([])
+const reviewContext = ref<StockReviewContext | null>(null)
 const loading = ref(true)
 const chartLoading = ref(true)
+const repairLoading = ref(false)
+const repairTask = ref<StockRepairTaskStatus | null>(null)
+let repairPollingTimer: number | null = null
 
 // K线周期
 const chartPeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
+const chartPeriodOptions = [
+  { value: 'daily', label: '日K' },
+  { value: 'weekly', label: '周K' },
+  { value: 'monthly', label: '月K' },
+] as const
+
+const stockInfo = computed(() => reviewContext.value?.stock || null)
+
+const chartDaily = computed<StockDaily[]>(() => reviewContext.value?.daily || [])
+const chartWeekly = computed<StockDaily[]>(() => reviewContext.value?.weekly || [])
+const chartMonthly = computed<StockDaily[]>(() => reviewContext.value?.monthly || [])
+
+const selectedChartData = computed<StockDaily[]>(() => {
+  if (chartPeriod.value === 'weekly') return chartWeekly.value
+  if (chartPeriod.value === 'monthly') return chartMonthly.value
+  return chartDaily.value
+})
 
 // 是否在自选股中
 const isInWatchlist = computed(() => (userStore.watchlist || []).includes(tsCode.value))
@@ -151,50 +165,108 @@ async function addToSubscription(): Promise<void> {
 // ==================== 数据加载 ====================
 
 onMounted(async () => {
+  await loadPageData()
+})
+
+watch(
+  () => tsCode.value,
+  async () => {
+    stopRepairPolling()
+    repairTask.value = null
+    await loadPageData()
+  },
+)
+
+onBeforeUnmount(() => {
+  stopRepairPolling()
+})
+
+async function loadPageData(): Promise<void> {
   if (!tsCode.value || tsCode.value === 'undefined') {
     ElMessage.error('无效的股票代码')
     loading.value = false
     return
   }
-  
+
+  loading.value = true
   try {
-    // 并行加载基本信息和行情
-    const [info, quotes] = await Promise.all([
-      marketStore.fetchStockBasic(tsCode.value),
-      marketStore.fetchQuotes([tsCode.value])
+    await Promise.all([
+      loadReviewContext(),
+      loadRealtimeQuote(),
+      loadSubscriptions(),
     ])
-    
-    stockInfo.value = info
-    if (quotes.length > 0) {
-      quote.value = quotes[0]
-    }
-    
-    // 加载K线数据
-    await loadChartData()
-    
-    // 加载订阅列表
-    await loadSubscriptions()
   } finally {
     loading.value = false
   }
-})
+}
 
-async function loadChartData() {
+async function loadReviewContext(): Promise<void> {
   chartLoading.value = true
   try {
-    const dailyData = await stockApi.getStockDaily(tsCode.value, { limit: 120 })
-    klineData.value = dailyData
-  } catch {
-    klineData.value = []
+    reviewContext.value = await stockApi.getStockReviewContext(tsCode.value)
+  } catch (error) {
+    reviewContext.value = null
+    console.error('加载个股详情上下文失败:', error)
+    if (!loading.value) {
+      ElMessage.error('加载个股详情失败，通常是本地日线数据还不完整')
+    }
   } finally {
     chartLoading.value = false
   }
 }
 
-async function refreshData() {
+async function loadRealtimeQuote(): Promise<void> {
   const quotes = await marketStore.fetchQuotes([tsCode.value])
   if (quotes.length > 0) {
     quote.value = quotes[0]
+  }
+}
+
+async function refreshData(): Promise<void> {
+  await Promise.all([loadReviewContext(), loadRealtimeQuote(), loadSubscriptions()])
+}
+
+function stopRepairPolling(): void {
+  if (repairPollingTimer != null) {
+    window.clearTimeout(repairPollingTimer)
+    repairPollingTimer = null
+  }
+}
+
+async function scheduleRepairPolling(taskId: string): Promise<void> {
+  stopRepairPolling()
+  try {
+    const latest = await stockApi.getStockRepairTask(taskId)
+    repairTask.value = latest
+    if (latest.status === 'completed') {
+      stopRepairPolling()
+      await Promise.all([loadReviewContext(), loadRealtimeQuote()])
+      return
+    }
+    if (latest.status === 'failed') {
+      stopRepairPolling()
+      return
+    }
+    repairPollingTimer = window.setTimeout(() => {
+      void scheduleRepairPolling(taskId)
+    }, 2000)
+  } catch (error) {
+    console.error('轮询补数任务失败:', error)
+    stopRepairPolling()
+  }
+}
+
+async function startRepairTask(): Promise<void> {
+  repairLoading.value = true
+  try {
+    const response = await stockApi.createStockRepairTask(tsCode.value)
+    ElMessage.success(response.message)
+    await scheduleRepairPolling(response.task_id)
+  } catch (error) {
+    console.error('发起单股补数失败:', error)
+    ElMessage.error('发起单股补数失败')
+  } finally {
+    repairLoading.value = false
   }
 }
 
@@ -215,6 +287,26 @@ async function analyzeStock(): Promise<void> {
   if (taskId) {
     router.push(`/analysis/${taskId}`)
   }
+}
+
+function openHotNews(): void {
+  router.push({ name: 'HotNews' })
+}
+
+function openFinancePlaceholder(): void {
+  ElMessage.info('财务数据页还未单独落地，后续会补成可查看入口')
+}
+
+function setChartPeriod(period: 'daily' | 'weekly' | 'monthly'): void {
+  chartPeriod.value = period
+}
+
+function getRepairStatusLabel(status?: string | null): string {
+  if (status === 'completed') return '已完成'
+  if (status === 'failed') return '失败'
+  if (status === 'running') return '执行中'
+  if (status === 'queued' || status === 'pending') return '排队中'
+  return '处理中'
 }
 
 // ==================== 格式化 ====================
@@ -243,6 +335,24 @@ function formatAmount(val?: number): string {
   if (val >= 10000) return (val / 10000).toFixed(2) + '万'
   return val.toFixed(0)
 }
+
+function formatTradeDate(value?: string | null): string {
+  if (!value) return '--'
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+}
+
+function formatSignedPct(value?: number | null): string {
+  if (value == null || Number.isNaN(Number(value))) return '--'
+  const numeric = Number(value)
+  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(2)}%`
+}
+
+function getPnlClass(value?: number | null): string {
+  if (value == null || Number.isNaN(Number(value))) return ''
+  if (value > 0) return 'price-up'
+  if (value < 0) return 'price-down'
+  return ''
+}
 </script>
 
 <template>
@@ -257,6 +367,15 @@ function formatAmount(val?: number): string {
       <div class="nav-actions">
         <button class="refresh-btn" @click="refreshData" title="刷新数据">
           <Refresh />
+        </button>
+
+        <button
+          class="refresh-btn"
+          :disabled="repairLoading"
+          @click="startRepairTask"
+          title="单股补数更新"
+        >
+          <Bell />
         </button>
         
         <button 
@@ -295,6 +414,7 @@ function formatAmount(val?: number): string {
             <div class="tag-row">
               <span v-if="stockInfo?.industry" class="tag tag-industry">{{ stockInfo.industry }}</span>
               <span v-if="stockInfo?.area" class="tag tag-area">{{ stockInfo.area }}</span>
+              <span v-if="stockInfo?.market" class="tag tag-area">{{ stockInfo.market }}</span>
               
               <!-- 监听状态 -->
               <button 
@@ -364,6 +484,11 @@ function formatAmount(val?: number): string {
             <span class="metric-value">{{ formatAmount(quote?.amount) }}</span>
           </div>
         </div>
+        <div v-if="repairTask" class="repair-status-inline" :class="repairTask.status">
+          <span class="repair-status-pill">{{ getRepairStatusLabel(repairTask.status) }}</span>
+          <span>{{ repairTask.current_step || repairTask.message || '处理中' }}</span>
+          <span>{{ repairTask.progress ?? 0 }}%</span>
+        </div>
       </section>
       
       <!-- K线图区域 -->
@@ -378,15 +503,11 @@ function formatAmount(val?: number): string {
             <!-- 周期切换 -->
             <div class="period-tabs">
               <button 
-                v-for="p in [
-                  { value: 'daily', label: '日K' },
-                  { value: 'weekly', label: '周K' },
-                  { value: 'monthly', label: '月K' },
-                ]"
+                v-for="p in chartPeriodOptions"
                 :key="p.value"
                 class="period-tab"
                 :class="{ active: chartPeriod === p.value }"
-                @click="chartPeriod = p.value as typeof chartPeriod"
+                @click="setChartPeriod(p.value)"
               >
                 {{ p.label }}
               </button>
@@ -404,8 +525,8 @@ function formatAmount(val?: number): string {
           
           <!-- K线图 -->
           <StockChart 
-            v-else-if="klineData.length > 0" 
-            :data="klineData" 
+            v-else-if="selectedChartData.length > 0" 
+            :data="selectedChartData" 
             :ts-code="tsCode" 
           />
           
@@ -414,6 +535,46 @@ function formatAmount(val?: number): string {
             <ElEmpty description="暂无K线数据" :image-size="80" />
           </div>
         </div>
+      </section>
+
+      <section class="insight-grid">
+        <article class="insight-card">
+          <div class="insight-head">
+            <span>复盘摘要</span>
+          </div>
+          <div class="insight-metrics">
+            <div class="insight-metric">
+              <span>近30日涨幅</span>
+              <strong :class="getPnlClass(stockInfo?.recent_30d_pct_chg)">
+                {{ formatSignedPct(stockInfo?.recent_30d_pct_chg) }}
+              </strong>
+            </div>
+            <div class="insight-metric">
+              <span>最新交易日</span>
+              <strong>{{ formatTradeDate(stockInfo?.latest_trade_date) }}</strong>
+            </div>
+            <div class="insight-metric">
+              <span>上市日期</span>
+              <strong>{{ formatTradeDate(stockInfo?.list_date) }}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="insight-card">
+          <div class="insight-head">
+            <span>板块概念</span>
+          </div>
+          <div v-if="stockInfo?.concepts?.length" class="concept-flow">
+            <span
+              v-for="item in stockInfo?.concepts || []"
+              :key="`concept-${item.ts_code}`"
+              class="concept-tag"
+            >
+              {{ item.name }}
+            </span>
+          </div>
+          <p v-else class="insight-empty">暂无个股概念映射</p>
+        </article>
       </section>
       
       <!-- 底部导航磁贴 -->
@@ -431,7 +592,7 @@ function formatAmount(val?: number): string {
           </div>
         </button>
         
-        <button class="nav-tile">
+        <button class="nav-tile" @click="openHotNews">
           <div class="tile-icon news">
             <Document />
           </div>
@@ -441,7 +602,7 @@ function formatAmount(val?: number): string {
           </div>
         </button>
         
-        <button class="nav-tile">
+        <button class="nav-tile" @click="openFinancePlaceholder">
           <div class="tile-icon finance">
             <Histogram />
           </div>
@@ -860,6 +1021,34 @@ $color-ai: linear-gradient(135deg, #8b5cf6, #6366f1);
   background: var(--border-light);
 }
 
+.price-up {
+  color: $color-up !important;
+}
+
+.price-down {
+  color: $color-down !important;
+}
+
+.repair-status-inline {
+  margin-top: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.repair-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba($color-primary, 0.1);
+  color: $color-primary;
+  font-weight: 600;
+}
+
 // ==================== K线图区域 ====================
 
 .chart-section {
@@ -965,6 +1154,75 @@ $color-ai: linear-gradient(135deg, #8b5cf6, #6366f1);
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.insight-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.insight-card {
+  background: var(--bg-card);
+  border-radius: 16px;
+  border: 1px solid var(--border-light);
+  padding: 20px 22px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.insight-head {
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.insight-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.insight-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  span {
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+
+  strong {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+}
+
+.concept-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.concept-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba($color-primary, 0.08);
+  color: $color-primary;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.insight-empty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 // ==================== 底部导航磁贴 ====================
@@ -1210,6 +1468,14 @@ $color-ai: linear-gradient(135deg, #8b5cf6, #6366f1);
   }
   
   .bottom-nav {
+    grid-template-columns: 1fr;
+  }
+
+  .insight-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .insight-metrics {
     grid-template-columns: 1fr;
   }
 }

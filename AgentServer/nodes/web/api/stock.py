@@ -15,6 +15,12 @@ from pydantic import BaseModel, Field
 from core.managers import mongo_manager, data_source_manager
 from nodes.data_sync.collectors.stock.basic import _add_financial_metrics
 from nodes.data_sync.collectors.stock.daily_basic import _clean_daily_basic_record
+from src.analysis.stock_chart_context import (
+    build_period_candles,
+    calculate_recent_return,
+    get_stock_sector_context,
+    serialize_daily_record,
+)
 from .auth import get_current_user_id
 
 
@@ -64,6 +70,14 @@ class StockQuote(BaseModel):
     high: Optional[float]
     low: Optional[float]
     pre_close: Optional[float]
+
+
+class StockReviewContextResponse(BaseModel):
+    """个股详情沉浸上下文"""
+    stock: Dict[str, Any]
+    daily: List[Dict[str, Any]]
+    weekly: List[Dict[str, Any]]
+    monthly: List[Dict[str, Any]]
 
 
 class RealtimeQuoteRequest(BaseModel):
@@ -493,6 +507,55 @@ async def get_stock_basic(ts_code: str):
         industry=stock.get("industry"),
         market=stock.get("market"),
         list_date=stock.get("list_date"),
+    )
+
+
+@router.get("/{ts_code}/review-context", response_model=StockReviewContextResponse)
+async def get_stock_review_context(ts_code: str):
+    """获取个股详情页所需的 K 线与扩展上下文"""
+    normalized_ts_code = _normalize_ts_code(ts_code)
+    stock = await mongo_manager.find_one(
+        "stock_basic",
+        {"ts_code": normalized_ts_code},
+    )
+    if not stock:
+        raise HTTPException(status_code=404, detail="股票不存在")
+
+    daily_records = await mongo_manager.find_many(
+        "stock_daily",
+        {"ts_code": normalized_ts_code},
+        sort=[("trade_date", 1)],
+        limit=5000,
+    )
+    if not daily_records:
+        raise HTTPException(status_code=404, detail="该股票本地日线数据不完整，请先补充数据")
+
+    daily = [serialize_daily_record(item) for item in daily_records]
+    weekly = build_period_candles(daily_records, "weekly")
+    monthly = build_period_candles(daily_records, "monthly")
+    recent_30d_pct_chg = calculate_recent_return(daily_records, days=30)
+    sector_context = await get_stock_sector_context(normalized_ts_code)
+    latest_record = daily_records[-1]
+
+    return StockReviewContextResponse(
+        stock={
+            "ts_code": normalized_ts_code,
+            "symbol": stock.get("symbol", ""),
+            "name": stock.get("name", normalized_ts_code),
+            "area": stock.get("area"),
+            "industry": stock.get("industry"),
+            "market": stock.get("market"),
+            "list_date": stock.get("list_date"),
+            "latest_trade_date": latest_record.get("trade_date"),
+            "latest_price": latest_record.get("close"),
+            "latest_pct_chg": latest_record.get("pct_chg"),
+            "recent_30d_pct_chg": recent_30d_pct_chg,
+            "concepts": sector_context.get("concepts", []),
+            "sectors": sector_context.get("sectors", []),
+        },
+        daily=daily,
+        weekly=weekly,
+        monthly=monthly,
     )
 
 
