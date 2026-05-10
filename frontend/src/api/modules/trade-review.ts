@@ -1,5 +1,6 @@
 import { api } from '../client'
 import type { StockDaily } from '../types'
+import type { StockSectorTag } from './stock'
 
 export const TRADE_REVIEW_REASON_OPTIONS = {
   success: ['顺势而为', '板块共振', '买点前置', '纪律执行', '仓位合适', '止盈及时', '逻辑充分', '情绪稳定'],
@@ -139,8 +140,19 @@ export interface TradeReviewKlineContext {
   stock: {
     ts_code: string
     name?: string | null
+    industry?: string | null
+    market?: string | null
+    list_date?: string | null
+    latest_trade_date?: string | null
+    latest_price?: number | null
+    latest_pct_chg?: number | null
+    recent_30d_pct_chg?: number | null
+    concepts?: StockSectorTag[]
+    sectors?: StockSectorTag[]
   }
   daily: StockDaily[]
+  weekly: StockDaily[]
+  monthly: StockDaily[]
   markers: TradeReviewKlineMarker[]
   related_records: TradeReviewRecord[]
   navigation: {

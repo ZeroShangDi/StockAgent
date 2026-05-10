@@ -21,6 +21,12 @@ from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
 from core.managers import mongo_manager
+from src.analysis.stock_chart_context import (
+    build_period_candles,
+    calculate_recent_return,
+    get_stock_sector_context,
+    serialize_daily_record,
+)
 
 
 class TradeReviewService:
@@ -897,8 +903,13 @@ class TradeReviewService:
         stock_basic = await mongo_manager.find_one(
             "stock_basic",
             {"ts_code": ts_code},
-            projection={"name": 1, "ts_code": 1},
+            projection={"name": 1, "ts_code": 1, "industry": 1, "market": 1, "list_date": 1},
         )
+        weekly = build_period_candles(daily, "weekly")
+        monthly = build_period_candles(daily, "monthly")
+        recent_30d_pct_chg = calculate_recent_return(daily, days=30)
+        sector_context = await get_stock_sector_context(ts_code)
+        latest_daily = daily[-1]
 
         navigation_filter: Dict[str, Any] = {
             "group_id": record.get("group_id"),
@@ -934,23 +945,19 @@ class TradeReviewService:
             "stock": {
                 "ts_code": ts_code,
                 "name": stock_basic.get("name") if stock_basic else record.get("security_name"),
+                "industry": stock_basic.get("industry") if stock_basic else None,
+                "market": stock_basic.get("market") if stock_basic else None,
+                "list_date": stock_basic.get("list_date") if stock_basic else None,
+                "latest_trade_date": latest_daily.get("trade_date"),
+                "latest_price": latest_daily.get("close"),
+                "latest_pct_chg": latest_daily.get("pct_chg"),
+                "recent_30d_pct_chg": recent_30d_pct_chg,
+                "concepts": sector_context.get("concepts", []),
+                "sectors": sector_context.get("sectors", []),
             },
-            "daily": [
-                {
-                    "ts_code": item.get("ts_code"),
-                    "trade_date": item.get("trade_date"),
-                    "open": item.get("open", 0),
-                    "high": item.get("high", 0),
-                    "low": item.get("low", 0),
-                    "close": item.get("close", 0),
-                    "pre_close": item.get("pre_close"),
-                    "change": item.get("change"),
-                    "pct_chg": item.get("pct_chg"),
-                    "vol": item.get("vol"),
-                    "amount": item.get("amount"),
-                }
-                for item in daily
-            ],
+            "daily": [serialize_daily_record(item) for item in daily],
+            "weekly": weekly,
+            "monthly": monthly,
             "markers": markers,
             "related_records": [self._serialize_record(item) for item in same_stock_records],
             "navigation": {

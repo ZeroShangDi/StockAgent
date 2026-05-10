@@ -30,9 +30,29 @@
         <div class="left-panel">
           <div class="chart-card">
             <div class="chart-meta">
-              <div>
-                <strong>{{ context.stock.name || context.stock.ts_code }}</strong>
-                <span>{{ context.stock.ts_code }}</span>
+              <div class="chart-title-block">
+                <div>
+                  <strong>{{ context.stock.name || context.stock.ts_code }}</strong>
+                  <span>{{ context.stock.ts_code }}</span>
+                </div>
+                <el-radio-group v-model="selectedKlinePeriod" size="small" class="period-switch">
+                  <el-radio-button
+                    v-for="option in klinePeriodOptions"
+                    :key="option.value"
+                    :label="option.value"
+                  >
+                    {{ option.label }}
+                  </el-radio-button>
+                </el-radio-group>
+              </div>
+              <div class="trade-chip-group">
+                <span class="trade-chip">{{ context.stock.industry || '未知行业' }}</span>
+                <span class="trade-chip" :class="getPnlClass(context.stock.latest_pct_chg)">
+                  {{ formatSignedPct(context.stock.latest_pct_chg) }}
+                </span>
+                <span class="trade-chip" :class="getPnlClass(context.stock.recent_30d_pct_chg)">
+                  近30日 {{ formatSignedPct(context.stock.recent_30d_pct_chg) }}
+                </span>
               </div>
               <div class="trade-chip-group">
                 <span class="trade-chip">{{ formatTradeDate(context.record.trade_date) }}</span>
@@ -43,10 +63,10 @@
             </div>
             <div class="chart-wrap">
               <StockChart
-                :key="context.record.record_id"
-                :data="context.daily"
+                :key="`${context.record.record_id}-${selectedKlinePeriod}`"
+                :data="selectedChartData"
                 :ts-code="context.stock.ts_code"
-                :markers="context.markers"
+                :markers="selectedChartMarkers"
                 preserve-zoom
                 :initial-zoom-start="context.zoom.start"
                 :initial-zoom-end="context.zoom.end"
@@ -107,6 +127,41 @@
         </div>
 
         <aside class="right-panel">
+          <div class="summary-card">
+            <div class="summary-grid">
+              <div class="summary-item">
+                <span>最新价</span>
+                <strong>{{ context.stock.latest_price ? formatNumber(context.stock.latest_price) : '--' }}</strong>
+              </div>
+              <div class="summary-item" :class="getPnlClass(context.stock.latest_pct_chg)">
+                <span>最新涨跌</span>
+                <strong>{{ formatSignedPct(context.stock.latest_pct_chg) }}</strong>
+              </div>
+              <div class="summary-item" :class="getPnlClass(context.stock.recent_30d_pct_chg)">
+                <span>近30日涨幅</span>
+                <strong>{{ formatSignedPct(context.stock.recent_30d_pct_chg) }}</strong>
+              </div>
+              <div class="summary-item">
+                <span>上市日期</span>
+                <strong>{{ formatTradeDate(context.stock.list_date) }}</strong>
+              </div>
+            </div>
+
+            <div class="summary-block">
+              <label>板块概念</label>
+              <div v-if="context.stock.concepts?.length" class="tag-flow">
+                <span
+                  v-for="item in context.stock.concepts || []"
+                  :key="`concept-${item.ts_code}`"
+                  class="sector-tag"
+                >
+                  {{ item.name }}
+                </span>
+              </div>
+              <p v-else class="summary-empty">暂无个股概念映射</p>
+            </div>
+          </div>
+
           <div class="review-card">
             <div class="review-block">
               <label>操作理由</label>
@@ -186,7 +241,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { tradeReviewApi } from '@/api'
 import StockChart from '@/components/charts/StockChart.vue'
-import type { TradeReviewKlineContext } from '@/api/modules/trade-review'
+import type { StockDaily } from '@/api/types'
+import type { TradeReviewKlineContext, TradeReviewKlineMarker } from '@/api/modules/trade-review'
 import { TRADE_REVIEW_REASON_OPTIONS } from '@/api/modules/trade-review'
 
 const route = useRoute()
@@ -197,6 +253,12 @@ const saving = ref(false)
 const savingAndMoving = ref(false)
 const context = ref<TradeReviewKlineContext | null>(null)
 const initialReviewSnapshot = ref('')
+const selectedKlinePeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
+const klinePeriodOptions = [
+  { label: '日K', value: 'daily' },
+  { label: '周K', value: 'weekly' },
+  { label: '月K', value: 'monthly' },
+] as const
 
 const reviewForm = reactive<{
   operation_reason: string
@@ -218,18 +280,83 @@ const currentReasonOptions = computed<string[]>(() => {
   return []
 })
 
+const selectedChartData = computed<StockDaily[]>(() => {
+  if (!context.value) return []
+  if (selectedKlinePeriod.value === 'weekly') return context.value.weekly || []
+  if (selectedKlinePeriod.value === 'monthly') return context.value.monthly || []
+  return context.value.daily || []
+})
+
+function normalizeTradeDateString(value?: string | null): string | null {
+  if (!value) return null
+  if (/^\d{8}$/.test(value)) return value
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  const year = parsed.getFullYear()
+  const month = `${parsed.getMonth() + 1}`.padStart(2, '0')
+  const date = `${parsed.getDate()}`.padStart(2, '0')
+  return `${year}${month}${date}`
+}
+
+function mapMarkersToSelectedPeriod(
+  markers: TradeReviewKlineMarker[] = [],
+  candles: StockDaily[] = [],
+): TradeReviewKlineMarker[] {
+  if (!markers.length || !candles.length) return []
+
+  return markers
+    .map((marker) => {
+      const normalizedTradeDate = normalizeTradeDateString(marker.trade_date)
+      if (!normalizedTradeDate) return null
+
+      const matched =
+        candles.find((item) => item.trade_date >= normalizedTradeDate) ||
+        [...candles].reverse().find((item) => item.trade_date <= normalizedTradeDate) ||
+        null
+
+      if (!matched) return null
+
+      const markerPrice = Number(marker.price || matched.close || matched.open || 0)
+      if (!markerPrice) return null
+
+      return {
+        ...marker,
+        trade_date: matched.trade_date,
+        price: markerPrice,
+      }
+    })
+    .filter((item): item is TradeReviewKlineMarker => Boolean(item))
+}
+
+const selectedChartMarkers = computed<TradeReviewKlineMarker[]>(() => {
+  return mapMarkersToSelectedPeriod(context.value?.markers || [], selectedChartData.value)
+})
+
 function getQueryString(key: string, fallback = ''): string {
   const value = route.query[key]
   return typeof value === 'string' ? value : fallback
 }
 
-function formatTradeDate(value: string): string {
+function formatTradeDate(value?: string | null): string {
   if (!value) return '-'
   return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
 }
 
 function formatNumber(value: number): string {
   return Number(value || 0).toFixed(2)
+}
+
+function formatSignedPct(value?: number | null): string {
+  if (value == null || Number.isNaN(Number(value))) return '-'
+  const numeric = Number(value)
+  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(2)}%`
+}
+
+function getPnlClass(value?: number | null): string {
+  if (value == null || Number.isNaN(Number(value))) return ''
+  if (value > 0) return 'price-up'
+  if (value < 0) return 'price-down'
+  return ''
 }
 
 function syncReviewForm(): void {
@@ -521,6 +648,12 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .left-panel {
   display: grid;
   grid-template-rows: minmax(420px, 1fr) 260px;
@@ -542,11 +675,18 @@ onBeforeUnmount(() => {
 
 .chart-meta {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.chart-title-block {
+  display: flex;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
-  color: var(--el-text-color-secondary);
+  align-items: center;
 }
 
 .trade-chip-group {
@@ -559,6 +699,14 @@ onBeforeUnmount(() => {
   padding: 4px 10px;
   border-radius: 999px;
   background: rgba(59, 130, 246, 0.08);
+}
+
+.price-up {
+  color: #dc2626;
+}
+
+.price-down {
+  color: #059669;
 }
 
 .chart-wrap {
@@ -595,8 +743,78 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 16px;
   padding: 20px;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
+}
+
+.summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  background: var(--el-bg-color);
+  border-radius: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.summary-item span {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.summary-item strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--el-text-color-primary);
+}
+
+.summary-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.summary-block label {
+  font-weight: 600;
+}
+
+.tag-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sector-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--el-color-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.summary-empty {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
 }
 
 .review-block {
@@ -636,6 +854,12 @@ kbd {
 
   .left-panel {
     grid-template-rows: minmax(420px, 1fr) 280px;
+  }
+}
+
+@media (max-width: 720px) {
+  .summary-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
