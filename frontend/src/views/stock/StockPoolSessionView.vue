@@ -1,5 +1,8 @@
 <template>
   <div class="stock-pool-session">
+    <button class="focus-fab" type="button" @click="toggleFocusMode">
+      {{ isFocusMode ? '退出专注' : '专注模式' }}
+    </button>
     <section class="session-shell" v-loading="loading">
       <header class="session-header">
         <div class="title-block">
@@ -7,9 +10,6 @@
         </div>
         <div class="header-right">
           <div class="header-actions">
-            <el-button plain @click="toggleFocusMode">
-              {{ isFocusMode ? '退出专注' : '专注模式' }}
-            </el-button>
             <el-button @click="backToPool">返回股池</el-button>
             <el-button :disabled="!context?.navigation.previous_ts_code" @click="jumpToPrevious">上一只</el-button>
             <el-button
@@ -38,9 +38,20 @@
         <div class="left-panel">
           <div class="chart-card">
             <div class="chart-meta">
-              <div>
-                <strong>{{ context.stock.name }}</strong>
-                <span>{{ context.stock.ts_code }}</span>
+              <div class="chart-title-block">
+                <div>
+                  <strong>{{ context.stock.name }}</strong>
+                  <span>{{ context.stock.ts_code }}</span>
+                </div>
+                <el-radio-group v-model="selectedKlinePeriod" size="small" class="period-switch">
+                  <el-radio-button
+                    v-for="option in klinePeriodOptions"
+                    :key="option.value"
+                    :label="option.value"
+                  >
+                    {{ option.label }}
+                  </el-radio-button>
+                </el-radio-group>
               </div>
               <div class="stock-chip-group">
                 <span class="stock-chip">{{ context.stock.industry || '未知行业' }}</span>
@@ -54,8 +65,9 @@
             <div class="chart-wrap">
               <StockChart
                 ref="chartRef"
-                :data="chartDaily"
+                :data="selectedChartData"
                 :ts-code="context.stock.ts_code"
+                :markers="chartMarkers"
                 preserve-zoom
                 :initial-zoom-start="70"
                 :initial-zoom-end="100"
@@ -76,6 +88,10 @@
               <div class="info-item" :class="getPnlClass(context.stock.latest_pct_chg)">
                 <span>最新涨跌</span>
                 <strong>{{ formatSignedPct(context.stock.latest_pct_chg) }}</strong>
+              </div>
+              <div class="info-item" :class="getPnlClass(context.stock.recent_30d_pct_chg)">
+                <span>近30日涨幅</span>
+                <strong>{{ formatSignedPct(context.stock.recent_30d_pct_chg) }}</strong>
               </div>
               <div class="info-item">
                 <span>加入时间</span>
@@ -175,6 +191,23 @@
                 >
                   移动到目标池
                 </el-button>
+              </div>
+            </div>
+
+            <div class="block">
+              <label>板块概念</label>
+              <div class="source-box">
+                <p><strong>所属行业：</strong>{{ context.stock.industry || '暂无行业信息' }}</p>
+                <div v-if="context.stock.concepts?.length" class="tag-flow">
+                  <span
+                    v-for="item in context.stock.concepts"
+                    :key="`concept-${item.ts_code}`"
+                    class="sector-tag"
+                  >
+                    {{ item.name }}
+                  </span>
+                </div>
+                <p v-else>暂无个股概念映射</p>
               </div>
             </div>
 
@@ -452,8 +485,27 @@ const lineModeOptions = [
 const currentPoolId = computed(() => String(route.params.poolId || ''))
 const currentTsCode = computed(() => String(route.params.tsCode || '').toUpperCase())
 const isFocusMode = ref(false)
-const chartDaily = computed<StockDaily[]>(() => {
-  return (context.value?.daily || []).map((item) => ({
+const selectedKlinePeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
+const klinePeriodOptions = [
+  { label: '日K', value: 'daily' },
+  { label: '周K', value: 'weekly' },
+  { label: '月K', value: 'monthly' },
+] as const
+
+function normalizeChartSeries(items: Array<{
+  ts_code: string
+  trade_date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  pre_close?: number | null
+  change?: number | null
+  pct_chg?: number | null
+  vol?: number | null
+  amount?: number | null
+}> = []): StockDaily[] {
+  return items.map((item) => ({
     ts_code: item.ts_code,
     trade_date: item.trade_date,
     open: Number(item.open || 0),
@@ -466,6 +518,59 @@ const chartDaily = computed<StockDaily[]>(() => {
     vol: Number(item.vol || 0),
     amount: Number(item.amount || 0),
   }))
+}
+
+const chartDaily = computed<StockDaily[]>(() => normalizeChartSeries(context.value?.daily || []))
+const chartWeekly = computed<StockDaily[]>(() => normalizeChartSeries(context.value?.weekly || []))
+const chartMonthly = computed<StockDaily[]>(() => normalizeChartSeries(context.value?.monthly || []))
+
+const selectedChartData = computed<StockDaily[]>(() => {
+  if (selectedKlinePeriod.value === 'weekly') return chartWeekly.value
+  if (selectedKlinePeriod.value === 'monthly') return chartMonthly.value
+  return chartDaily.value
+})
+
+function normalizeTradeDateString(value?: string | null): string | null {
+  if (!value) return null
+  if (/^\d{8}$/.test(value)) return value
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  const year = parsed.getFullYear()
+  const month = `${parsed.getMonth() + 1}`.padStart(2, '0')
+  const date = `${parsed.getDate()}`.padStart(2, '0')
+  return `${year}${month}${date}`
+}
+
+const chartMarkers = computed(() => {
+  const candles = selectedChartData.value
+  const addedTradeDate = normalizeTradeDateString(context.value?.stock.added_at)
+  if (!candles.length || !addedTradeDate) {
+    return []
+  }
+
+  const matched =
+    candles.find((item) => item.trade_date >= addedTradeDate) ||
+    [...candles].reverse().find((item) => item.trade_date <= addedTradeDate) ||
+    null
+
+  if (!matched) {
+    return []
+  }
+
+  const markerPrice = Number(matched.close || matched.open || 0)
+  if (!markerPrice) {
+    return []
+  }
+
+  return [
+    {
+      trade_date: matched.trade_date,
+      price: markerPrice,
+      side: 'buy',
+      label: '入池',
+      is_current: true,
+    },
+  ]
 })
 
 const selectedStrategyMeta = computed(() => {
@@ -1089,6 +1194,35 @@ onBeforeUnmount(() => {
 .stock-pool-session {
   padding: 1rem 1.25rem 1.25rem;
   min-width: 0;
+  position: relative;
+}
+
+.focus-fab {
+  position: fixed;
+  top: 16px;
+  right: 18px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--el-color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.focus-fab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(59, 130, 246, 0.32);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14);
 }
 
 .session-shell {
@@ -1201,6 +1335,11 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.chart-title-block {
+  display: grid;
+  gap: 10px;
+}
+
 .chart-meta strong {
   display: block;
   margin-bottom: 4px;
@@ -1223,6 +1362,10 @@ onBeforeUnmount(() => {
   background: rgba(15, 23, 42, 0.05);
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+.period-switch {
+  width: fit-content;
 }
 
 .chart-wrap {
@@ -1396,6 +1539,23 @@ onBeforeUnmount(() => {
   color: var(--el-text-color-secondary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.tag-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sector-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--el-color-primary);
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 kbd {

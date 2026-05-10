@@ -78,8 +78,47 @@ export interface StockPoolReviewContext {
     market?: string | null
     list_date?: string | null
     added_at?: string
+    recent_30d_pct_chg?: number | null
+    concepts?: Array<{
+      ts_code: string
+      name: string
+      sector_type?: string | null
+      type_name?: string | null
+    }>
+    sectors?: Array<{
+      ts_code: string
+      name: string
+      sector_type?: string | null
+      type_name?: string | null
+    }>
   }
   daily: Array<{
+    ts_code: string
+    trade_date: string
+    open: number
+    high: number
+    low: number
+    close: number
+    pre_close?: number | null
+    change?: number | null
+    pct_chg?: number | null
+    vol?: number | null
+    amount?: number | null
+  }>
+  weekly: Array<{
+    ts_code: string
+    trade_date: string
+    open: number
+    high: number
+    low: number
+    close: number
+    pre_close?: number | null
+    change?: number | null
+    pct_chg?: number | null
+    vol?: number | null
+    amount?: number | null
+  }>
+  monthly: Array<{
     ts_code: string
     trade_date: string
     open: number

@@ -260,6 +260,9 @@ const option = computed(() => {
   const ma5 = calculateMA(dailyData, 5)
   const ma10 = calculateMA(dailyData, 10)
   const ma20 = calculateMA(dailyData, 20)
+  const ma60 = calculateMA(dailyData, 60)
+  const ma260 = calculateMA(dailyData, 260)
+  const macd = calculateMACD(dailyData)
   const markers = (props.markers || [])
     .filter((item) => item.trade_date && typeof item.price === 'number')
     .map((item) => ({
@@ -316,7 +319,7 @@ const option = computed(() => {
       },
     },
     legend: {
-      data: ['K线', 'MA5', 'MA10', 'MA20'],
+      data: ['K线', 'MA5', 'MA10', 'MA20', 'MA60', 'MA260', 'DIF', 'DEA', 'MACD'],
       top: 10,
       textStyle: {
         color: colors.legendText,
@@ -327,13 +330,19 @@ const option = computed(() => {
         left: 60,
         right: 20,
         top: 50,
-        height: '55%',
+        height: '46%',
       },
       {
         left: 60,
         right: 20,
-        top: '72%',
-        height: '18%',
+        top: '60%',
+        height: '12%',
+      },
+      {
+        left: 60,
+        right: 20,
+        top: '78%',
+        height: '12%',
       },
     ],
     xAxis: [
@@ -352,6 +361,16 @@ const option = computed(() => {
         data: dates,
         boundaryGap: false,
         axisLabel: { show: false },
+        axisTick: { show: false },
+        axisLine: { lineStyle: { color: colors.axisLine } },
+        splitLine: { show: false },
+      },
+      {
+        type: 'category',
+        gridIndex: 2,
+        data: dates,
+        boundaryGap: false,
+        axisLabel: { color: colors.axisLabel },
         axisTick: { show: false },
         axisLine: { lineStyle: { color: colors.axisLine } },
         splitLine: { show: false },
@@ -375,17 +394,26 @@ const option = computed(() => {
         axisTick: { show: false },
         splitLine: { show: false },
       },
+      {
+        scale: true,
+        gridIndex: 2,
+        splitNumber: 3,
+        axisLabel: { color: colors.axisLabel },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { lineStyle: { color: colors.splitLine } },
+      },
     ],
     dataZoom: [
       {
         type: 'inside',
-        xAxisIndex: [0, 1],
+        xAxisIndex: [0, 1, 2],
         start: zoom.start,
         end: zoom.end,
       },
       {
         show: true,
-        xAxisIndex: [0, 1],
+        xAxisIndex: [0, 1, 2],
         type: 'slider',
         bottom: 8,
         start: zoom.start,
@@ -518,11 +546,63 @@ const option = computed(() => {
         itemStyle: { color: '#f59e0b' },
       },
       {
+        name: 'MA60',
+        type: 'line',
+        data: ma60,
+        smooth: true,
+        lineStyle: { width: 1.3 },
+        symbol: 'none',
+        itemStyle: { color: '#8b5cf6' },
+      },
+      {
+        name: 'MA260',
+        type: 'line',
+        data: ma260,
+        smooth: true,
+        lineStyle: { width: 1.3 },
+        symbol: 'none',
+        itemStyle: { color: '#14b8a6' },
+      },
+      {
         name: '成交量',
         type: 'bar',
         xAxisIndex: 1,
         yAxisIndex: 1,
         data: volumes,
+      },
+      {
+        name: 'DIF',
+        type: 'line',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        data: macd.dif,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1.4 },
+        itemStyle: { color: '#2563eb' },
+      },
+      {
+        name: 'DEA',
+        type: 'line',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        data: macd.dea,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1.4 },
+        itemStyle: { color: '#f97316' },
+      },
+      {
+        name: 'MACD',
+        type: 'bar',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        data: macd.bar.map((value) => ({
+          value,
+          itemStyle: {
+            color: value >= 0 ? colors.upColor : colors.downColor,
+          },
+        })),
       },
       {
         name: '买卖点',
@@ -558,6 +638,42 @@ function calculateMA(data: StockDaily[], period: number): (number | '-')[] {
   
   return result
 }
+
+function calculateMACD(data: StockDaily[]): {
+  dif: number[]
+  dea: number[]
+  bar: number[]
+} {
+  const dif: number[] = []
+  const dea: number[] = []
+  const bar: number[] = []
+
+  let ema12 = 0
+  let ema26 = 0
+  let signal = 0
+
+  data.forEach((item, index) => {
+    const close = Number(item.close || 0)
+    if (index === 0) {
+      ema12 = close
+      ema26 = close
+      signal = 0
+    } else {
+      ema12 = ema12 * (11 / 13) + close * (2 / 13)
+      ema26 = ema26 * (25 / 27) + close * (2 / 27)
+    }
+
+    const currentDif = ema12 - ema26
+    signal = index === 0 ? currentDif : signal * (8 / 10) + currentDif * (2 / 10)
+    const currentBar = (currentDif - signal) * 2
+
+    dif.push(Number(currentDif.toFixed(4)))
+    dea.push(Number(signal.toFixed(4)))
+    bar.push(Number(currentBar.toFixed(4)))
+  })
+
+  return { dif, dea, bar }
+}
 </script>
 
 <template>
@@ -577,7 +693,7 @@ function calculateMA(data: StockDaily[], period: number): (number | '-')[] {
 .stock-chart {
   width: 100%;
   height: 100%;
-  min-height: 400px;
+  min-height: 520px;
   min-width: 0;
   overflow: hidden;
 }
