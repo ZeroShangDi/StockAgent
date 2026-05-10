@@ -18,6 +18,10 @@ from .auth import get_current_user_id
 
 router = APIRouter(prefix="/stock-picker", tags=["Stock Picker"])
 
+AUTO_REMOVE_CANDIDATE_POOL_TYPE = "候选池"
+AUTO_REMOVE_CANDIDATE_SOURCE_MODULE = "one_line_picker"
+AUTO_REMOVE_AFTER_TRADE_DAYS = 5
+
 
 class StockPickerQueryRequest(BaseModel):
     input: str = Field(..., min_length=1, description="一句话选股条件")
@@ -58,6 +62,172 @@ def _pool_summary(pool: Dict[str, Any]) -> Dict[str, Any]:
         "latest_trade_date": pool.get("latest_trade_date"),
         "updated_at": pool.get("updated_at"),
     }
+
+
+def _parse_added_at(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except Exception:
+        return None
+
+
+def _format_trade_date_from_datetime(value: datetime) -> str:
+    return value.astimezone(UTC).strftime("%Y%m%d")
+
+
+def _is_auto_remove_candidate_pool(pool: Dict[str, Any]) -> bool:
+    return str(pool.get("pool_type") or "").strip() == AUTO_REMOVE_CANDIDATE_POOL_TYPE
+
+
+def _is_auto_remove_candidate_stock(stock: Dict[str, Any]) -> bool:
+    return str(stock.get("source_module") or "").strip() == AUTO_REMOVE_CANDIDATE_SOURCE_MODULE
+
+
+async def _get_local_latest_trade_date() -> Optional[str]:
+    latest_index = await mongo_manager.find_one(
+        "index_daily",
+        {"ts_code": "000001.SH"},
+        sort=[("trade_date", -1)],
+        projection={"trade_date": 1, "_id": 0},
+    )
+    latest_trade_date = str(latest_index.get("trade_date") or "").strip() if latest_index else ""
+    return latest_trade_date or None
+
+
+async def _get_local_trade_dates(start_date: str, end_date: str) -> List[str]:
+    if not start_date or not end_date or start_date > end_date:
+        return []
+    records = await mongo_manager.find_many(
+        "index_daily",
+        {
+            "ts_code": "000001.SH",
+            "trade_date": {"$gte": start_date, "$lte": end_date},
+        },
+        sort=[("trade_date", 1)],
+        projection={"trade_date": 1, "_id": 0},
+    )
+    return sorted(
+        {
+            str(item.get("trade_date") or "").strip()
+            for item in records
+            if str(item.get("trade_date") or "").strip()
+        }
+    )
+
+
+def _count_trade_days_since_added(
+    added_trade_date: str,
+    latest_trade_date: str,
+    trade_dates: List[str],
+) -> int:
+    return len([trade_date for trade_date in trade_dates if added_trade_date <= trade_date <= latest_trade_date])
+
+
+async def _cleanup_candidate_pool_expired_stocks(
+    pool: Dict[str, Any],
+    latest_trade_date: Optional[str],
+    trade_dates: List[str],
+) -> Dict[str, Any]:
+    if not _is_auto_remove_candidate_pool(pool):
+        return dict(pool)
+
+    if not latest_trade_date or not trade_dates:
+        return dict(pool)
+
+    existing_stocks = list(pool.get("stocks", []) or [])
+    kept_stocks: List[Dict[str, Any]] = []
+    removed_any = False
+
+    for stock in existing_stocks:
+        stock_dict = dict(stock)
+        if not _is_auto_remove_candidate_stock(stock_dict):
+            kept_stocks.append(stock_dict)
+            continue
+
+        added_at = _parse_added_at(stock_dict.get("added_at"))
+        if not added_at:
+            kept_stocks.append(stock_dict)
+            continue
+
+        added_trade_date = _format_trade_date_from_datetime(added_at)
+        if added_trade_date > latest_trade_date:
+            kept_stocks.append(stock_dict)
+            continue
+
+        trade_day_count = _count_trade_days_since_added(added_trade_date, latest_trade_date, trade_dates)
+        if trade_day_count > AUTO_REMOVE_AFTER_TRADE_DAYS:
+            removed_any = True
+            continue
+
+        kept_stocks.append(stock_dict)
+
+    if not removed_any:
+        return dict(pool)
+
+    updated_pool = dict(pool)
+    updated_pool["stocks"] = kept_stocks
+    updated_pool["updated_at"] = datetime.now(UTC)
+
+    await mongo_manager.update_one(
+        "stock_pools",
+        {"pool_id": pool.get("pool_id"), "user_id": pool.get("user_id")},
+        {
+            "$set": {
+                "stocks": kept_stocks,
+                "updated_at": updated_pool["updated_at"],
+            }
+        },
+    )
+    return updated_pool
+
+
+async def _cleanup_candidate_pools(pools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    candidate_pools = [pool for pool in pools if _is_auto_remove_candidate_pool(pool)]
+    if not candidate_pools:
+        return [dict(pool) for pool in pools]
+
+    earliest_added_trade_date: Optional[str] = None
+    for pool in candidate_pools:
+        for stock in list(pool.get("stocks", []) or []):
+            if not _is_auto_remove_candidate_stock(stock):
+                continue
+            added_at = _parse_added_at(stock.get("added_at"))
+            if not added_at:
+                continue
+            added_trade_date = _format_trade_date_from_datetime(added_at)
+            if earliest_added_trade_date is None or added_trade_date < earliest_added_trade_date:
+                earliest_added_trade_date = added_trade_date
+
+    if earliest_added_trade_date is None:
+        return [dict(pool) for pool in pools]
+
+    latest_trade_date = await _get_local_latest_trade_date()
+    if not latest_trade_date or earliest_added_trade_date > latest_trade_date:
+        return [dict(pool) for pool in pools]
+
+    trade_dates = await _get_local_trade_dates(earliest_added_trade_date, latest_trade_date)
+    if not trade_dates:
+        return [dict(pool) for pool in pools]
+
+    cleaned_pools: List[Dict[str, Any]] = []
+    for pool in pools:
+        cleaned_pools.append(
+            await _cleanup_candidate_pool_expired_stocks(
+                pool=pool,
+                latest_trade_date=latest_trade_date,
+                trade_dates=trade_dates,
+            )
+        )
+    return cleaned_pools
 
 
 async def _get_latest_daily_map(ts_codes: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -320,6 +490,7 @@ async def list_stock_pools(user_id: str = Depends(get_current_user_id)) -> Dict[
         {"user_id": user_id},
         sort=[("updated_at", -1)],
     )
+    pools = await _cleanup_candidate_pools([dict(pool) for pool in pools])
     all_codes = [
         str(item.get("ts_code") or "").strip().upper()
         for pool in pools
@@ -339,6 +510,7 @@ async def get_stock_pool_detail(
     pool = await mongo_manager.find_one("stock_pools", {"pool_id": pool_id, "user_id": user_id})
     if not pool:
         raise HTTPException(status_code=404, detail="股池不存在")
+    pool = (await _cleanup_candidate_pools([dict(pool)]))[0]
     latest_map = await _get_latest_daily_map([item.get("ts_code") for item in (pool.get("stocks", []) or [])])
     enriched = _enrich_pool(dict(pool), latest_map)
     return {
@@ -359,6 +531,7 @@ async def get_stock_pool_review_context(
     pool = await mongo_manager.find_one("stock_pools", {"pool_id": pool_id, "user_id": user_id})
     if not pool:
         raise HTTPException(status_code=404, detail="股池不存在")
+    pool = (await _cleanup_candidate_pools([dict(pool)]))[0]
 
     stocks = list(pool.get("stocks", []) or [])
     selected = next((item for item in stocks if str(item.get("ts_code") or "").upper() == normalized_ts_code), None)
@@ -481,6 +654,7 @@ async def add_stocks_to_pool(
     pool = await mongo_manager.find_one("stock_pools", {"pool_id": pool_id, "user_id": user_id})
     if not pool:
         raise HTTPException(status_code=404, detail="股池不存在")
+    pool = (await _cleanup_candidate_pools([dict(pool)]))[0]
 
     existing = {
         str(item.get("ts_code")): item
@@ -549,6 +723,7 @@ async def remove_stocks_from_pool(
     pool = await mongo_manager.find_one("stock_pools", {"pool_id": pool_id, "user_id": user_id})
     if not pool:
         raise HTTPException(status_code=404, detail="股池不存在")
+    pool = (await _cleanup_candidate_pools([dict(pool)]))[0]
 
     if not body.ts_codes:
         raise HTTPException(status_code=400, detail="至少选择一只股票")

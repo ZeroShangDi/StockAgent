@@ -11,6 +11,7 @@
       <div class="hero-note">
         <span>结果源自独立 Coze 工作流</span>
         <strong>支持导出 code / 加入股池</strong>
+        <small>候选池中的一句话选股结果超过 5 个交易日会自动移出。</small>
       </div>
     </section>
 
@@ -377,6 +378,11 @@ h1 {
 
 .hero-note strong {
   font-size: 18px;
+}
+
+.hero-note small {
+  color: #475569;
+  line-height: 1.5;
 }
 
 .query-card,

@@ -108,6 +108,9 @@
                 <span v-if="activePool.latest_trade_date">估值日 {{ formatTradeDate(activePool.latest_trade_date) }}</span>
                 <span v-if="activePool.updated_at">更新于 {{ formatDateTime(activePool.updated_at) }}</span>
               </div>
+              <p v-if="activePool.pool_type === '候选池'" class="detail-expire-note">
+                候选池里来自一句话选股的股票，超过 5 个交易日会自动移出。
+              </p>
             </div>
           </header>
 
@@ -723,6 +726,13 @@ h2 {
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.detail-expire-note {
+  margin: 0;
+  color: #0f766e;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .detail-table-wrap {
