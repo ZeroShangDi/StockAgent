@@ -62,6 +62,18 @@ async def main() -> None:
     parser.add_argument("--skip-daily-basic", action="store_true", help="跳过 daily_basic")
     parser.add_argument("--skip-index-daily", action="store_true", help="跳过 index_daily")
     parser.add_argument("--no-resume", action="store_true", help="关闭断点续跑，强制重拉")
+    parser.add_argument(
+        "--stock-daily-source",
+        type=str,
+        default="baostock",
+        help="单股 stock_daily 优先数据源，默认 baostock",
+    )
+    parser.add_argument(
+        "--daily-basic-source",
+        type=str,
+        default="tushare",
+        help="daily_basic 优先数据源，默认 tushare",
+    )
     args = parser.parse_args()
 
     logs_dir = Path(__file__).parent.parent / "logs"
@@ -114,6 +126,8 @@ async def main() -> None:
     _log(f"并发数: {args.concurrent}")
     _log(f"断点续跑: {'关闭' if args.no_resume else '开启'}")
     _log(f"最新交易日来源: {latest_trade_source or 'unknown'}")
+    _log(f"stock_daily 优先源: {args.stock_daily_source}")
+    _log(f"daily_basic 优先源: {args.daily_basic_source}")
 
     semaphore = asyncio.Semaphore(max(args.concurrent, 1))
     progress = {"done": 0, "daily": 0, "basic": 0, "skipped": 0, "failed": 0}
@@ -140,6 +154,7 @@ async def main() -> None:
                         ts_code=ts_code,
                         start_date=start_date,
                         end_date=end_date,
+                        preferred_source=args.stock_daily_source,
                     )
                     if daily_records:
                         write_result = await mongo_manager.bulk_upsert(
@@ -156,7 +171,7 @@ async def main() -> None:
                         ts_code=ts_code,
                         start_date=start_date,
                         end_date=end_date,
-                        preferred_source="coze",
+                        preferred_source=args.daily_basic_source,
                     )
                     if basic_records:
                         cleaned_records = []

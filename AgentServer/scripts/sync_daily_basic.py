@@ -23,14 +23,32 @@ Usage:
 import asyncio
 import argparse
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.managers import data_source_manager, mongo_manager
+
+
+RATE_LIMIT_ERROR_KEYWORDS = (
+    "429",
+    "rate limit",
+    "too many requests",
+    "frequency",
+    "limit exceeded",
+    "访问过于频繁",
+    "频次",
+    "限频",
+    "请稍后",
+)
+
+
+def _is_rate_limit_error(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return any(keyword in lowered for keyword in RATE_LIMIT_ERROR_KEYWORDS)
 
 
 def _clean_daily_basic_record(record: Dict) -> Dict:
@@ -108,6 +126,9 @@ def _clean_daily_basic_record(record: Dict) -> Dict:
 async def sync_daily_basic(
     start_date: str,
     end_date: str,
+    force: bool = False,
+    sleep_seconds: float = 0.0,
+    max_failures: int = 3,
 ) -> dict:
     """
     同步 daily_basic 数据
@@ -139,14 +160,14 @@ async def sync_daily_basic(
     print(f"   找到 {len(trade_dates)} 个交易日")
     
     # 检查上次同步日期
-    last_sync_date = await mongo_manager.get_last_sync_date("daily_basic")
+    last_sync_date = None if force else await mongo_manager.get_last_sync_date("daily_basic")
     
     if last_sync_date:
         print(f"   上次同步日期: {last_sync_date}")
         # 过滤出需要同步的日期（大于上次同步日期的）
         need_sync_dates = [d for d in trade_dates if d > last_sync_date]
     else:
-        print(f"   首次同步，从 {trade_dates[0]} 开始")
+        print(f"   {'强制全量同步' if force else '首次同步'}，从 {trade_dates[0]} 开始")
         need_sync_dates = trade_dates
     
     if not need_sync_dates:
@@ -159,6 +180,7 @@ async def sync_daily_basic(
     import time
     total_count = 0
     failed_dates = []
+    aborted_reason: Optional[str] = None
     
     print("\n📥 开始同步数据...")
     start_time = time.time()
@@ -168,7 +190,10 @@ async def sync_daily_basic(
             t1 = time.time()
             
             # Step 1: 获取当日全市场数据
-            records, _ = await data_source_manager.get_daily_basic(trade_date=trade_date)
+            records, _ = await data_source_manager.get_daily_basic(
+                trade_date=trade_date,
+                preferred_source="tushare",
+            )
             t2 = time.time()
             
             if records:
@@ -176,7 +201,7 @@ async def sync_daily_basic(
                 cleaned_records = []
                 for record in records:
                     cleaned = _clean_daily_basic_record(record)
-                    cleaned["updated_at"] = datetime.utcnow()
+                    cleaned["updated_at"] = datetime.now(UTC)
                     cleaned_records.append(cleaned)
                 
                 # Step 3: 批量写入
@@ -199,16 +224,32 @@ async def sync_daily_basic(
                     print(f"   [{progress:5.1f}%] {trade_date}: {len(records)} records, "
                           f"API={t2-t1:.2f}s, ETA={eta/60:.1f}min")
             else:
-                print(f"   ⚠️ {trade_date}: 无数据")
+                failed_dates.append(trade_date)
+                print(f"   ❌ {trade_date}: 返回空数据，已视为失败")
+                if len(failed_dates) >= max_failures:
+                    aborted_reason = f"失败日期已达到阈值 {max_failures}，任务中止"
+                    print(f"   ❌ {aborted_reason}")
+                    break
                 
         except Exception as e:
             failed_dates.append(trade_date)
             print(f"   ❌ {trade_date}: {e}")
+            if _is_rate_limit_error(str(e)):
+                aborted_reason = f"检测到接口限频/流控错误，任务中止：{e}"
+                print(f"   ❌ {aborted_reason}")
+                break
+            if len(failed_dates) >= max_failures:
+                aborted_reason = f"失败日期已达到阈值 {max_failures}，任务中止"
+                print(f"   ❌ {aborted_reason}")
+                break
+
+        if sleep_seconds > 0:
+            await asyncio.sleep(sleep_seconds)
     
     elapsed = time.time() - start_time
     
-    # 记录同步完成
-    if need_sync_dates:
+    # 仅在无失败时记录同步完成，避免后续误跳过
+    if need_sync_dates and not failed_dates and not aborted_reason:
         await mongo_manager.record_sync(
             sync_type="daily_basic",
             sync_date=need_sync_dates[-1],
@@ -217,10 +258,12 @@ async def sync_daily_basic(
     
     # 汇总
     print(f"\n{'='*50}")
-    print(f"✅ 同步完成!")
+    print(f"{'✅ 同步完成!' if not failed_dates and not aborted_reason else '⚠️ 同步未完成'}")
     print(f"   总记录数: {total_count:,}")
     print(f"   总耗时: {elapsed/60:.1f} 分钟")
     print(f"   失败日期: {len(failed_dates)}")
+    if aborted_reason:
+        print(f"   中止原因: {aborted_reason}")
     
     if failed_dates:
         print(f"   失败列表: {', '.join(failed_dates[:10])}{'...' if len(failed_dates) > 10 else ''}")
@@ -229,6 +272,7 @@ async def sync_daily_basic(
         "count": total_count,
         "failed_dates": failed_dates,
         "elapsed_seconds": elapsed,
+        "aborted_reason": aborted_reason,
     }
 
 
@@ -255,6 +299,23 @@ async def main():
         default=None,
         help="只同步最近 N 天（覆盖 --start）",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="忽略上次同步日期，强制重拉指定范围",
+    )
+    parser.add_argument(
+        "--sleep-seconds",
+        type=float,
+        default=0.0,
+        help="每个交易日额外休眠秒数，降低接口频次",
+    )
+    parser.add_argument(
+        "--max-failures",
+        type=int,
+        default=3,
+        help="允许的最大失败日期数，超过后立即中止",
+    )
     
     args = parser.parse_args()
     
@@ -271,10 +332,19 @@ async def main():
         start_date = args.start
     
     # 执行同步
-    await sync_daily_basic(start_date, end_date)
+    result = await sync_daily_basic(
+        start_date,
+        end_date,
+        force=args.force,
+        sleep_seconds=max(args.sleep_seconds, 0.0),
+        max_failures=max(args.max_failures, 1),
+    )
     
     # 关闭连接
+    await data_source_manager.shutdown()
     await mongo_manager.shutdown()
+    if result.get("failed_dates") or result.get("aborted_reason"):
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

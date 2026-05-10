@@ -109,7 +109,7 @@ async def sync_stock_basic(force: bool = False):
     
     # Step 1: 获取所有上市股票基础信息
     print(f"\n[Step 1] 获取股票基础信息...")
-    records, _ = await data_source_manager.get_stock_basic()
+    records, _ = await data_source_manager.get_stock_basic(preferred_source="tushare")
     
     if not records:
         print("未获取到任何数据")
@@ -132,7 +132,10 @@ async def sync_stock_basic(force: bool = False):
     daily_basic_map: Dict[str, Dict] = {}
     
     if latest_trade_date:
-        daily_basic, _ = await data_source_manager.get_daily_basic(trade_date=latest_trade_date)
+        daily_basic, _ = await data_source_manager.get_daily_basic(
+            trade_date=latest_trade_date,
+            preferred_source="tushare",
+        )
         if daily_basic:
             for item in daily_basic:
                 ts_code = item.get("ts_code")

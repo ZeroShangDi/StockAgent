@@ -135,6 +135,15 @@ class TushareAdapter(AsyncDataSourceAdapter):
             os.environ.setdefault("TS_TOKEN", token)
             self._ts = ts
             self._pro = ts.pro_api(token)
+            try:
+                from core.settings import settings
+                rate_limit = max(int(settings.tushare.rate_limit or 200), 1)
+            except Exception:
+                rate_limit = 200
+            self._bucket = TokenBucket(
+                rate=rate_limit / 60.0,
+                capacity=rate_limit,
+            )
             self._initialized = True
             self.logger.info("Tushare adapter initialized ✓")
         except Exception as e:
@@ -156,6 +165,8 @@ class TushareAdapter(AsyncDataSourceAdapter):
         """调用 Tushare API"""
         if not await self.is_available():
             raise RuntimeError("Tushare adapter not initialized")
+        if self._bucket is not None:
+            await self._bucket.wait_and_acquire(1)
         
         loop = asyncio.get_event_loop()
         api_func = getattr(self._pro, api_name)
