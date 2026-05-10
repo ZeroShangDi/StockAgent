@@ -239,6 +239,67 @@ class BaseStrategy(ABC):
         last_triggered_date = str(config.get("last_triggered_date") or "")
         return last_triggered_date == today_key
 
+    def _load_threshold_states(
+        self,
+        subscription: StrategySubscription,
+        ts_code: str,
+        today_key: str,
+    ) -> Dict[str, bool]:
+        config = self._get_stock_runtime_config(subscription, ts_code)
+        state_day = str(config.get("threshold_state_day") or "")
+        if state_day != today_key:
+            return {}
+
+        raw_states = config.get("threshold_states")
+        if not isinstance(raw_states, dict):
+            return {}
+
+        return {
+            str(key): bool(value)
+            for key, value in raw_states.items()
+            if value
+        }
+
+    def _set_threshold_state(
+        self,
+        states: Dict[str, bool],
+        key: str,
+        is_active: bool,
+    ) -> bool:
+        was_active = bool(states.get(key, False))
+        if is_active:
+            states[key] = True
+        else:
+            states.pop(key, None)
+        return is_active and not was_active
+
+    def _build_threshold_state_updates(
+        self,
+        today_key: str,
+        states: Dict[str, bool],
+    ) -> Dict[str, Any]:
+        return {
+            "threshold_state_day": today_key,
+            "threshold_states": dict(states),
+        }
+
+    async def _persist_threshold_states_if_changed(
+        self,
+        subscription: StrategySubscription,
+        ts_code: str,
+        today_key: str,
+        original_states: Dict[str, bool],
+        states: Dict[str, bool],
+    ) -> None:
+        if states == original_states:
+            return
+
+        await self._persist_stock_runtime_fields(
+            subscription=subscription,
+            ts_code=ts_code,
+            updates=self._build_threshold_state_updates(today_key, states),
+        )
+
     async def _record_alert_trigger(
         self,
         subscription: StrategySubscription,

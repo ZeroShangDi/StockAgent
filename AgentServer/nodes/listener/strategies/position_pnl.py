@@ -11,6 +11,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from common.enums import StrategyType
+from core.managers import mongo_manager
 from core.protocols import MarketSnapshot, StrategyAlert, StrategySubscription
 
 from .base import BaseStrategy
@@ -60,15 +61,36 @@ class PositionPnlStrategy(BaseStrategy):
             pnl_amount = market_value - total_cost
             pnl_pct = pnl_amount / total_cost * 100
 
+            threshold_states = self._load_threshold_states(subscription, ts_code, today_key)
+            original_threshold_states = dict(threshold_states)
+            loss_crossed = self._set_threshold_state(
+                threshold_states,
+                "position_pnl_loss",
+                loss_threshold > 0 and pnl_pct <= -loss_threshold,
+            )
+            profit_crossed = self._set_threshold_state(
+                threshold_states,
+                "position_pnl_profit",
+                profit_threshold > 0 and pnl_pct >= profit_threshold,
+            )
+
             trigger_type = ""
-            if loss_threshold > 0 and pnl_pct <= -loss_threshold:
+            if loss_crossed:
                 trigger_type = "loss"
-            elif profit_threshold > 0 and pnl_pct >= profit_threshold:
+            elif profit_crossed:
                 trigger_type = "profit"
-            else:
-                continue
 
             if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
+                continue
+
+            if not trigger_type:
+                await self._persist_threshold_states_if_changed(
+                    subscription=subscription,
+                    ts_code=ts_code,
+                    today_key=today_key,
+                    original_states=original_threshold_states,
+                    states=threshold_states,
+                )
                 continue
 
             alerts.append(
@@ -100,8 +122,8 @@ class PositionPnlStrategy(BaseStrategy):
                 ts_code=ts_code,
                 today_key=today_key,
                 extra_updates={
-                    "last_triggered_date": today_key,
                     "last_trigger_type": trigger_type,
+                    **self._build_threshold_state_updates(today_key, threshold_states),
                 },
             )
 

@@ -11,6 +11,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from common.enums import StrategyType
+from core.managers import mongo_manager
 from core.protocols import MarketSnapshot, StrategyAlert, StrategySubscription
 
 from .base import BaseStrategy
@@ -60,15 +61,30 @@ class PositionIntradayPnlStrategy(BaseStrategy):
             intraday_pnl_amount = (current_price - pre_close) * quantity
             intraday_pnl_pct = intraday_pnl_amount / total_cost * 100
 
-            triggered = False
-            if direction in {"both", "up"} and intraday_pnl_pct >= threshold_pct:
-                triggered = True
-            if direction in {"both", "down"} and intraday_pnl_pct <= -threshold_pct:
-                triggered = True
-            if not triggered:
+            if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
                 continue
 
-            if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
+            threshold_states = self._load_threshold_states(subscription, ts_code, today_key)
+            original_threshold_states = dict(threshold_states)
+            up_crossed = self._set_threshold_state(
+                threshold_states,
+                "position_intraday_pnl_up",
+                direction in {"both", "up"} and intraday_pnl_pct >= threshold_pct,
+            )
+            down_crossed = self._set_threshold_state(
+                threshold_states,
+                "position_intraday_pnl_down",
+                direction in {"both", "down"} and intraday_pnl_pct <= -threshold_pct,
+            )
+            triggered = up_crossed or down_crossed
+            if not triggered:
+                await self._persist_threshold_states_if_changed(
+                    subscription=subscription,
+                    ts_code=ts_code,
+                    today_key=today_key,
+                    original_states=original_threshold_states,
+                    states=threshold_states,
+                )
                 continue
 
             alerts.append(
@@ -99,6 +115,7 @@ class PositionIntradayPnlStrategy(BaseStrategy):
                 subscription=subscription,
                 ts_code=ts_code,
                 today_key=today_key,
+                extra_updates=self._build_threshold_state_updates(today_key, threshold_states),
             )
 
         return alerts

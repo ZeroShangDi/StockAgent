@@ -16,6 +16,7 @@ class TradeDirection(str, Enum):
 
 class StrategyType(str, Enum):
     """监听策略类型 (Listener 节点使用)"""
+    MARKET_INDEX_ALERT = "market_index_alert"  # 指数指标预警
     LIMIT_OPEN = "limit_open"           # 涨跌停打开
     PRICE_CHANGE = "price_change"       # 涨跌幅阈值
     INTRADAY_PRICE_MOVE = "intraday_price_move"  # 分钟异动

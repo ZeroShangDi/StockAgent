@@ -34,6 +34,7 @@ from .strategies import (
     LimitOpenStrategy,
     PriceChangeStrategy,
     IntradayPriceMoveStrategy,
+    MarketIndexAlertStrategy,
     MA5BuyStrategy,
     SupportResistanceStrategy,
     FixedStopLossStrategy,
@@ -190,6 +191,7 @@ class ListenerNode(BaseNode):
     def _register_strategies(self) -> None:
         """注册内置策略执行器"""
         self._strategies = {
+            StrategyType.MARKET_INDEX_ALERT.value: MarketIndexAlertStrategy(),
             StrategyType.LIMIT_OPEN.value: LimitOpenStrategy(),
             StrategyType.PRICE_CHANGE.value: PriceChangeStrategy(),
             StrategyType.INTRADAY_PRICE_MOVE.value: IntradayPriceMoveStrategy(),

@@ -11,6 +11,7 @@
 - TrailingStopLossStrategy: 移动止损策略
 - PositionPnlStrategy: 持仓总盈亏阈值策略
 - PositionIntradayPnlStrategy: 盘中持仓盈亏变化策略
+- MarketIndexAlertStrategy: 指数指标预警策略
 """
 
 from .base import BaseStrategy
@@ -23,6 +24,7 @@ from .fixed_stop_loss import FixedStopLossStrategy
 from .trailing_stop_loss import TrailingStopLossStrategy
 from .position_pnl import PositionPnlStrategy
 from .position_intraday_pnl import PositionIntradayPnlStrategy
+from .market_index_alert import MarketIndexAlertStrategy
 
 __all__ = [
     "BaseStrategy",
@@ -35,4 +37,5 @@ __all__ = [
     "TrailingStopLossStrategy",
     "PositionPnlStrategy",
     "PositionIntradayPnlStrategy",
+    "MarketIndexAlertStrategy",
 ]

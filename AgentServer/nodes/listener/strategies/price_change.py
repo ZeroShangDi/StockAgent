@@ -74,27 +74,38 @@ class PriceChangeStrategy(BaseStrategy):
         for ts_code, quote in watch_stocks.items():
             if self._should_skip_by_alert_frequency(subscription, ts_code, today_key):
                 continue
-            
+
             pct_chg = quote.get("pct_chg", 0)
             if pct_chg is None:
                 continue
-            
+
             current_price = quote.get("price", 0)
             stock_name = quote.get("name", ts_code)
-            
+
+            threshold_states = self._load_threshold_states(subscription, ts_code, today_key)
+            original_threshold_states = dict(threshold_states)
+
+            up_crossed = self._set_threshold_state(
+                threshold_states,
+                "price_change_up",
+                direction in ("up", "both") and pct_chg >= threshold,
+            )
+            down_crossed = self._set_threshold_state(
+                threshold_states,
+                "price_change_down",
+                direction in ("down", "both") and pct_chg <= -threshold,
+            )
+
             triggered = False
             reason = ""
-            
-            # 检查上涨
-            if direction in ("up", "both") and pct_chg >= threshold:
+
+            if up_crossed:
                 triggered = True
                 reason = f"涨幅 {pct_chg:.2f}% 超过阈值 {threshold}%"
-            
-            # 检查下跌
-            elif direction in ("down", "both") and pct_chg <= -threshold:
+            elif down_crossed:
                 triggered = True
                 reason = f"跌幅 {pct_chg:.2f}% 超过阈值 -{threshold}%"
-            
+
             if triggered:
                 alert = self._create_alert(
                     subscription=subscription,
@@ -115,7 +126,17 @@ class PriceChangeStrategy(BaseStrategy):
                     subscription=subscription,
                     ts_code=ts_code,
                     today_key=today_key,
+                    extra_updates=self._build_threshold_state_updates(today_key, threshold_states),
                 )
                 self.logger.info(f"[ALERT] {ts_code} {stock_name}: {reason}")
+                continue
+
+            await self._persist_threshold_states_if_changed(
+                subscription=subscription,
+                ts_code=ts_code,
+                today_key=today_key,
+                original_states=original_threshold_states,
+                states=threshold_states,
+            )
         
         return alerts

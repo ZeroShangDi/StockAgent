@@ -32,6 +32,7 @@ router = APIRouter()
 # ==================== 已实现的策略类型 ====================
 
 IMPLEMENTED_STRATEGIES = [
+    StrategyType.MARKET_INDEX_ALERT,  # 指数指标预警
     StrategyType.MA5_BUY,      # 5日线低吸
     StrategyType.LIMIT_OPEN,   # 涨跌停打开
     StrategyType.PRICE_CHANGE, # 涨跌幅阈值
@@ -52,6 +53,65 @@ ALERT_FREQUENCY_OPTIONS = [
 
 # 策略元信息（名称、描述、默认参数）
 STRATEGY_META = {
+    StrategyType.MARKET_INDEX_ALERT.value: {
+        "name": "指数指标预警",
+        "description": "针对指数涨跌幅、涨跌家数、涨跌停数和北向资金进行监听，任一条件越线时提醒",
+        "schedule_type": "intraday_minute",
+        "schedule_label": "盘中轮询",
+        "basic_param_keys": ["index_code", "alert_frequency"],
+        "default_watch_list": ["ALL"],
+        "default_params": {
+            "index_code": "000001.SH",
+            "index_rise_enabled": True,
+            "index_rise_threshold": 1.5,
+            "index_fall_enabled": True,
+            "index_fall_threshold": 1.5,
+            "up_count_enabled": False,
+            "up_count_threshold": 3000,
+            "down_count_enabled": False,
+            "down_count_threshold": 3000,
+            "limit_up_enabled": False,
+            "limit_up_threshold": 80,
+            "limit_down_enabled": False,
+            "limit_down_threshold": 20,
+            "north_money_in_enabled": False,
+            "north_money_in_threshold": 20.0,
+            "north_money_out_enabled": False,
+            "north_money_out_threshold": 20.0,
+            "once_per_day": True,
+            "alert_frequency": "daily_once",
+        },
+        "param_schema": [
+            {
+                "key": "index_code",
+                "label": "参考指数",
+                "type": "string",
+                "default": "000001.SH",
+                "options": [
+                    {"label": "上证指数", "value": "000001.SH"},
+                    {"label": "深证成指", "value": "399001.SZ"},
+                    {"label": "创业板指", "value": "399006.SZ"},
+                ],
+            },
+            {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
+            {"key": "index_rise_enabled", "label": "启用指数上涨提醒", "type": "boolean", "default": True},
+            {"key": "index_rise_threshold", "label": "指数上涨阈值 (%)", "type": "float", "default": 1.5},
+            {"key": "index_fall_enabled", "label": "启用指数下跌提醒", "type": "boolean", "default": True},
+            {"key": "index_fall_threshold", "label": "指数下跌阈值 (%)", "type": "float", "default": 1.5},
+            {"key": "up_count_enabled", "label": "启用上涨家数提醒", "type": "boolean", "default": False},
+            {"key": "up_count_threshold", "label": "上涨家数阈值", "type": "number", "default": 3000},
+            {"key": "down_count_enabled", "label": "启用下跌家数提醒", "type": "boolean", "default": False},
+            {"key": "down_count_threshold", "label": "下跌家数阈值", "type": "number", "default": 3000},
+            {"key": "limit_up_enabled", "label": "启用涨停家数提醒", "type": "boolean", "default": False},
+            {"key": "limit_up_threshold", "label": "涨停家数阈值", "type": "number", "default": 80},
+            {"key": "limit_down_enabled", "label": "启用跌停家数提醒", "type": "boolean", "default": False},
+            {"key": "limit_down_threshold", "label": "跌停家数阈值", "type": "number", "default": 20},
+            {"key": "north_money_in_enabled", "label": "启用北向流入提醒", "type": "boolean", "default": False},
+            {"key": "north_money_in_threshold", "label": "北向流入阈值 (亿)", "type": "float", "default": 20.0},
+            {"key": "north_money_out_enabled", "label": "启用北向流出提醒", "type": "boolean", "default": False},
+            {"key": "north_money_out_threshold", "label": "北向流出阈值 (亿)", "type": "float", "default": 20.0},
+        ],
+    },
     StrategyType.MA5_BUY.value: {
         "name": "均线低吸",
         "description": "当价格触及指定均线并企稳时提醒，支持按股票单独设置均线周期",
@@ -476,10 +536,11 @@ async def _to_response(record: dict) -> SubscriptionResponse:
     }
     
     # 获取股票名称
-    stock_names = await _get_stock_names(watch_list)
+    display_watch_list = [code for code in watch_list if str(code).strip().upper() != "ALL"]
+    stock_names = await _get_stock_names(display_watch_list)
     watch_list_info = [
         StockInfo(ts_code=code, name=stock_names.get(code, code))
-        for code in watch_list
+        for code in display_watch_list
     ]
     
     return SubscriptionResponse(
@@ -1064,7 +1125,7 @@ async def _ensure_strategy_exists(strategy_type: str) -> dict:
         "strategy_id": uuid.uuid4().hex,
         "strategy_name": meta.get("name", strategy_type),
         "strategy_type": strategy_type,
-        "watch_list": [],  # 初始为空，用户添加个股
+        "watch_list": meta.get("default_watch_list", []),  # 初始为空，用户添加个股
         "params": meta.get("default_params", {}),
         "is_active": True,
         "created_at": now,

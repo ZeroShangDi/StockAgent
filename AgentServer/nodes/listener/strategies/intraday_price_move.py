@@ -83,17 +83,37 @@ class IntradayPriceMoveStrategy(BaseStrategy):
                 continue
 
             move_pct = (current_price / reference_price - 1) * 100
+            threshold_states = self._load_threshold_states(subscription, ts_code, today_key)
+            original_threshold_states = dict(threshold_states)
+            up_crossed = self._set_threshold_state(
+                threshold_states,
+                "intraday_price_move_up",
+                direction in {"up", "both"} and move_pct >= threshold_pct,
+            )
+            down_crossed = self._set_threshold_state(
+                threshold_states,
+                "intraday_price_move_down",
+                direction in {"down", "both"} and move_pct <= -threshold_pct,
+            )
+
             triggered = False
             reason = ""
 
-            if direction in {"up", "both"} and move_pct >= threshold_pct:
+            if up_crossed:
                 triggered = True
                 reason = f"{interval_minutes}分钟涨幅 {move_pct:.2f}% 超过阈值 {threshold_pct:.2f}%"
-            elif direction in {"down", "both"} and move_pct <= -threshold_pct:
+            elif down_crossed:
                 triggered = True
                 reason = f"{interval_minutes}分钟跌幅 {abs(move_pct):.2f}% 超过阈值 {threshold_pct:.2f}%"
 
             if not triggered:
+                await self._persist_threshold_states_if_changed(
+                    subscription=subscription,
+                    ts_code=ts_code,
+                    today_key=today_key,
+                    original_states=original_threshold_states,
+                    states=threshold_states,
+                )
                 continue
 
             stock_name = str(quote.get("name") or ts_code)
@@ -120,6 +140,7 @@ class IntradayPriceMoveStrategy(BaseStrategy):
                 ts_code=ts_code,
                 today_key=today_key,
                 extra_updates={
+                    **self._build_threshold_state_updates(today_key, threshold_states),
                     "last_reference_time": reference_time.isoformat(),
                     "last_reference_price": reference_price,
                     "last_move_pct": move_pct,
