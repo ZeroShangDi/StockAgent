@@ -200,6 +200,18 @@ class MongoManager(BaseManager):
             IndexModel([("trace_id", ASCENDING)]),
             IndexModel([("node_id", ASCENDING)]),
         ])
+
+        # 智能工作台
+        await self._safe_create_indexes("assistant_conversations", [
+            IndexModel([("conversation_id", ASCENDING)], unique=True),
+            IndexModel([("user_id", ASCENDING), ("updated_at", DESCENDING)]),
+            IndexModel([("last_message_at", DESCENDING)]),
+        ])
+        await self._safe_create_indexes("assistant_artifacts", [
+            IndexModel([("artifact_id", ASCENDING)], unique=True),
+            IndexModel([("conversation_id", ASCENDING), ("created_at", DESCENDING)]),
+            IndexModel([("user_id", ASCENDING), ("created_at", DESCENDING)]),
+        ])
         
         # 股票基础信息表
         await self._safe_create_indexes("stock_basic", [
