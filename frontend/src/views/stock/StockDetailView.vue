@@ -11,6 +11,7 @@ import {
   ArrowLeft, Star, StarFilled, TrendCharts, Bell, Document, 
   Histogram, Clock, ArrowUp, ArrowDown, Refresh
 } from '@element-plus/icons-vue'
+import { StrategyType } from '@/api/types'
 import type { StockQuote, StrategySubscription, StockDaily, StrategyTypeInfo } from '@/api/types'
 
 const route = useRoute()
@@ -66,7 +67,10 @@ async function loadSubscriptions(): Promise<void> {
       subscriptionApi.getStrategyTypes(),
       subscriptionApi.getSubscriptions({ is_active: true }),
     ])
-    activeSubscriptions.value = await ensureSubscriptions(strategyTypes, existingSubs)
+    activeSubscriptions.value = await ensureSubscriptions(
+      strategyTypes.filter((item) => item.type !== StrategyType.MARKET_INDEX_ALERT),
+      existingSubs,
+    )
     
     const subscribedTypes = new Set<string>()
     for (const sub of activeSubscriptions.value) {

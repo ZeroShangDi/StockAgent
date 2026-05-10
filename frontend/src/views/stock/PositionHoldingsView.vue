@@ -219,6 +219,7 @@ import { ElMessage } from 'element-plus'
 
 import { subscriptionApi, tradeReviewApi } from '@/api'
 import { useUserStore } from '@/stores/user'
+import { StrategyType } from '@/api/types'
 import type { StrategyTypeInfo } from '@/api/types'
 import type { TradeReviewGroupSummary, TradeReviewPositionItem, TradeReviewPositionResult } from '@/api/modules/trade-review'
 
@@ -359,7 +360,9 @@ async function loadStrategyTypes(): Promise<void> {
   if (strategyTypes.value.length > 0) return
   strategyTypeLoading.value = true
   try {
-    strategyTypes.value = await subscriptionApi.getStrategyTypes()
+    strategyTypes.value = (await subscriptionApi.getStrategyTypes()).filter(
+      (item) => item.type !== StrategyType.MARKET_INDEX_ALERT,
+    )
   } finally {
     strategyTypeLoading.value = false
   }

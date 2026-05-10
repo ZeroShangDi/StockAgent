@@ -132,6 +132,14 @@ function getStrategyName(strategyType: string): string {
   return st?.name || strategyType
 }
 
+function isMarketIndexAlertStrategy(strategyType: string): boolean {
+  return strategyType === StrategyType.MARKET_INDEX_ALERT
+}
+
+function isMarketWideStrategy(strategyType: string): boolean {
+  return isMarketIndexAlertStrategy(strategyType)
+}
+
 function getParamDisplayValue(strategyType: string, key: string, fallback: unknown): string {
   if (key === 'position_group_id') {
     const sub = getSubscription(strategyType)
@@ -157,6 +165,10 @@ function getParamDisplayValue(strategyType: string, key: string, fallback: unkno
 
 function getStrategyMeta(strategyType: string): StrategyTypeInfo | undefined {
   return availableStrategyTypes.value.find(s => s.type === strategyType)
+}
+
+function requiresTradeReviewGroups(strategyType: string): boolean {
+  return getStrategyParamDefs(strategyType).some((param) => param.key === 'position_group_id')
 }
 
 function getBasicParamDefs(strategyType: string): StrategyParamDef[] {
@@ -185,9 +197,19 @@ function getWatchCount(strategyType: string): number {
   return sub?.effective_watch_count ?? sub?.watch_list_info?.length ?? 0
 }
 
+function getWatchCountLabel(strategyType: string): string {
+  if (isMarketWideStrategy(strategyType)) {
+    return '全市场'
+  }
+  return `${getWatchCount(strategyType)} 只`
+}
+
 function getWatchCountSummary(strategyType: string): string {
   const sub = getSubscription(strategyType)
   if (!sub) return '暂无监听'
+  if (isMarketWideStrategy(strategyType)) {
+    return '全市场快照 · 无需单独添加个股'
+  }
   const effective = sub.effective_watch_count ?? sub.watch_list_info?.length ?? 0
   const manual = sub.manual_watch_count ?? sub.watch_list_info?.length ?? 0
   const positionGroup = sub.effective_watch_breakdown?.position_group || 0
@@ -208,6 +230,20 @@ function getEnabledTransitionRuleCount(strategyType: string): number {
 }
 
 function getStrategyParamSummary(strategyType: string): string {
+  if (isMarketWideStrategy(strategyType)) {
+    const subscription = getSubscription(strategyType)
+    const params = (subscription?.params || {}) as Record<string, unknown>
+    const parts: string[] = []
+    if (params.index_rise_enabled) parts.push(`指数上涨 ${params.index_rise_threshold ?? 1.5}%`)
+    if (params.index_fall_enabled) parts.push(`指数下跌 ${params.index_fall_threshold ?? 1.5}%`)
+    if (params.up_count_enabled) parts.push(`上涨家数 ${params.up_count_threshold ?? 3000}`)
+    if (params.down_count_enabled) parts.push(`下跌家数 ${params.down_count_threshold ?? 3000}`)
+    if (params.limit_up_enabled) parts.push(`涨停家数 ${params.limit_up_threshold ?? 80}`)
+    if (params.limit_down_enabled) parts.push(`跌停家数 ${params.limit_down_threshold ?? 20}`)
+    if (params.north_money_in_enabled) parts.push(`北向流入 ${params.north_money_in_threshold ?? 20}亿`)
+    if (params.north_money_out_enabled) parts.push(`北向流出 ${params.north_money_out_threshold ?? 20}亿`)
+    return parts.length ? parts.join(' · ') : '当前未启用任何预警条件'
+  }
   const defs = getStrategyParamDefs(strategyType)
   if (!defs.length) return '无额外参数'
   const subscription = getSubscription(strategyType)
@@ -517,6 +553,10 @@ function getTransitionSummary(strategyType: string): string {
 
 /** 打开添加个股弹窗 */
 function openAddStockDialog(strategyType: string): void {
+  if (isMarketWideStrategy(strategyType)) {
+    ElMessage.info('该策略为全市场监听，无需添加单只股票')
+    return
+  }
   currentStrategyType.value = strategyType
   selectedStock.value = ''
   stockOptions.value = []
@@ -637,8 +677,15 @@ async function ensureTradeReviewGroupsLoaded(): Promise<void> {
 async function openEditParamsDialog(strategyType: string): Promise<void> {
   const sub = getSubscription(strategyType)
   if (!sub) return
-  
-  await ensureTradeReviewGroupsLoaded()
+
+  if (requiresTradeReviewGroups(strategyType)) {
+    try {
+      await ensureTradeReviewGroupsLoaded()
+    } catch (error) {
+      ElMessage.warning('交割单分组加载失败，先打开参数弹窗；如需持仓分组请稍后再试')
+      console.error('加载交割单分组失败:', error)
+    }
+  }
   editingStrategyType.value = strategyType
   // 复制当前参数
   editingParams.value = { ...sub.params }
@@ -919,7 +966,7 @@ onMounted(async () => {
     <header class="page-header">
       <div class="header-content">
         <h1 class="page-title">策略监听</h1>
-        <p class="page-subtitle">选择策略，添加想要监听的股票</p>
+        <p class="page-subtitle">支持个股监听与全市场指标预警，按策略配置对应条件</p>
       </div>
       <div class="header-actions">
         <el-button :icon="Refresh" @click="loadSubscriptions" :loading="loading">
@@ -991,7 +1038,7 @@ onMounted(async () => {
                   {{ isStrategyActive(st.type) ? '运行中' : '已停用' }}
                 </span>
               </div>
-              <el-tag size="small" effect="plain">实际监听 {{ getWatchCount(st.type) }} 只</el-tag>
+              <el-tag size="small" effect="plain">实际监听 {{ getWatchCountLabel(st.type) }}</el-tag>
             </div>
           </div>
 
@@ -1016,7 +1063,7 @@ onMounted(async () => {
         </div>
 
         <div class="compact-card-actions">
-          <el-button type="primary" size="small" plain @click="openAddStockDialog(st.type)">
+          <el-button v-if="!isMarketWideStrategy(st.type)" type="primary" size="small" plain @click="openAddStockDialog(st.type)">
             添加股票
           </el-button>
           <el-button
@@ -1171,12 +1218,13 @@ onMounted(async () => {
               <h4 class="section-title">
                 监听股票
                 <el-badge 
-                  :value="getWatchCount(st.type)" 
+                  :value="isMarketWideStrategy(st.type) ? '全' : getWatchCount(st.type)" 
                   :max="99"
                   class="stock-count-badge"
                 />
               </h4>
               <el-button 
+                v-if="!isMarketWideStrategy(st.type)"
                 type="primary" 
                 size="small" 
                 :icon="Plus"
@@ -1292,7 +1340,7 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="监听股票" width="100" align="center">
           <template #default="{ row }">
-            {{ getWatchCount(row.type) }}
+            {{ getWatchCountLabel(row.type) }}
           </template>
         </el-table-column>
         <el-table-column label="自动流转" min-width="180">
@@ -1303,7 +1351,7 @@ onMounted(async () => {
         <el-table-column label="操作" min-width="260" fixed="right">
           <template #default="{ row }">
             <div class="table-action-group">
-              <el-button size="small" plain type="primary" @click="openAddStockDialog(row.type)">
+              <el-button v-if="!isMarketWideStrategy(row.type)" size="small" plain type="primary" @click="openAddStockDialog(row.type)">
                 添加股票
               </el-button>
               <el-button

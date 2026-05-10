@@ -851,7 +851,9 @@ async function ensureStrategyTypesLoaded(): Promise<void> {
   if (strategyTypes.value.length > 0) return
   strategyLoading.value = true
   try {
-    strategyTypes.value = await subscriptionApi.getStrategyTypes()
+    strategyTypes.value = (await subscriptionApi.getStrategyTypes()).filter(
+      (item) => item.type !== StrategyType.MARKET_INDEX_ALERT,
+    )
     if (!selectedStrategyType.value && strategyTypes.value.length > 0) {
       selectedStrategyType.value = strategyTypes.value[0].type
     }

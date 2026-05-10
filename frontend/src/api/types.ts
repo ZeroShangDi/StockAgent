@@ -284,6 +284,7 @@ export interface CreateStrategyRequest {
 
 /** 策略类型 - 对应后端 StrategyType */
 export enum StrategyType {
+  MARKET_INDEX_ALERT = 'market_index_alert',
   LIMIT_OPEN = 'limit_open',
   PRICE_CHANGE = 'price_change',
   INTRADAY_PRICE_MOVE = 'intraday_price_move',

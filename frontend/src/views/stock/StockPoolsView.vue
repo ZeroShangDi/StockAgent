@@ -292,6 +292,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { stockPickerApi, subscriptionApi } from '@/api'
+import { StrategyType } from '@/api/types'
 import { STOCK_POOL_TYPE_OPTIONS } from '@/api/modules/stock-picker'
 import type { StockPoolDetail, StockPoolSummary, StockPoolStock } from '@/api/modules/stock-picker'
 import type { StrategyTypeInfo } from '@/api/types'
@@ -414,7 +415,9 @@ async function ensureStrategyTypesLoaded(): Promise<void> {
 
   strategyTypeLoading.value = true
   try {
-    strategyTypes.value = await subscriptionApi.getStrategyTypes()
+    strategyTypes.value = (await subscriptionApi.getStrategyTypes()).filter(
+      (item) => item.type !== StrategyType.MARKET_INDEX_ALERT,
+    )
     if (!selectedStrategyType.value && strategyTypes.value.length > 0) {
       selectedStrategyType.value = strategyTypes.value[0].type
     }

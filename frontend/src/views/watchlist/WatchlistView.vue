@@ -8,6 +8,7 @@ import { stockApi, subscriptionApi } from '@/api'
 import { ElMessage, ElMessageBox, ElDialog, ElAutocomplete, ElDropdown, ElDropdownMenu, ElDropdownItem, ElCheckbox, ElSelect, ElOption } from 'element-plus'
 import { Plus, Delete, Search, ArrowUp, ArrowDown, TrendCharts, View, Sort, Refresh, Star, Loading, Bell } from '@element-plus/icons-vue'
 import type { StockQuote, StockBasic, StrategyTypeInfo } from '@/api/types'
+import { StrategyType } from '@/api/types'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -281,7 +282,9 @@ async function ensureStrategyTypesLoaded(): Promise<void> {
 
   strategyTypeLoading.value = true
   try {
-    strategyTypes.value = await subscriptionApi.getStrategyTypes()
+    strategyTypes.value = (await subscriptionApi.getStrategyTypes()).filter(
+      (item) => item.type !== StrategyType.MARKET_INDEX_ALERT,
+    )
     if (!selectedStrategyType.value && strategyTypes.value.length > 0) {
       selectedStrategyType.value = strategyTypes.value[0].type
     }
