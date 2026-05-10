@@ -53,12 +53,13 @@ ALERT_FREQUENCY_OPTIONS = [
 # 策略元信息（名称、描述、默认参数）
 STRATEGY_META = {
     StrategyType.MA5_BUY.value: {
-        "name": "5日线低吸",
-        "description": "当价格触及5日均线时提醒，适合低吸策略",
+        "name": "均线低吸",
+        "description": "当价格触及指定均线并企稳时提醒，支持按股票单独设置均线周期",
         "schedule_type": "intraday_minute",
         "schedule_label": "盘中轮询",
         "basic_param_keys": ["alert_frequency"],
         "default_params": {
+            "ma_period": 5,
             "touch_range": 2.0,
             "stable_periods": 2,
             "once_per_day": True,
@@ -66,6 +67,7 @@ STRATEGY_META = {
             "stock_configs": {},
         },
         "param_schema": [
+            {"key": "ma_period", "label": "默认均线周期", "type": "number", "default": 5},
             {"key": "touch_range", "label": "触及范围 (%)", "type": "float", "default": 2.0},
             {"key": "stable_periods", "label": "企稳周期数", "type": "number", "default": 2},
             {"key": "alert_frequency", "label": "提醒频率", "type": "string", "default": "daily_once", "options": ALERT_FREQUENCY_OPTIONS},
@@ -554,6 +556,24 @@ def _parse_positive_float(raw_value: Any, field_name: str) -> float:
     return value
 
 
+def _parse_positive_int(
+    raw_value: Any,
+    field_name: str,
+    minimum: int = 1,
+    maximum: Optional[int] = None,
+) -> int:
+    try:
+        value = int(float(raw_value))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须为有效整数") from exc
+
+    if value < minimum:
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须大于等于 {minimum}")
+    if maximum is not None and value > maximum:
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须小于等于 {maximum}")
+    return value
+
+
 def _normalize_percent_input(raw_value: Any, field_name: str, default: float) -> float:
     candidate = default if raw_value in (None, "") else raw_value
     try:
@@ -607,6 +627,24 @@ async def _normalize_line_points(
     return normalized
 
 
+def _normalize_line_mode(raw_value: Any, line_name: str) -> str:
+    value = str(raw_value or "trend").strip().lower()
+    if value not in {"trend", "horizontal"}:
+        raise HTTPException(status_code=400, detail=f"{line_name} 模式只支持 trend 或 horizontal")
+    return value
+
+
+def _detect_horizontal_mode(config: Dict[str, Any], mode_key: str, price_key: str, points_key: str) -> str:
+    if config.get(mode_key):
+        return _normalize_line_mode(config.get(mode_key), mode_key)
+    if config.get(price_key) not in (None, ""):
+        return "horizontal"
+    points = config.get(points_key)
+    if isinstance(points, list) and len(points) == 1 and isinstance(points[0], dict) and points[0].get("price") not in (None, ""):
+        return "horizontal"
+    return "trend"
+
+
 async def _normalize_support_resistance_config(ts_code: str, config: Dict[str, Any]) -> Dict[str, Any]:
     trend_type = str(config.get("trend_type", "custom")).strip() or "custom"
     support_enabled = bool(config.get("support_enabled", False))
@@ -619,25 +657,87 @@ async def _normalize_support_resistance_config(ts_code: str, config: Dict[str, A
         "trend_type": trend_type,
         "support_enabled": support_enabled,
         "resistance_enabled": resistance_enabled,
+        "support_mode": "trend",
+        "resistance_mode": "trend",
         "support_points": [],
         "resistance_points": [],
+        "support_price": None,
+        "resistance_price": None,
         "note": str(config.get("note", "") or "").strip(),
     }
 
     if support_enabled:
-        normalized["support_points"] = await _normalize_line_points(
-            ts_code=ts_code,
-            line_type="support_points",
-            points=config.get("support_points"),
-        )
+        support_mode = _detect_horizontal_mode(config, "support_mode", "support_price", "support_points")
+        normalized["support_mode"] = support_mode
+        if support_mode == "horizontal":
+            raw_support_price = config.get("support_price")
+            if raw_support_price in (None, ""):
+                support_points = config.get("support_points")
+                if isinstance(support_points, list) and support_points and isinstance(support_points[0], dict):
+                    raw_support_price = support_points[0].get("price")
+            normalized["support_price"] = round(_parse_positive_float(raw_support_price, "支撑线价格"), 4)
+        else:
+            normalized["support_points"] = await _normalize_line_points(
+                ts_code=ts_code,
+                line_type="support_points",
+                points=config.get("support_points"),
+            )
     if resistance_enabled:
-        normalized["resistance_points"] = await _normalize_line_points(
-            ts_code=ts_code,
-            line_type="resistance_points",
-            points=config.get("resistance_points"),
-        )
+        resistance_mode = _detect_horizontal_mode(config, "resistance_mode", "resistance_price", "resistance_points")
+        normalized["resistance_mode"] = resistance_mode
+        if resistance_mode == "horizontal":
+            raw_resistance_price = config.get("resistance_price")
+            if raw_resistance_price in (None, ""):
+                resistance_points = config.get("resistance_points")
+                if isinstance(resistance_points, list) and resistance_points and isinstance(resistance_points[0], dict):
+                    raw_resistance_price = resistance_points[0].get("price")
+            normalized["resistance_price"] = round(_parse_positive_float(raw_resistance_price, "压力线价格"), 4)
+        else:
+            normalized["resistance_points"] = await _normalize_line_points(
+                ts_code=ts_code,
+                line_type="resistance_points",
+                points=config.get("resistance_points"),
+            )
 
     return normalized
+
+
+async def _normalize_ma_buy_config(
+    config: Dict[str, Any],
+    existing_config: Optional[Dict[str, Any]],
+    default_ma_period: float,
+    default_touch_range: float,
+    default_stable_periods: float,
+) -> Dict[str, Any]:
+    current = dict(existing_config or {})
+    enabled = bool(config.get("enabled", current.get("enabled", True)))
+    ma_period = _parse_positive_int(
+        config.get("ma_period", current.get("ma_period", default_ma_period)),
+        "均线周期",
+        minimum=2,
+        maximum=250,
+    )
+    touch_range = _normalize_percent_input(
+        config.get("touch_range", current.get("touch_range")),
+        "触及范围",
+        default_touch_range,
+    )
+    stable_periods = _parse_positive_int(
+        config.get("stable_periods", current.get("stable_periods", default_stable_periods)),
+        "企稳周期数",
+        minimum=1,
+        maximum=20,
+    )
+    note = str(config.get("note", current.get("note", "")) or "").strip()
+
+    return {
+        "enabled": enabled,
+        "ma_period": ma_period,
+        "touch_range": round(touch_range, 4),
+        "stable_periods": stable_periods,
+        "note": note,
+        "last_triggered_date": str(current.get("last_triggered_date", "") or ""),
+    }
 
 
 async def _normalize_fixed_stop_loss_config(
@@ -754,6 +854,18 @@ async def _initialize_stock_config_on_add(
     stock_configs = dict(params.get("stock_configs", {}) or {})
     if strategy_type == StrategyType.SUPPORT_RESISTANCE.value:
         return None
+
+    if strategy_type == StrategyType.MA5_BUY.value:
+        if stock_configs.get(ts_code):
+            return None
+        stock_configs[ts_code] = {
+            "enabled": True,
+            "ma_period": _parse_positive_int(params.get("ma_period", 5), "默认均线周期", minimum=2, maximum=250),
+            "touch_range": round(float(params.get("touch_range", 2.0) or 2.0), 4),
+            "stable_periods": _parse_positive_int(params.get("stable_periods", 2), "默认企稳周期数", minimum=1, maximum=20),
+            "note": "",
+            "last_triggered_date": "",
+        }
 
     if strategy_type == StrategyType.FIXED_STOP_LOSS.value:
         if stock_configs.get(ts_code):
@@ -1188,7 +1300,9 @@ async def add_stock_to_strategy(
     
     stock_name = stock.get("name", ts_code)
     suffix = ""
-    if strategy_type == StrategyType.SUPPORT_RESISTANCE.value:
+    if strategy_type == StrategyType.MA5_BUY.value:
+        suffix = "，可按个股调整均线周期与低吸参数"
+    elif strategy_type == StrategyType.SUPPORT_RESISTANCE.value:
         suffix = "，请继续配置撑压线点位"
     elif strategy_type == StrategyType.FIXED_STOP_LOSS.value:
         suffix = "，已按最新本地收盘价初始化固定止损基准，可后续调整"
@@ -1251,7 +1365,16 @@ async def batch_add_stocks_to_strategy(
         watch_list.append(ts_code)
         added.append(ts_code)
 
-        if strategy_type == StrategyType.FIXED_STOP_LOSS.value:
+        if strategy_type == StrategyType.MA5_BUY.value:
+            stock_configs[ts_code] = {
+                "enabled": True,
+                "ma_period": _parse_positive_int(params.get("ma_period", 5), "默认均线周期", minimum=2, maximum=250),
+                "touch_range": round(float(params.get("touch_range", 2.0) or 2.0), 4),
+                "stable_periods": _parse_positive_int(params.get("stable_periods", 2), "默认企稳周期数", minimum=1, maximum=20),
+                "note": "",
+                "last_triggered_date": "",
+            }
+        elif strategy_type == StrategyType.FIXED_STOP_LOSS.value:
             latest_record = await _get_latest_daily_record(ts_code)
             stock_configs[ts_code] = {
                 "enabled": True,
@@ -1277,7 +1400,7 @@ async def batch_add_stocks_to_strategy(
             }
 
     if added:
-        if strategy_type in {StrategyType.FIXED_STOP_LOSS.value, StrategyType.TRAILING_STOP_LOSS.value}:
+        if strategy_type in {StrategyType.MA5_BUY.value, StrategyType.FIXED_STOP_LOSS.value, StrategyType.TRAILING_STOP_LOSS.value}:
             params["stock_configs"] = stock_configs
         await mongo_manager.update_one(
             "strategy_subscriptions",
@@ -1285,7 +1408,7 @@ async def batch_add_stocks_to_strategy(
             {
                 "$set": {
                     "watch_list": watch_list,
-                    **({"params": params} if strategy_type in {StrategyType.FIXED_STOP_LOSS.value, StrategyType.TRAILING_STOP_LOSS.value} else {}),
+                    **({"params": params} if strategy_type in {StrategyType.MA5_BUY.value, StrategyType.FIXED_STOP_LOSS.value, StrategyType.TRAILING_STOP_LOSS.value} else {}),
                     "updated_at": datetime.utcnow(),
                 }
             },
@@ -1295,7 +1418,9 @@ async def batch_add_stocks_to_strategy(
     message = f"已添加 {len(added)} 只股票"
     if skipped:
         message += f"，跳过 {len(skipped)} 只已存在股票"
-    if strategy_type == StrategyType.SUPPORT_RESISTANCE.value and added:
+    if strategy_type == StrategyType.MA5_BUY.value and added:
+        message += "。已按默认均线周期初始化，可后续逐只调整"
+    elif strategy_type == StrategyType.SUPPORT_RESISTANCE.value and added:
         message += "。请后续逐只配置撑压线点位"
     elif strategy_type == StrategyType.FIXED_STOP_LOSS.value and added:
         message += "。已按最新本地收盘价初始化固定止损基准，可后续逐只调整"
@@ -1375,6 +1500,7 @@ async def update_stock_config(
 ):
     """更新单只股票的策略配置"""
     if strategy_type not in {
+        StrategyType.MA5_BUY.value,
         StrategyType.SUPPORT_RESISTANCE.value,
         StrategyType.FIXED_STOP_LOSS.value,
         StrategyType.TRAILING_STOP_LOSS.value,
@@ -1391,7 +1517,15 @@ async def update_stock_config(
     stock_configs = dict(params.get("stock_configs", {}) or {})
     current_config = dict(stock_configs.get(ts_code, {}) or {})
 
-    if strategy_type == StrategyType.SUPPORT_RESISTANCE.value:
+    if strategy_type == StrategyType.MA5_BUY.value:
+        normalized_config = await _normalize_ma_buy_config(
+            data.config,
+            current_config,
+            float(params.get("ma_period", 5) or 5),
+            float(params.get("touch_range", 2.0) or 2.0),
+            float(params.get("stable_periods", 2) or 2),
+        )
+    elif strategy_type == StrategyType.SUPPORT_RESISTANCE.value:
         normalized_config = await _normalize_support_resistance_config(ts_code, data.config)
     elif strategy_type == StrategyType.FIXED_STOP_LOSS.value:
         normalized_config = await _normalize_fixed_stop_loss_config(

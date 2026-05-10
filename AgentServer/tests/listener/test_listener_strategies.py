@@ -70,6 +70,59 @@ async def test_ma5_strategy_normalizes_percent_touch_range() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ma5_strategy_supports_stock_specific_ma_period() -> None:
+    strategy = MA5BuyStrategy()
+    strategy._cache_date = date.today().strftime("%Y%m%d")
+    strategy._stock_data["000001.SZ"] = {
+        "records": [
+            {"trade_date": "20260509", "close": 10.5},
+            {"trade_date": "20260508", "close": 10.0},
+            {"trade_date": "20260507", "close": 10.0},
+            {"trade_date": "20260506", "close": 10.0},
+            {"trade_date": "20260505", "close": 10.0},
+            {"trade_date": "20260502", "close": 10.0},
+            {"trade_date": "20260430", "close": 10.0},
+            {"trade_date": "20260429", "close": 10.0},
+            {"trade_date": "20260428", "close": 10.0},
+        ],
+    }
+
+    subscription = StrategySubscription(
+        strategy_name="均线低吸",
+        strategy_type=StrategyType.MA5_BUY,
+        watch_list=["000001.SZ"],
+        params={
+            "ma_period": 5,
+            "touch_range": 2,
+            "stable_periods": 2,
+            "stock_configs": {
+                "000001.SZ": {
+                    "enabled": True,
+                    "ma_period": 8,
+                    "touch_range": 2,
+                    "stable_periods": 2,
+                }
+            },
+        },
+    )
+    snapshot = MarketSnapshot(
+        quotes={
+            "000001.SZ": {
+                "ts_code": "000001.SZ",
+                "name": "平安银行",
+                "price": 10.1,
+                "pct_chg": 0.5,
+            }
+        }
+    )
+
+    alerts = await strategy.evaluate(subscription=subscription, snapshot=snapshot)
+
+    assert alerts == []
+    assert strategy._trackers["000001.SZ"].state == StockState.TOUCHED
+
+
+@pytest.mark.asyncio
 async def test_support_resistance_strategy_uses_effective_trade_dates() -> None:
     strategy = SupportResistanceStrategy()
     today_key = date.today().strftime("%Y%m%d")
@@ -114,6 +167,51 @@ async def test_support_resistance_strategy_uses_effective_trade_dates() -> None:
 
     assert len(alerts) == 1
     assert alerts[0].extra_data["line_type"] == "support"
+    assert alerts[0].extra_data["event_type"] == "near_support"
+
+
+@pytest.mark.asyncio
+async def test_support_resistance_strategy_supports_horizontal_line() -> None:
+    strategy = SupportResistanceStrategy()
+    today_key = date.today().strftime("%Y%m%d")
+    strategy._get_trade_dates_for_stock = AsyncMock(return_value=["20240401", today_key])  # type: ignore[method-assign]
+
+    subscription = StrategySubscription(
+        strategy_name="撑压线",
+        strategy_type=StrategyType.SUPPORT_RESISTANCE,
+        watch_list=["000001.SZ"],
+        params={
+            "near_threshold_pct": 1.0,
+            "breakout_threshold_pct": 0.5,
+            "stock_configs": {
+                "000001.SZ": {
+                    "trend_type": "custom",
+                    "support_enabled": True,
+                    "support_mode": "horizontal",
+                    "support_price": 10.0,
+                    "resistance_enabled": False,
+                    "support_points": [],
+                    "resistance_points": [],
+                }
+            },
+        },
+    )
+    snapshot = MarketSnapshot(
+        quotes={
+            "000001.SZ": {
+                "ts_code": "000001.SZ",
+                "name": "平安银行",
+                "price": 10.06,
+                "high": 10.1,
+                "low": 9.98,
+            }
+        }
+    )
+
+    alerts = await strategy.evaluate(subscription=subscription, snapshot=snapshot)
+
+    assert len(alerts) == 1
+    assert alerts[0].extra_data["line_mode"] == "horizontal"
     assert alerts[0].extra_data["event_type"] == "near_support"
 
 

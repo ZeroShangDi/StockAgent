@@ -27,7 +27,9 @@ from .base import BaseStrategy
 @dataclass
 class LineDefinition:
     line_type: str
+    mode: str
     points: List[Dict[str, Any]]
+    horizontal_price: Optional[float] = None
 
 
 class SupportResistanceStrategy(BaseStrategy):
@@ -117,18 +119,30 @@ class SupportResistanceStrategy(BaseStrategy):
 
         line_defs: List[LineDefinition] = []
         if config.get("support_enabled"):
-            support_points = config.get("support_points") or []
-            if len(support_points) == 2:
-                line_defs.append(LineDefinition("support", support_points))
+            support_mode = str(config.get("support_mode") or "trend").strip().lower()
+            if support_mode == "horizontal":
+                support_price = self._safe_float(config.get("support_price"))
+                if support_price and support_price > 0:
+                    line_defs.append(LineDefinition("support", "horizontal", [], support_price))
+            else:
+                support_points = config.get("support_points") or []
+                if len(support_points) == 2:
+                    line_defs.append(LineDefinition("support", "trend", support_points))
         if config.get("resistance_enabled"):
-            resistance_points = config.get("resistance_points") or []
-            if len(resistance_points) == 2:
-                line_defs.append(LineDefinition("resistance", resistance_points))
+            resistance_mode = str(config.get("resistance_mode") or "trend").strip().lower()
+            if resistance_mode == "horizontal":
+                resistance_price = self._safe_float(config.get("resistance_price"))
+                if resistance_price and resistance_price > 0:
+                    line_defs.append(LineDefinition("resistance", "horizontal", [], resistance_price))
+            else:
+                resistance_points = config.get("resistance_points") or []
+                if len(resistance_points) == 2:
+                    line_defs.append(LineDefinition("resistance", "trend", resistance_points))
 
         alerts: List[StrategyAlert] = []
         frequency = self._get_alert_frequency(subscription.params)
         for line_def in line_defs:
-            line_price = self._project_line_price(line_def.points, trade_dates, today_key)
+            line_price = self._project_line_price(line_def, trade_dates, today_key)
             if line_price is None or line_price <= 0:
                 continue
 
@@ -153,6 +167,7 @@ class SupportResistanceStrategy(BaseStrategy):
                     reason=reason,
                     extra_data={
                         "line_type": line_def.line_type,
+                        "line_mode": line_def.mode,
                         "trend_type": config.get("trend_type", "custom"),
                         "event_type": event_type,
                         "line_price": round(line_price, 4),
@@ -196,10 +211,14 @@ class SupportResistanceStrategy(BaseStrategy):
 
     def _project_line_price(
         self,
-        points: List[Dict[str, Any]],
+        line_def: LineDefinition,
         trade_dates: List[str],
         eval_date: str,
     ) -> Optional[float]:
+        if line_def.mode == "horizontal":
+            return line_def.horizontal_price
+
+        points = line_def.points
         normalized_points = []
         for point in points:
             point_date = point.get("date")
