@@ -20,6 +20,7 @@ from .auth import get_current_user_id
 
 router = APIRouter()
 _stock_repair_runtime_tasks: set[asyncio.Task] = set()
+_DEFAULT_STOCK_REPAIR_START_DATE = "19900101"
 
 
 # ==================== 模型 ====================
@@ -104,6 +105,70 @@ def _normalize_ts_code(code: str) -> str:
     return normalized
 
 
+def _normalize_compact_date(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    digits = "".join(char for char in text if char.isdigit())
+    if len(digits) != 8:
+        return ""
+
+    try:
+        datetime.strptime(digits, "%Y%m%d")
+    except ValueError:
+        return ""
+    return digits
+
+
+def _merge_stock_basic_records(*records: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        for key, value in record.items():
+            if value in (None, "", [], {}):
+                continue
+            merged[key] = value
+    return merged
+
+
+def _build_stock_repair_plan(
+    list_date: str,
+    list_date_source: str,
+    existing_daily_start: Optional[str],
+) -> Dict[str, Any]:
+    normalized_list_date = _normalize_compact_date(list_date)
+    normalized_existing_start = _normalize_compact_date(existing_daily_start)
+
+    if normalized_list_date:
+        start_date = normalized_list_date
+        mode = "full_history_repair"
+        start_date_reason = "resolved_list_date"
+        start_date_reason_label = "已解析上市日期"
+    else:
+        start_date = _DEFAULT_STOCK_REPAIR_START_DATE
+        mode = "full_history_repair"
+        start_date_reason = "fallback_default_history_start"
+        start_date_reason_label = f"缺少上市日期，回退到默认历史起点 {_DEFAULT_STOCK_REPAIR_START_DATE}"
+
+    planned_to_extend_earlier = bool(
+        normalized_existing_start and start_date < normalized_existing_start
+    )
+
+    return {
+        "mode": mode,
+        "mode_label": "完整补数" if mode == "full_history_repair" else "仅刷新已有区间",
+        "start_date": start_date,
+        "start_date_reason": start_date_reason,
+        "start_date_reason_label": start_date_reason_label,
+        "list_date_source": list_date_source or "unknown",
+        "resolved_list_date": normalized_list_date or None,
+        "existing_daily_start": normalized_existing_start or None,
+        "planned_to_extend_earlier": planned_to_extend_earlier,
+    }
+
+
 async def _ensure_data_source_manager_ready() -> None:
     if not getattr(data_source_manager, "_initialized", False):
         await data_source_manager.initialize()
@@ -111,6 +176,21 @@ async def _ensure_data_source_manager_ready() -> None:
 
 async def _update_stock_repair_task(task_id: str, **fields: Any) -> None:
     await mongo_manager.update_one("tasks", {"task_id": task_id}, {"$set": fields})
+
+
+async def _get_single_stock_basic_record(
+    ts_code: str,
+    preferred_source: Optional[str] = None,
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    stock_basic_records, stock_basic_source = await data_source_manager.get_stock_basic(
+        ts_code=ts_code,
+        preferred_source=preferred_source,
+    )
+    stock_basic_record = next(
+        (item for item in (stock_basic_records or []) if str(item.get("ts_code") or "").upper() == ts_code),
+        None,
+    )
+    return stock_basic_record, stock_basic_source
 
 
 async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> None:
@@ -140,24 +220,58 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
             projection={"trade_date": 1, "_id": 0},
             sort=[("trade_date", 1)],
         )
+        existing_daily_start = existing_daily[0]["trade_date"] if existing_daily else None
         existing_basic_count = 1 if existing_basic else 0
         existing_daily_count = len(existing_daily)
         existing_daily_basic_count = await mongo_manager.count("daily_basic", {"ts_code": normalized_ts_code})
 
         await step(15, "同步基础信息", "正在获取股票基础信息")
-        stock_basic_records, stock_basic_source = await data_source_manager.get_stock_basic(ts_code=normalized_ts_code)
-        stock_basic_record = next(
-            (item for item in (stock_basic_records or []) if str(item.get("ts_code") or "").upper() == normalized_ts_code),
-            None,
-        ) or existing_basic
+        stock_basic_record, stock_basic_source = await _get_single_stock_basic_record(
+            normalized_ts_code,
+            preferred_source="tushare",
+        )
+        stock_basic_doc = _merge_stock_basic_records(existing_basic, stock_basic_record)
+        primary_list_date = _normalize_compact_date((stock_basic_record or {}).get("list_date"))
+        existing_list_date = _normalize_compact_date((existing_basic or {}).get("list_date"))
+        if primary_list_date:
+            list_date = primary_list_date
+            list_date_source = stock_basic_source or "primary_stock_basic"
+        elif existing_list_date:
+            list_date = existing_list_date
+            list_date_source = "local_cache"
+        else:
+            list_date = ""
+            list_date_source = "unknown"
+
+        if not list_date and stock_basic_source != "tushare":
+            tushare_stock_basic_record, tushare_stock_basic_source = await _get_single_stock_basic_record(
+                normalized_ts_code,
+                preferred_source="tushare",
+            )
+            stock_basic_doc = _merge_stock_basic_records(stock_basic_doc, tushare_stock_basic_record)
+            tushare_list_date = _normalize_compact_date((tushare_stock_basic_record or {}).get("list_date"))
+            if tushare_list_date:
+                list_date = tushare_list_date
+                list_date_source = tushare_stock_basic_source or "tushare"
+                warnings.append("基础信息缺少上市日期，已额外通过 Tushare 补齐后执行完整补数")
+
+        if not list_date:
+            list_date_source = "default_history_start"
+            warnings.append(
+                f"基础信息缺少上市日期，已改用默认历史起点 {_DEFAULT_STOCK_REPAIR_START_DATE} 执行完整补数"
+            )
+
         if not stock_basic_record:
-            raise ValueError(f"未找到 {normalized_ts_code} 的基础信息")
+            if not stock_basic_doc:
+                raise ValueError(f"未找到 {normalized_ts_code} 的基础信息")
 
         latest_trade_date, latest_trade_source = await data_source_manager.get_latest_trade_date()
-        list_date = str(stock_basic_record.get("list_date") or "").strip()
-        if not list_date:
-            list_date = existing_daily[0]["trade_date"] if existing_daily else "19900101"
-            warnings.append("基础信息缺少上市日期，已使用本地最早日线或 19900101 作为补数起点")
+        repair_plan = _build_stock_repair_plan(
+            list_date=list_date,
+            list_date_source=list_date_source,
+            existing_daily_start=existing_daily_start,
+        )
+        list_date = repair_plan["start_date"]
         end_date = str(latest_trade_date or datetime.now().strftime("%Y%m%d"))
 
         daily_basic_latest_record = None
@@ -166,14 +280,17 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
             latest_basic_records, daily_basic_source = await data_source_manager.get_daily_basic(
                 ts_code=normalized_ts_code,
                 trade_date=latest_trade_date,
+                preferred_source="tushare",
             )
             if latest_basic_records:
                 daily_basic_latest_record = latest_basic_records[0]
 
-        stock_basic_doc = dict(stock_basic_record)
+        stock_basic_doc = dict(stock_basic_doc)
         if daily_basic_latest_record:
             _add_financial_metrics(stock_basic_doc, daily_basic_latest_record)
         stock_basic_doc["ts_code"] = normalized_ts_code
+        if repair_plan["resolved_list_date"] and not _normalize_compact_date(stock_basic_doc.get("list_date")):
+            stock_basic_doc["list_date"] = repair_plan["resolved_list_date"]
         await mongo_manager.bulk_upsert("stock_basic", [stock_basic_doc], key_fields=["ts_code"])
 
         await _update_stock_repair_task(
@@ -182,11 +299,16 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
             ts_codes=[normalized_ts_code],
         )
 
-        await step(45, "同步日线数据", f"正在补充 {list_date} 到 {end_date} 的日线数据")
+        await step(
+            45,
+            "同步日线数据",
+            f"正在按{repair_plan['mode_label']}补充 {list_date} 到 {end_date} 的日线数据",
+        )
         daily_records, daily_source = await data_source_manager.get_daily(
             ts_code=normalized_ts_code,
             start_date=list_date,
             end_date=end_date,
+            preferred_source="baostock" if repair_plan["mode"] == "full_history_repair" else None,
         )
         if not daily_records:
             raise ValueError(f"未能获取 {normalized_ts_code} 的日线数据")
@@ -204,6 +326,7 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
             ts_code=normalized_ts_code,
             start_date=list_date,
             end_date=end_date,
+            preferred_source="tushare",
         )
         cleaned_daily_basic_records: List[Dict[str, Any]] = []
         if daily_basic_records:
@@ -229,13 +352,25 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
             projection={"trade_date": 1, "_id": 0},
             sort=[("trade_date", 1)],
         )
+        refreshed_daily_start = refreshed_daily[0]["trade_date"] if refreshed_daily else None
+        refreshed_daily_end = refreshed_daily[-1]["trade_date"] if refreshed_daily else None
         refreshed_daily_basic_count = await mongo_manager.count("daily_basic", {"ts_code": normalized_ts_code})
+        history_extended_earlier = bool(
+            refreshed_daily_start and (
+                not existing_daily_start or refreshed_daily_start < existing_daily_start
+            )
+        )
+
+        if repair_plan["planned_to_extend_earlier"] and not history_extended_earlier:
+            warnings.append("本次任务已尝试向更早历史补数，但本地最早日线未前移，数据源可能仍未返回更早区间")
 
         result = {
             "ts_code": normalized_ts_code,
             "date_range": {"start_date": list_date, "end_date": end_date},
+            "repair_plan": repair_plan,
             "sources": {
                 "stock_basic": stock_basic_source or "unknown",
+                "list_date": repair_plan["list_date_source"],
                 "latest_trade_date": latest_trade_source or "unknown",
                 "stock_daily": daily_source or "unknown",
                 "daily_basic": daily_basic_source_range or daily_basic_source or "unknown",
@@ -261,8 +396,10 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
                 },
             },
             "coverage": {
-                "stock_daily_start": refreshed_daily[0]["trade_date"] if refreshed_daily else None,
-                "stock_daily_end": refreshed_daily[-1]["trade_date"] if refreshed_daily else None,
+                "stock_daily_start_before": existing_daily_start,
+                "stock_daily_start": refreshed_daily_start,
+                "stock_daily_end": refreshed_daily_end,
+                "history_extended_earlier": history_extended_earlier,
             },
             "warnings": warnings,
         }
