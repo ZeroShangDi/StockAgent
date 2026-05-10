@@ -1,8 +1,5 @@
 <template>
   <div class="stock-pool-session">
-    <button class="focus-fab" type="button" @click="toggleFocusMode">
-      {{ isFocusMode ? '退出专注' : '专注模式' }}
-    </button>
     <section class="session-shell" v-loading="loading">
       <header class="session-header">
         <div class="title-block">
@@ -484,7 +481,6 @@ const lineModeOptions = [
 
 const currentPoolId = computed(() => String(route.params.poolId || ''))
 const currentTsCode = computed(() => String(route.params.tsCode || '').toUpperCase())
-const isFocusMode = ref(false)
 const selectedKlinePeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
 const klinePeriodOptions = [
   { label: '日K', value: 'daily' },
@@ -909,12 +905,6 @@ function backToPool(): void {
   router.push({ name: 'StockPools' })
 }
 
-function toggleFocusMode(): void {
-  isFocusMode.value = !isFocusMode.value
-  window.localStorage.setItem('stockagent.focus_mode', isFocusMode.value ? '1' : '0')
-  window.dispatchEvent(new Event('stockagent-focus-mode-change'))
-}
-
 async function addCurrentToWatchlist(): Promise<void> {
   if (!context.value) return
   watchlistLoading.value = true
@@ -1179,7 +1169,6 @@ watch(
 )
 
 onMounted(() => {
-  isFocusMode.value = typeof window !== 'undefined' && window.localStorage.getItem('stockagent.focus_mode') === '1'
   window.addEventListener('keydown', handleKeydown)
   loadContext()
   ensureStrategyTypesLoaded()
@@ -1197,34 +1186,6 @@ onBeforeUnmount(() => {
   padding: 1rem 1.25rem 1.25rem;
   min-width: 0;
   position: relative;
-}
-
-.focus-fab {
-  position: fixed;
-  top: 16px;
-  right: 18px;
-  z-index: 40;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid rgba(59, 130, 246, 0.18);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  color: var(--el-color-primary);
-  font-size: 13px;
-  font-weight: 600;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(12px);
-  cursor: pointer;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
-}
-
-.focus-fab:hover {
-  transform: translateY(-1px);
-  border-color: rgba(59, 130, 246, 0.32);
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14);
 }
 
 .session-shell {

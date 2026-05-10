@@ -150,10 +150,28 @@ async function handleLogout(): Promise<void> {
 function handleFocusModeChange(): void {
   focusModeEnabled.value = typeof window !== 'undefined' && window.localStorage.getItem('stockagent.focus_mode') === '1'
 }
+
+function toggleFocusMode(): void {
+  const nextValue = !focusModeEnabled.value
+  focusModeEnabled.value = nextValue
+  window.localStorage.setItem('stockagent.focus_mode', nextValue ? '1' : '0')
+  window.dispatchEvent(new Event('stockagent-focus-mode-change'))
+}
 </script>
 
 <template>
   <ElContainer class="main-layout" :class="{ 'focus-mode': isFocusMode }">
+    <button
+      class="global-focus-fab"
+      :class="{ active: isFocusMode }"
+      :aria-label="isFocusMode ? '退出专注模式' : '进入专注模式'"
+      :title="isFocusMode ? '退出专注模式' : '进入专注模式'"
+      type="button"
+      @click="toggleFocusMode"
+    >
+      <span class="global-focus-fab-dot" />
+      <span class="global-focus-fab-label">{{ isFocusMode ? '退出专注' : '进入专注' }}</span>
+    </button>
     <!-- 侧边栏 -->
     <ElAside v-show="!isFocusMode" :width="isCollapsed ? '64px' : '220px'" class="sidebar">
       <div class="logo" :class="{ collapsed: isCollapsed }">
@@ -263,6 +281,95 @@ function handleFocusModeChange(): void {
 .main-layout {
   min-height: 100vh;
   overflow: hidden;
+}
+
+.global-focus-fab {
+  position: fixed;
+  left: calc(v-bind("isFocusMode ? '20px' : (isCollapsed ? '80px' : '236px')"));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  z-index: 3000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid rgba(37, 99, 235, 0.28);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.96);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 16px 36px rgba(37, 99, 235, 0.28);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    width 0.24s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    left 0.3s ease;
+}
+
+.global-focus-fab:hover,
+.global-focus-fab:focus-visible {
+  width: 126px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 16px 0 15px;
+  transform: translateY(-1px);
+  background: rgba(29, 78, 216, 0.98);
+  box-shadow: 0 20px 40px rgba(37, 99, 235, 0.34);
+}
+
+.global-focus-fab.active {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(15, 23, 42, 0.35);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.24);
+}
+
+.global-focus-fab.active:hover,
+.global-focus-fab.active:focus-visible {
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.28);
+}
+
+.global-focus-fab-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.14);
+  transition: transform 0.24s ease, box-shadow 0.24s ease, background-color 0.24s ease;
+}
+
+.global-focus-fab:hover .global-focus-fab-dot,
+.global-focus-fab:focus-visible .global-focus-fab-dot {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.16);
+}
+
+.global-focus-fab-label {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+  transform: translateX(-6px);
+  transition:
+    max-width 0.24s ease,
+    opacity 0.18s ease,
+    transform 0.24s ease;
+}
+
+.global-focus-fab:hover .global-focus-fab-label,
+.global-focus-fab:focus-visible .global-focus-fab-label {
+  max-width: 72px;
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .main-layout.focus-mode {
@@ -488,6 +595,28 @@ function handleFocusModeChange(): void {
         color: var(--text-primary);
       }
     }
+  }
+}
+
+@media (max-width: 768px) {
+  .global-focus-fab {
+    left: 16px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+    width: 44px;
+    height: 44px;
+  }
+
+  .global-focus-fab:hover,
+  .global-focus-fab:focus-visible {
+    width: 44px;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+    transform: none;
+  }
+
+  .global-focus-fab-label {
+    display: none;
   }
 }
 
