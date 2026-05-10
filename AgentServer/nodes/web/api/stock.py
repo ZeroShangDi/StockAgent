@@ -225,7 +225,7 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
         existing_daily_count = len(existing_daily)
         existing_daily_basic_count = await mongo_manager.count("daily_basic", {"ts_code": normalized_ts_code})
 
-        await step(15, "同步基础信息", "正在获取股票基础信息")
+        await step(15, "同步基础信息", "正在获取股票基础信息并优先补齐上市日期")
         stock_basic_record, stock_basic_source = await _get_single_stock_basic_record(
             normalized_ts_code,
             preferred_source="tushare",
@@ -265,6 +265,11 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
             if not stock_basic_doc:
                 raise ValueError(f"未找到 {normalized_ts_code} 的基础信息")
 
+        await step(
+            28,
+            "更新上市日期",
+            f"已确定历史补数起点 {list_date or _DEFAULT_STOCK_REPAIR_START_DATE}，正在写入基础信息",
+        )
         latest_trade_date, latest_trade_source = await data_source_manager.get_latest_trade_date()
         repair_plan = _build_stock_repair_plan(
             list_date=list_date,
