@@ -372,11 +372,18 @@ export interface StrategyStockPoint {
 }
 
 export interface StrategyStockConfig {
+  ma_period?: number | null
+  touch_range?: number | null
+  stable_periods?: number | null
   trend_type?: string
   support_enabled?: boolean
   resistance_enabled?: boolean
+  support_mode?: 'trend' | 'horizontal'
+  resistance_mode?: 'trend' | 'horizontal'
   support_points?: StrategyStockPoint[]
   resistance_points?: StrategyStockPoint[]
+  support_price?: number | null
+  resistance_price?: number | null
   enabled?: boolean
   reference_price?: number | null
   reference_date?: string
