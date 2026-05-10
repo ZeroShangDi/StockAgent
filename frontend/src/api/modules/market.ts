@@ -226,12 +226,72 @@ export interface MarketWeatherHistoryResult {
   history: MarketWeatherRecord[]
 }
 
+export interface MarketWeatherDashboardPoint {
+  trade_date: string
+  display_trade_date: string
+  temperature_index: number
+  position_pct: number
+  action: string
+  strategy: string
+  benchmark_return_pct: number
+  strategy_return_pct: number
+  benchmark_nav: number
+  strategy_nav: number
+  benchmark_close?: number | null
+  limit_premium_factor: number
+  trend_factor: number
+  volume_factor: number
+  breadth_factor: number
+  momentum_factor: number
+}
+
+export interface MarketWeatherCoverage {
+  count: number
+  earliest_trade_date?: string | null
+  latest_trade_date?: string | null
+  earliest_display_trade_date?: string | null
+  latest_display_trade_date?: string | null
+}
+
+export interface MarketWeatherConfidence {
+  strategy_return_pct?: number | null
+  benchmark_return_pct?: number | null
+  excess_return_pct?: number | null
+  strategy_max_drawdown_pct?: number | null
+  benchmark_max_drawdown_pct?: number | null
+  strategy_win_rate_pct?: number | null
+  average_position_pct?: number | null
+  high_position_signal_count?: number
+  high_position_avg_forward_5d_pct?: number | null
+  high_position_win_rate_5d_pct?: number | null
+  low_position_signal_count?: number
+  low_position_avg_forward_5d_pct?: number | null
+  low_position_win_rate_5d_pct?: number | null
+}
+
+export interface MarketWeatherDashboardResult {
+  benchmark: string
+  coverage: MarketWeatherCoverage
+  benchmark_coverage: Record<string, {
+    count: number
+    earliest_trade_date?: string | null
+    latest_trade_date?: string | null
+  }>
+  history: MarketWeatherDashboardPoint[]
+  confidence: MarketWeatherConfidence
+}
+
 export interface MarketWeatherSyncResult {
   requested: number
   success: number
   skipped: number
   failed: number
   errors: { trade_date: string; error: string }[]
+  empty?: number
+  stopped_early?: boolean
+  stop_reason?: string
+  first_success?: string | null
+  last_success?: string | null
 }
 
 export const marketApi = {
@@ -304,10 +364,29 @@ export const marketApi = {
     api.get<MarketWeatherHistoryResult>('/market/weather/history', { params: { days } }),
 
   /**
+   * 获取市场晴雨表分析面板
+   */
+  getMarketWeatherDashboard: (params?: { start_date?: string; end_date?: string; benchmark?: string }) =>
+    api.get<MarketWeatherDashboardResult>('/market/weather/dashboard', { params }),
+
+  /**
    * 同步市场晴雨表历史
    */
   syncMarketWeather: (days: number = 30, overwrite: boolean = false) =>
     api.post<MarketWeatherSyncResult>('/market/weather/sync', null, { params: { days, overwrite } }),
+
+  /**
+   * 按区间补市场晴雨表
+   */
+  syncMarketWeatherRange: (params: {
+    start_date: string
+    end_date: string
+    overwrite?: boolean
+    descending?: boolean
+    sleep_seconds?: number
+    stop_on_empty_streak?: number
+  }) =>
+    api.post<MarketWeatherSyncResult>('/market/weather/sync-range', null, { params }),
 
   // ==================== 热点新闻 ====================
 
