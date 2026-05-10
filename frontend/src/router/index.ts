@@ -128,6 +128,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '一句话选股' },
       },
       {
+        path: 'assistant',
+        name: 'AssistantWorkspace',
+        component: () => import('@/views/assistant/AssistantWorkspaceView.vue'),
+        meta: { title: '智能工作台', immersive: true },
+      },
+      {
         path: 'stock-pools',
         name: 'StockPools',
         component: () => import('@/views/stock/StockPoolsView.vue'),

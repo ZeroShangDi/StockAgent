@@ -41,6 +41,7 @@ import {
   Opportunity,
   CollectionTag,
   DataLine,
+  ChatDotRound,
 } from '@element-plus/icons-vue'
 import { useAuth } from '@/hooks'
 import { useUserStore, useTaskStore, useThemeStore } from '@/stores'
@@ -62,6 +63,7 @@ const focusModeEnabled = ref(false)
 const activeMenu = computed(() => {
   const path = route.path
   if (path.startsWith('/analysis')) return '/analysis'
+  if (path.startsWith('/assistant')) return '/assistant'
   if (path.startsWith('/stock-picker')) return '/stock-picker'
   if (path.startsWith('/stock-pools')) return '/stock-pools'
   if (path.startsWith('/positions')) return '/positions'
@@ -73,7 +75,7 @@ const activeMenu = computed(() => {
 })
 
 const activeTaskCount = computed(() => taskStore.activeTaskCount)
-const isFocusMode = computed(() => focusModeEnabled.value)
+const isFocusMode = computed(() => focusModeEnabled.value || route.matched.some(record => record.meta.immersive))
 
 // ==================== 菜单项 ====================
 
@@ -83,6 +85,7 @@ const menuSections = [
     title: '新增与改造',
     items: [
       { path: '/market-weather', icon: Sunny, title: '市场晴雨表' },
+      { path: '/assistant', icon: ChatDotRound, title: '智能工作台' },
       { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
       { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
       { path: '/watchlist', icon: Star, title: '自选股' },
