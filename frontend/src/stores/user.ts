@@ -5,7 +5,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { userApi } from '@/api'
-import type { UserInfo, UserPreferences } from '@/api/types'
+import type { NotificationChannel, UserInfo, UserPreferences } from '@/api/types'
 
 export const useUserStore = defineStore('user', () => {
   // ==================== 状态 ====================
@@ -40,6 +40,9 @@ export const useUserStore = defineStore('user', () => {
   
   /** 用户偏好 */
   const preferences = computed(() => userInfo.value?.preferences || {})
+
+  /** 通知机器人列表 */
+  const notificationChannels = computed<NotificationChannel[]>(() => userInfo.value?.notification_channels || [])
   
   /** 主题 */
   const theme = computed(() => userInfo.value?.preferences?.theme || 'light')
@@ -115,6 +118,60 @@ export const useUserStore = defineStore('user', () => {
       return false
     }
   }
+
+  /** 新增通知机器人 */
+  async function createNotificationChannel(payload: {
+    name: string
+    provider: NotificationChannel['provider']
+    webhook: string
+  }): Promise<boolean> {
+    try {
+      const channel = await userApi.createNotificationChannel(payload)
+      if (userInfo.value) {
+        userInfo.value.notification_channels = [...(userInfo.value.notification_channels || []), channel]
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** 更新通知机器人 */
+  async function updateNotificationChannel(
+    channelId: string,
+    payload: {
+      name?: string
+      provider?: NotificationChannel['provider']
+      webhook?: string
+    }
+  ): Promise<boolean> {
+    try {
+      const channel = await userApi.updateNotificationChannel(channelId, payload)
+      if (userInfo.value) {
+        userInfo.value.notification_channels = (userInfo.value.notification_channels || []).map((item) =>
+          item.channel_id === channelId ? channel : item
+        )
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** 删除通知机器人 */
+  async function deleteNotificationChannel(channelId: string): Promise<boolean> {
+    try {
+      await userApi.deleteNotificationChannel(channelId)
+      if (userInfo.value) {
+        userInfo.value.notification_channels = (userInfo.value.notification_channels || []).filter(
+          (item) => item.channel_id !== channelId
+        )
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
   
   return {
     // 状态
@@ -129,6 +186,7 @@ export const useUserStore = defineStore('user', () => {
     avatar,
     watchlist,
     preferences,
+    notificationChannels,
     theme,
     isAdmin,
     
@@ -140,5 +198,8 @@ export const useUserStore = defineStore('user', () => {
     addToWatchlist,
     removeFromWatchlist,
     updatePreferences,
+    createNotificationChannel,
+    updateNotificationChannel,
+    deleteNotificationChannel,
   }
 })

@@ -3,7 +3,12 @@
  */
 
 import { api } from '../client'
-import type { UserInfo, UserPreferences } from '../types'
+import type {
+  NotificationChannel,
+  NotificationProvider,
+  UserInfo,
+  UserPreferences,
+} from '../types'
 
 export const userApi = {
   /** 获取当前用户信息 */
@@ -34,5 +39,36 @@ export const userApi = {
   /** 更新偏好设置 */
   updatePreferences(preferences: Partial<UserPreferences>): Promise<{ message: string }> {
     return api.put('/users/me/preferences', preferences)
+  },
+
+  /** 获取通知机器人列表 */
+  getNotificationChannels(): Promise<NotificationChannel[]> {
+    return api.get('/users/me/notification-channels')
+  },
+
+  /** 新增通知机器人 */
+  createNotificationChannel(data: {
+    name: string
+    provider: NotificationProvider
+    webhook: string
+  }): Promise<NotificationChannel> {
+    return api.post('/users/me/notification-channels', data)
+  },
+
+  /** 更新通知机器人 */
+  updateNotificationChannel(
+    channelId: string,
+    data: {
+      name?: string
+      provider?: NotificationProvider
+      webhook?: string
+    }
+  ): Promise<NotificationChannel> {
+    return api.put(`/users/me/notification-channels/${channelId}`, data)
+  },
+
+  /** 删除通知机器人 */
+  deleteNotificationChannel(channelId: string): Promise<{ message: string }> {
+    return api.delete(`/users/me/notification-channels/${channelId}`)
   },
 }

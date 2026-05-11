@@ -72,6 +72,17 @@ export interface UserPreferences {
   default_market?: string
 }
 
+export type NotificationProvider = 'wecom' | 'dingtalk'
+
+export interface NotificationChannel {
+  channel_id: string
+  name: string
+  provider: NotificationProvider
+  webhook: string
+  created_at: string
+  updated_at: string
+}
+
 export interface UserInfo {
   user_id: string
   username: string
@@ -80,6 +91,7 @@ export interface UserInfo {
   avatar: string | null
   watchlist: string[]
   preferences: UserPreferences
+  notification_channels: NotificationChannel[]
   is_admin: boolean
   created_at: string
   last_login: string | null
