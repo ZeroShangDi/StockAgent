@@ -14,12 +14,6 @@
           </div>
           <div class="header-actions">
             <el-button @click="backToPicker">返回选股结果</el-button>
-            <el-button :disabled="!context.navigation.previous_ts_code" @click="jumpTo(context.navigation.previous_ts_code)">
-              上一只
-            </el-button>
-            <el-button type="success" :disabled="!context.navigation.next_ts_code" @click="jumpTo(context.navigation.next_ts_code)">
-              下一只
-            </el-button>
           </div>
         </header>
 
@@ -34,6 +28,13 @@
                 :monthly="chartMonthly"
                 :initial-zoom-start="70"
                 :initial-zoom-end="100"
+                :show-navigation="true"
+                :previous-disabled="!context.navigation.previous_ts_code"
+                :next-disabled="!context.navigation.next_ts_code"
+                previous-label="上一只"
+                next-label="下一只"
+                @previous="jumpTo(context.navigation.previous_ts_code)"
+                @next="jumpTo(context.navigation.next_ts_code)"
               >
                 <template #footer>
                   <div class="block">

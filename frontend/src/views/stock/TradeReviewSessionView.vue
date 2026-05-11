@@ -13,16 +13,7 @@
         </div>
         <div class="header-actions">
           <el-button @click="backToList">返回列表</el-button>
-          <el-button :disabled="!context?.navigation.previous_record_id" @click="jumpToPrevious">上一条</el-button>
           <el-button type="primary" :loading="saving" @click="() => saveReview()">保存</el-button>
-          <el-button
-            type="success"
-            :disabled="!context?.navigation.next_record_id"
-            :loading="savingAndMoving"
-            @click="jumpToNext"
-          >
-            下一条
-          </el-button>
         </div>
       </header>
 
@@ -38,6 +29,13 @@
               :markers="context.markers"
               :initial-zoom-start="context.zoom.start"
               :initial-zoom-end="context.zoom.end"
+              :show-navigation="true"
+              :previous-disabled="!context.navigation.previous_record_id || saving || savingAndMoving"
+              :next-disabled="!context.navigation.next_record_id || saving || savingAndMoving"
+              previous-label="上一条"
+              next-label="下一条"
+              @previous="jumpToPrevious"
+              @next="jumpToNext"
             >
               <template #extraChips>
                 <span class="trade-chip">{{ formatTradeDate(context.record.trade_date) }}</span>
@@ -414,18 +412,6 @@ function handleKeydown(event: KeyboardEvent): void {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
     event.preventDefault()
     void saveReview()
-    return
-  }
-
-  if (event.key === 'ArrowLeft') {
-    event.preventDefault()
-    void jumpToPrevious()
-    return
-  }
-
-  if (event.key === 'ArrowRight') {
-    event.preventDefault()
-    void jumpToNext()
     return
   }
 

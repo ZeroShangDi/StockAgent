@@ -1,34 +1,57 @@
 <template>
   <div class="review-chart-panel">
     <div class="chart-meta">
-      <div class="chart-title-block">
-        <div>
+      <div class="chart-toolbar">
+        <div class="chart-title-block">
           <strong>{{ stock.name || stock.ts_code }}</strong>
           <span>{{ stock.ts_code }}</span>
         </div>
-        <el-radio-group v-model="selectedKlinePeriod" size="small" class="period-switch">
-          <el-radio-button
-            v-for="option in klinePeriodOptions"
-            :key="option.value"
-            :label="option.value"
-          >
-            {{ option.label }}
-          </el-radio-button>
-        </el-radio-group>
+
+        <div class="toolbar-right">
+          <div class="quote-meta" v-if="showCommonMeta">
+            <span class="meta-item">{{ stock.industry || '未知行业' }}</span>
+            <span class="meta-item" :class="getPnlClass(stock.latest_pct_chg)">
+              {{ formatSignedPct(stock.latest_pct_chg) }}
+            </span>
+            <span class="meta-item" :class="getPnlClass(stock.recent_30d_pct_chg)">
+              30日 {{ formatSignedPct(stock.recent_30d_pct_chg) }}
+            </span>
+            <span class="meta-item">{{ stock.latest_price ? formatNumber(stock.latest_price) : '--' }}</span>
+          </div>
+
+          <div class="toolbar-actions">
+            <el-button
+              v-if="showNavigation"
+              size="small"
+              text
+              :disabled="previousDisabled"
+              @click="emit('previous')"
+            >
+              {{ previousLabel }}
+            </el-button>
+            <el-button
+              v-if="showNavigation"
+              size="small"
+              text
+              :disabled="nextDisabled"
+              @click="emit('next')"
+            >
+              {{ nextLabel }}
+            </el-button>
+            <el-radio-group v-model="selectedKlinePeriod" size="small" class="period-switch">
+              <el-radio-button
+                v-for="option in klinePeriodOptions"
+                :key="option.value"
+                :label="option.value"
+              >
+                {{ option.label }}
+              </el-radio-button>
+            </el-radio-group>
+          </div>
+        </div>
       </div>
 
-      <div class="trade-chip-group">
-        <span class="trade-chip">{{ stock.industry || '未知行业' }}</span>
-        <span class="trade-chip" :class="getPnlClass(stock.latest_pct_chg)">
-          {{ formatSignedPct(stock.latest_pct_chg) }}
-        </span>
-        <span class="trade-chip" :class="getPnlClass(stock.recent_30d_pct_chg)">
-          近30日 {{ formatSignedPct(stock.recent_30d_pct_chg) }}
-        </span>
-        <span class="trade-chip">{{ stock.latest_price ? formatNumber(stock.latest_price) : '--' }}</span>
-      </div>
-
-      <div v-if="$slots.extraChips" class="trade-chip-group">
+      <div v-if="$slots.extraChips" class="extra-chip-group">
         <slot name="extraChips" />
       </div>
     </div>
@@ -36,7 +59,6 @@
     <div class="chart-wrap">
       <StockChart
         ref="chartRef"
-        :key="chartKey"
         :data="selectedChartData"
         :ts-code="stock.ts_code"
         :markers="selectedChartMarkers"
@@ -54,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import StockChart from '@/components/charts/StockChart.vue'
 import type { StockDaily } from '@/api/types'
@@ -89,6 +111,13 @@ const props = withDefaults(defineProps<{
   initialZoomStart?: number
   initialZoomEnd?: number
   resetZoomOnTsCodeChange?: boolean
+  showCommonMeta?: boolean
+  showNavigation?: boolean
+  previousDisabled?: boolean
+  nextDisabled?: boolean
+  previousLabel?: string
+  nextLabel?: string
+  enableKeyboardShortcuts?: boolean
 }>(), {
   markers: () => [],
   chartKey: '',
@@ -96,7 +125,19 @@ const props = withDefaults(defineProps<{
   initialZoomStart: 70,
   initialZoomEnd: 100,
   resetZoomOnTsCodeChange: false,
+  showCommonMeta: true,
+  showNavigation: false,
+  previousDisabled: false,
+  nextDisabled: false,
+  previousLabel: '上一只',
+  nextLabel: '下一只',
+  enableKeyboardShortcuts: true,
 })
+
+const emit = defineEmits<{
+  previous: []
+  next: []
+}>()
 
 const chartRef = ref<InstanceType<typeof StockChart> | null>(null)
 const selectedKlinePeriod = ref<KlinePeriod>('daily')
@@ -178,6 +219,51 @@ function zoomOut(): void {
   chartRef.value?.zoomOut?.()
 }
 
+function isTypingElement(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null
+  if (!element) return false
+  const tagName = element.tagName?.toLowerCase()
+  return tagName === 'input'
+    || tagName === 'textarea'
+    || !!element.closest('.el-input, .el-textarea, .el-select, .el-date-editor, .el-radio-group')
+    || element.isContentEditable
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (!props.enableKeyboardShortcuts || isTypingElement(event.target)) return
+
+  if (event.key === 'ArrowLeft' && props.showNavigation && !props.previousDisabled) {
+    event.preventDefault()
+    emit('previous')
+    return
+  }
+
+  if (event.key === 'ArrowRight' && props.showNavigation && !props.nextDisabled) {
+    event.preventDefault()
+    emit('next')
+    return
+  }
+
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    zoomIn()
+    return
+  }
+
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    zoomOut()
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
+})
+
 defineExpose({
   zoomIn,
   zoomOut,
@@ -194,35 +280,65 @@ defineExpose({
 .chart-meta {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 8px;
   color: var(--el-text-color-secondary);
+}
+
+.chart-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .chart-title-block {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .chart-title-block strong {
   display: block;
   font-size: 20px;
+  line-height: 1.2;
   color: var(--el-text-color-primary);
 }
 
-.trade-chip-group {
+.chart-title-block span {
+  font-size: 12px;
+}
+
+.toolbar-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.quote-meta,
+.toolbar-actions,
+.extra-chip-group {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
 }
 
-.trade-chip {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(59, 130, 246, 0.08);
+.meta-item {
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.extra-chip-group {
+  min-height: 0;
+}
+
+.period-switch {
+  flex-shrink: 0;
 }
 
 .price-up {
@@ -241,5 +357,22 @@ defineExpose({
 .panel-footer {
   margin-top: 16px;
   min-height: 0;
+}
+
+@media (max-width: 960px) {
+  .chart-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toolbar-right {
+    align-items: flex-start;
+  }
+
+  .quote-meta,
+  .toolbar-actions,
+  .extra-chip-group {
+    justify-content: flex-start;
+  }
 }
 </style>

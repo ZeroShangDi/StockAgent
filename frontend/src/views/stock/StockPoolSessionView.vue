@@ -8,14 +8,6 @@
         <div class="header-right">
           <div class="header-actions">
             <el-button @click="backToPool">返回股池</el-button>
-            <el-button :disabled="!context?.navigation.previous_ts_code" @click="jumpToPrevious">上一只</el-button>
-            <el-button
-              type="success"
-              :disabled="!context?.navigation.next_ts_code"
-              @click="jumpToNext"
-            >
-              下一只
-            </el-button>
           </div>
         </div>
         <div class="header-footer">
@@ -35,7 +27,6 @@
         <div class="left-panel">
           <div class="chart-card">
             <StockReviewChartPanel
-              ref="chartRef"
               :chart-key="`${context.stock.ts_code}-pool-review`"
               :stock="context.stock"
               :daily="chartDaily"
@@ -45,6 +36,13 @@
               :initial-zoom-start="70"
               :initial-zoom-end="100"
               :reset-zoom-on-ts-code-change="false"
+              :show-navigation="true"
+              :previous-disabled="!context.navigation.previous_ts_code"
+              :next-disabled="!context.navigation.next_ts_code"
+              previous-label="上一只"
+              next-label="下一只"
+              @previous="jumpToPrevious"
+              @next="jumpToNext"
             >
               <template #extraChips>
                 <span class="stock-chip">{{ getSourceModuleLabel(context.stock.source_module) }}</span>
@@ -427,7 +425,6 @@ const strategyTypes = ref<StrategyTypeInfo[]>([])
 const targetPools = ref<StockPoolSummary[]>([])
 const selectedStrategyType = ref('')
 const selectedTargetPoolId = ref('')
-const chartRef = ref<InstanceType<typeof StockReviewChartPanel> | null>(null)
 const repairTask = ref<StockRepairTaskStatus | null>(null)
 const stockConfigDialogVisible = ref(false)
 const editingStockConfig = ref<StrategyStockConfig>({})
@@ -1040,26 +1037,6 @@ function isTypingElement(target: EventTarget | null): boolean {
 
 function handleKeydown(event: KeyboardEvent): void {
   if (isTypingElement(event.target)) return
-  if (event.key === 'ArrowLeft') {
-    event.preventDefault()
-    jumpToPrevious()
-    return
-  }
-  if (event.key === 'ArrowRight') {
-    event.preventDefault()
-    jumpToNext()
-    return
-  }
-  if (event.key === 'ArrowUp') {
-    event.preventDefault()
-    chartRef.value?.zoomIn?.()
-    return
-  }
-  if (event.key === 'ArrowDown') {
-    event.preventDefault()
-    chartRef.value?.zoomOut?.()
-    return
-  }
   if (event.key.toLowerCase() === 'w') {
     event.preventDefault()
     void addCurrentToWatchlist()
