@@ -4,7 +4,7 @@
       <div class="chart-toolbar">
         <div class="chart-title-block">
           <strong>{{ stock.name || stock.ts_code }}</strong>
-          <span>{{ stock.ts_code }}</span>
+          <span v-if="stock.ts_code">{{ stock.ts_code }}</span>
         </div>
 
         <div class="toolbar-right">

@@ -149,22 +149,31 @@
               <strong>盲练 K 线</strong>
               <span>支持日线、周线、月线切换，交易点会直接标在图上。</span>
             </div>
-            <el-radio-group v-model="selectedPeriod" size="small">
-              <el-radio-button label="daily">日K</el-radio-button>
-              <el-radio-button label="weekly">周K</el-radio-button>
-              <el-radio-button label="monthly">月K</el-radio-button>
-            </el-radio-group>
           </div>
           <div class="chart-stage">
-            <StockChart
-              :key="session.session_id"
-              :data="selectedChartData"
-              :ts-code="session.label"
+            <StockReviewChartPanel
+              :chart-key="session.session_id"
+              :stock="{
+                ts_code: session.label,
+                name: '盲练 K 线',
+              }"
+              :daily="session.visible_candles"
+              :weekly="session.visible_weekly_candles"
+              :monthly="session.visible_monthly_candles"
               :markers="chartMarkers"
-              :preserve-zoom="true"
               :initial-zoom-start="0"
               :initial-zoom-end="100"
-            />
+              :show-common-meta="false"
+              :enable-keyboard-shortcuts="false"
+            >
+              <template #extraChips>
+                <span class="practice-chip">{{ session.current_trade_date || '--' }}</span>
+                <span class="practice-chip">{{ session.position_shares > 0 ? `仓位 ${formatPct(session.position_pct)}` : '当前空仓' }}</span>
+                <span class="practice-chip" :class="pnlClass(session.total_return_pct)">
+                  总盈亏 {{ formatPct(session.total_return_pct) }}
+                </span>
+              </template>
+            </StockReviewChartPanel>
           </div>
         </section>
 
@@ -272,15 +281,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import StockChart from '@/components/charts/StockChart.vue'
+import StockReviewChartPanel from '@/components/review/StockReviewChartPanel.vue'
 import { usePracticeSession } from './usePracticeSession'
-import type { StockDaily } from '@/api'
 
 const route = useRoute()
 const router = useRouter()
 const detailsVisible = ref(false)
 const tradeAllocation = ref<0.25 | 0.5 | 1>(1)
-const selectedPeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
 const {
   session,
   starting,
@@ -308,13 +315,6 @@ const progressPct = computed(() => {
     return 0
   }
   return (session.value.step / session.value.total_steps) * 100
-})
-
-const selectedChartData = computed<StockDaily[]>(() => {
-  if (!session.value) return []
-  if (selectedPeriod.value === 'weekly') return session.value.visible_weekly_candles
-  if (selectedPeriod.value === 'monthly') return session.value.visible_monthly_candles
-  return session.value.visible_candles
 })
 
 const chartMarkers = computed(() => {
@@ -629,6 +629,11 @@ onBeforeUnmount(() => {
 .chart-toolbar-title span {
   color: #64748b;
   font-size: 12px;
+}
+
+.practice-chip {
+  font-size: 12px;
+  color: #64748b;
 }
 
 .chart-stage {

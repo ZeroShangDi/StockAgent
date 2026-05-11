@@ -6,7 +6,7 @@ import { useUserStore } from '@/stores/user'
 import { useTask } from '@/hooks'
 import { stockApi, subscriptionApi } from '@/api'
 import { ElMessage, ElDialog, ElSelect, ElOption, ElTag, ElEmpty } from 'element-plus'
-import StockChart from '@/components/charts/StockChart.vue'
+import StockReviewChartPanel from '@/components/review/StockReviewChartPanel.vue'
 import { 
   ArrowLeft, Star, StarFilled, TrendCharts, Bell, Document, 
   Histogram, Clock, ArrowUp, ArrowDown, Refresh
@@ -33,25 +33,11 @@ const repairLoading = ref(false)
 const repairTask = ref<StockRepairTaskStatus | null>(null)
 let repairPollingTimer: number | null = null
 
-// K线周期
-const chartPeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
-const chartPeriodOptions = [
-  { value: 'daily', label: '日K' },
-  { value: 'weekly', label: '周K' },
-  { value: 'monthly', label: '月K' },
-] as const
-
 const stockInfo = computed(() => reviewContext.value?.stock || null)
 
 const chartDaily = computed<StockDaily[]>(() => reviewContext.value?.daily || [])
 const chartWeekly = computed<StockDaily[]>(() => reviewContext.value?.weekly || [])
 const chartMonthly = computed<StockDaily[]>(() => reviewContext.value?.monthly || [])
-
-const selectedChartData = computed<StockDaily[]>(() => {
-  if (chartPeriod.value === 'weekly') return chartWeekly.value
-  if (chartPeriod.value === 'monthly') return chartMonthly.value
-  return chartDaily.value
-})
 
 // 是否在自选股中
 const isInWatchlist = computed(() => (userStore.watchlist || []).includes(tsCode.value))
@@ -297,10 +283,6 @@ function openFinancePlaceholder(): void {
   ElMessage.info('财务数据页还未单独落地，后续会补成可查看入口')
 }
 
-function setChartPeriod(period: 'daily' | 'weekly' | 'monthly'): void {
-  chartPeriod.value = period
-}
-
 function getRepairStatusLabel(status?: string | null): string {
   if (status === 'completed') return '已完成'
   if (status === 'failed') return '失败'
@@ -498,21 +480,6 @@ function getPnlClass(value?: number | null): string {
             <Histogram />
             <span>K 线走势</span>
           </div>
-          
-          <div class="chart-controls">
-            <!-- 周期切换 -->
-            <div class="period-tabs">
-              <button 
-                v-for="p in chartPeriodOptions"
-                :key="p.value"
-                class="period-tab"
-                :class="{ active: chartPeriod === p.value }"
-                @click="setChartPeriod(p.value)"
-              >
-                {{ p.label }}
-              </button>
-            </div>
-          </div>
         </div>
         
         <div class="chart-container">
@@ -524,10 +491,21 @@ function getPnlClass(value?: number | null): string {
           </div>
           
           <!-- K线图 -->
-          <StockChart 
-            v-else-if="selectedChartData.length > 0" 
-            :data="selectedChartData" 
-            :ts-code="tsCode" 
+          <StockReviewChartPanel
+            v-else-if="chartDaily.length > 0 || chartWeekly.length > 0 || chartMonthly.length > 0"
+            :stock="{
+              ts_code: stockInfo?.ts_code || tsCode,
+              name: stockInfo?.name,
+              industry: stockInfo?.industry,
+              latest_pct_chg: stockInfo?.latest_pct_chg,
+              recent_30d_pct_chg: stockInfo?.recent_30d_pct_chg,
+              latest_price: stockInfo?.latest_price,
+            }"
+            :daily="chartDaily"
+            :weekly="chartWeekly"
+            :monthly="chartMonthly"
+            :initial-zoom-start="70"
+            :initial-zoom-end="100"
           />
           
           <!-- 无数据 -->
