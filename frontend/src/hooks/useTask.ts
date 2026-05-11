@@ -8,7 +8,7 @@ import { useTaskStore } from '@/stores/task'
 import { taskApi } from '@/api'
 import { useWebSocket } from './useWebSocket'
 import { TaskStatus, TaskType } from '@/api/types'
-import type { CreateTaskRequest } from '@/api/types'
+import type { CreateTaskRequest, CreateTaskResponse } from '@/api/types'
 
 export function useTask() {
   const taskStore = useTaskStore()
@@ -27,6 +27,31 @@ export function useTask() {
   )
   const currentTask = computed(() => taskStore.currentTask)
   const currentThoughts = computed(() => taskStore.currentThoughts)
+
+  function handleTaskCreated(
+    response: CreateTaskResponse,
+    payload: Pick<CreateTaskRequest, 'task_type' | 'ts_codes' | 'query' | 'params'>,
+  ): string {
+    taskStore.addTask({
+      task_id: response.task_id,
+      task_type: payload.task_type,
+      status: response.status,
+      ts_codes: payload.ts_codes || [],
+      stock_names: [],
+      query: payload.query,
+      params: payload.params,
+      created_at: new Date().toISOString(),
+      execution_time_ms: 0,
+      llm_tokens_used: 0,
+    })
+
+    if (isConnected.value) {
+      subscribeTask(response.task_id)
+    }
+
+    ElMessage.success(response.message || '任务已创建')
+    return response.task_id
+  }
   
   // ==================== 创建任务 ====================
   
@@ -35,31 +60,11 @@ export function useTask() {
     
     try {
       const response = await taskApi.createTask(request)
-      
-      // 添加到 Store
-      taskStore.addTask({
-        task_id: response.task_id,
-        task_type: request.task_type,
-        status: response.status,
-        ts_codes: request.ts_codes || [],
-        stock_names: [],
-        query: request.query,
-        params: request.params,
-        created_at: new Date().toISOString(),
-        execution_time_ms: 0,
-        llm_tokens_used: 0,
-      })
-      
-      // 订阅任务进度
-      if (isConnected.value) {
-        subscribeTask(response.task_id)
-      }
-      
-      ElMessage.success('任务已创建')
-      return response.task_id
+      return handleTaskCreated(response, request)
       
     } catch (error) {
       console.error('Create task failed:', error)
+      ElMessage.error('创建任务失败，请稍后重试')
       return null
     } finally {
       isCreating.value = false
@@ -69,23 +74,59 @@ export function useTask() {
   // ==================== 快捷分析 ====================
   
   async function analyzeStock(tsCode: string): Promise<string | null> {
-    return createTask({
-      task_type: TaskType.STOCK_ANALYSIS,
-      ts_codes: [tsCode],
-    })
+    isCreating.value = true
+
+    try {
+      const response = await taskApi.analyzeStock(tsCode)
+      return handleTaskCreated(response, {
+        task_type: TaskType.STOCK_ANALYSIS,
+        ts_codes: [tsCode],
+        params: { analysis_type: 'comprehensive' },
+      })
+    } catch (error) {
+      console.error('Analyze stock failed:', error)
+      ElMessage.error('创建个股分析失败，请稍后重试')
+      return null
+    } finally {
+      isCreating.value = false
+    }
   }
   
   async function analyzeMarket(): Promise<string | null> {
-    return createTask({
-      task_type: TaskType.MARKET_OVERVIEW,
-    })
+    isCreating.value = true
+
+    try {
+      const response = await taskApi.analyzeMarket()
+      return handleTaskCreated(response, {
+        task_type: TaskType.MARKET_OVERVIEW,
+        ts_codes: [],
+      })
+    } catch (error) {
+      console.error('Analyze market failed:', error)
+      ElMessage.error('创建大盘分析失败，请稍后重试')
+      return null
+    } finally {
+      isCreating.value = false
+    }
   }
   
   async function queryAnalysis(query: string): Promise<string | null> {
-    return createTask({
-      task_type: TaskType.CUSTOM_QUERY,
-      query,
-    })
+    isCreating.value = true
+
+    try {
+      const response = await taskApi.query(query)
+      return handleTaskCreated(response, {
+        task_type: TaskType.CUSTOM_QUERY,
+        ts_codes: [],
+        query,
+      })
+    } catch (error) {
+      console.error('Query analysis failed:', error)
+      ElMessage.error('创建问答分析失败，请稍后重试')
+      return null
+    } finally {
+      isCreating.value = false
+    }
   }
   
   // ==================== 任务操作 ====================
