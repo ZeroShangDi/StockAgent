@@ -218,26 +218,85 @@
                   </article>
                 </section>
 
-                <section class="stock-pnl-section">
-                  <div class="stock-pnl-header">
-                    <div>
-                      <h3>按股票统计盈亏</h3>
-                      <p>股票级盈亏汇总已拆到独立页面，方便单独排序、分页和后续继续扩展热力图。</p>
-                    </div>
-                    <el-button type="primary" @click="openStockStatsPage">
-                      打开股票汇总页
-                    </el-button>
-                  </div>
-                  <div class="stock-pnl-preview">
-                    <span>当前分组共 {{ stats.stock_pnl_ranking.length }} 只股票有成交记录。</span>
-                    <span v-if="stats.stock_pnl_ranking[0]">
-                      预览首只：{{ stats.stock_pnl_ranking[0].name || stats.stock_pnl_ranking[0].code }}
-                      {{ formatAmount(stats.stock_pnl_ranking[0].net_pnl) }}
-                    </span>
-                  </div>
-                </section>
               </div>
               <el-empty v-else description="暂无统计数据" />
+            </el-tab-pane>
+
+            <el-tab-pane label="按股汇总" name="stocks">
+              <div v-if="stats" class="stock-pnl-section">
+                <div class="stock-pnl-header">
+                  <div>
+                    <h3>按股票统计盈亏</h3>
+                    <p>排序只作用于当前页，打开详情会直接进入这只股票的沉浸式复盘。</p>
+                  </div>
+                  <span>当前第 {{ stockPage }} / {{ stockTotalPages }} 页</span>
+                </div>
+
+                <el-table
+                  :data="sortedPagedStockRanking"
+                  stripe
+                  class="stock-pnl-table"
+                  @sort-change="handleStockSortChange"
+                >
+                  <el-table-column label="股票" min-width="180">
+                    <template #default="{ row }">
+                      <div class="stock-name-cell">
+                        <strong>{{ row.name || row.code }}</strong>
+                        <span>{{ row.ts_code }}</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="trade_count" label="成交笔数" width="96" sortable="custom" />
+                  <el-table-column prop="position_quantity" label="剩余持仓" width="96" sortable="custom" />
+                  <el-table-column prop="realized_pnl" label="已实现盈亏" min-width="130" sortable="custom">
+                    <template #default="{ row }">
+                      <span :class="pnlClass(row.realized_pnl)">{{ formatAmount(row.realized_pnl) }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="unrealized_pnl" label="浮动盈亏" min-width="130" sortable="custom">
+                    <template #default="{ row }">
+                      <span :class="pnlClass(row.unrealized_pnl)">{{ formatAmount(row.unrealized_pnl) }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="net_pnl" label="总盈亏" min-width="130" sortable="custom">
+                    <template #default="{ row }">
+                      <span :class="pnlClass(row.net_pnl)">{{ formatAmount(row.net_pnl) }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="net_pnl_pct" label="收益率" min-width="110" sortable="custom">
+                    <template #default="{ row }">
+                      <span :class="pnlClass(row.net_pnl_pct)">{{ formatPercent(row.net_pnl_pct) }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="latest_price" label="最新价" width="100" sortable="custom">
+                    <template #default="{ row }">{{ formatNumber(row.latest_price || 0) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="last_trade_date" label="最后交易日" width="110" sortable="custom">
+                    <template #default="{ row }">{{ formatTradeDate(row.last_trade_date || '') }}</template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="130" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="openStockSummaryReview(row)">
+                        深度复盘
+                      </el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+
+                <div class="pagination-wrap">
+                  <el-pagination
+                    background
+                    layout="total, sizes, prev, pager, next, jumper"
+                    :total="stats.stock_pnl_ranking.length"
+                    :current-page="stockPage"
+                    :page-size="stockPageSize"
+                    :page-sizes="[20, 50, 100, 200]"
+                    @current-change="handleStockPageChange"
+                    @size-change="handleStockPageSizeChange"
+                  />
+                </div>
+              </div>
+              <el-empty v-else description="暂无股票汇总数据" />
             </el-tab-pane>
           </el-tabs>
         </template>
@@ -313,13 +372,17 @@ const router = useRouter()
 const loading = ref(false)
 const groups = ref<TradeReviewGroupSummary[]>([])
 const activeGroupId = ref('')
-const activeTab = ref<'records' | 'stats'>('records')
+const activeTab = ref<'records' | 'stats' | 'stocks'>('records')
 const category = ref('trade')
 const keyword = ref('')
 const pageSize = ref(100)
 const currentPage = ref(1)
 const records = ref<TradeReviewRecordListResult>({ items: [], total: 0, skip: 0, limit: 100 })
 const stats = ref<TradeReviewStatsResult | null>(null)
+const stockPage = ref(1)
+const stockPageSize = ref(50)
+const stockSortProp = ref<keyof TradeReviewStatsResult['stock_pnl_ranking'][number] | ''>('net_pnl')
+const stockSortOrder = ref<'ascending' | 'descending' | null>('descending')
 
 const createDialogVisible = ref(false)
 const creatingGroup = ref(false)
@@ -335,6 +398,36 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 
 const activeGroup = computed(() => groups.value.find((item) => item.group_id === activeGroupId.value) || null)
 const totalPages = computed(() => Math.max(1, Math.ceil((records.value.total || 0) / pageSize.value)))
+const stockTotalPages = computed(() => {
+  const total = stats.value?.stock_pnl_ranking.length || 0
+  return Math.max(1, Math.ceil(total / stockPageSize.value))
+})
+const pagedStockRanking = computed(() => {
+  const items = stats.value?.stock_pnl_ranking || []
+  const start = (stockPage.value - 1) * stockPageSize.value
+  return items.slice(start, start + stockPageSize.value)
+})
+const sortedPagedStockRanking = computed(() => {
+  const items = [...pagedStockRanking.value]
+  const prop = stockSortProp.value
+  const order = stockSortOrder.value
+  if (!prop || !order) return items
+
+  return items.sort((left, right) => {
+    const a = left[prop]
+    const b = right[prop]
+    const normalizedA = typeof a === 'string' ? a : Number(a ?? 0)
+    const normalizedB = typeof b === 'string' ? b : Number(b ?? 0)
+
+    if (typeof normalizedA === 'string' || typeof normalizedB === 'string') {
+      const compare = String(normalizedA ?? '').localeCompare(String(normalizedB ?? ''), 'zh-CN')
+      return order === 'ascending' ? compare : -compare
+    }
+
+    const compare = normalizedA - normalizedB
+    return order === 'ascending' ? compare : -compare
+  })
+})
 
 const categoryOptions = [
   { label: '成交记录', value: 'trade' },
@@ -369,6 +462,19 @@ function formatAmount(value: number): string {
 function formatMonth(value: string): string {
   if (!value || value.length !== 6) return value
   return `${value.slice(0, 4)}-${value.slice(4, 6)}`
+}
+
+function formatPercent(value?: number | null): string {
+  if (value == null || Number.isNaN(Number(value))) return '--'
+  const numeric = Number(value)
+  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(2)}%`
+}
+
+function pnlClass(value?: number | null): string {
+  if (value == null || Number.isNaN(Number(value))) return ''
+  if (Number(value) > 0) return 'is-profit'
+  if (Number(value) < 0) return 'is-loss'
+  return ''
 }
 
 async function loadGroups(): Promise<void> {
@@ -410,6 +516,7 @@ async function loadRecords(): Promise<void> {
 async function loadStats(): Promise<void> {
   if (!activeGroupId.value) return
   stats.value = await tradeReviewApi.getStats(activeGroupId.value)
+  stockPage.value = 1
 }
 
 function handleFilterChange(): void {
@@ -428,19 +535,6 @@ function handlePageSizeChange(size: number): void {
   loadRecords()
 }
 
-function openStockStatsPage(): void {
-  if (!activeGroupId.value) return
-  router.push({
-    name: 'TradeReviewStockStats',
-    params: {
-      groupId: activeGroupId.value,
-    },
-    query: {
-      groupName: activeGroup.value?.name || undefined,
-    },
-  })
-}
-
 function openReviewSession(record: TradeReviewRecord): void {
   router.push({
     name: 'TradeReviewSession',
@@ -456,6 +550,36 @@ function openReviewSession(record: TradeReviewRecord): void {
       pageSize: String(pageSize.value),
     },
   })
+}
+
+async function openStockSummaryReview(item: TradeReviewStatsResult['stock_pnl_ranking'][number]): Promise<void> {
+  if (!activeGroupId.value) return
+  const response = await tradeReviewApi.listRecords(activeGroupId.value, {
+    category: 'trade',
+    keyword: item.ts_code,
+    limit: 1,
+    skip: 0,
+  })
+  const target = response.items[0]
+  if (!target) {
+    ElMessage.warning('没有找到该股票对应的成交记录')
+    return
+  }
+  openReviewSession(target)
+}
+
+function handleStockPageChange(page: number): void {
+  stockPage.value = page
+}
+
+function handleStockPageSizeChange(size: number): void {
+  stockPageSize.value = size
+  stockPage.value = 1
+}
+
+function handleStockSortChange(payload: { prop: string; order: 'ascending' | 'descending' | null }): void {
+  stockSortProp.value = (payload.prop || '') as keyof TradeReviewStatsResult['stock_pnl_ranking'][number] | ''
+  stockSortOrder.value = payload.order
 }
 
 function openCreateDialog(): void {
@@ -516,7 +640,7 @@ async function handleImportCsv(): Promise<void> {
 }
 
 watch(activeTab, async (value) => {
-  if (value === 'stats' && activeGroupId.value) {
+  if ((value === 'stats' || value === 'stocks') && activeGroupId.value) {
     await loadStats()
   }
 })
@@ -737,6 +861,21 @@ onMounted(() => {
   background: rgba(15, 23, 42, 0.03);
 }
 
+.stock-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stock-name-cell span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.stock-pnl-table :deep(.cell strong) {
+  font-weight: 700;
+}
+
 .stock-pnl-header {
   display: flex;
   align-items: flex-start;
@@ -753,13 +892,6 @@ onMounted(() => {
   margin: 0;
   color: var(--el-text-color-secondary);
   line-height: 1.7;
-}
-
-.stock-pnl-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  color: var(--el-text-color-secondary);
 }
 
 .stats-card h3 {
@@ -792,6 +924,14 @@ onMounted(() => {
 .file-name {
   margin: 0;
   color: var(--el-text-color-secondary);
+}
+
+.is-profit {
+  color: #dc2626;
+}
+
+.is-loss {
+  color: #16a34a;
 }
 
 .batch-summary-card {

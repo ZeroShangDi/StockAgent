@@ -176,12 +176,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '沉浸式复盘' },
       },
       {
-        path: 'trade-review/:groupId/stocks',
-        name: 'TradeReviewStockStats',
-        component: () => import('@/views/stock/TradeReviewStockStatsView.vue'),
-        meta: { title: '股票盈亏汇总' },
-      },
-      {
         path: 'kline-practice',
         name: 'KlinePractice',
         component: () => import('@/views/practice/KlinePracticeView.vue'),

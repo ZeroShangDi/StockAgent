@@ -26,24 +26,17 @@
               :daily="context.daily"
               :weekly="context.weekly"
               :monthly="context.monthly"
-              :markers="context.markers"
               :initial-zoom-start="context.zoom.start"
               :initial-zoom-end="context.zoom.end"
               :show-navigation="true"
               :previous-disabled="!context.navigation.previous_record_id || saving || savingAndMoving"
               :next-disabled="!context.navigation.next_record_id || saving || savingAndMoving"
+              :markers="chartMarkers"
               previous-label="上一条"
               next-label="下一条"
               @previous="jumpToPrevious"
               @next="jumpToNext"
             >
-              <template #extraChips>
-                <span class="trade-chip">{{ formatTradeDate(context.record.trade_date) }}</span>
-                <span class="trade-chip">{{ context.record.side === 'buy' ? '买入' : '卖出' }}</span>
-                <span class="trade-chip">{{ formatNumber(context.record.price) }}</span>
-                <span class="trade-chip">{{ context.record.quantity }} 股</span>
-              </template>
-
               <template #footer>
                 <div class="related-card">
                   <div class="related-header">
@@ -264,6 +257,25 @@ function syncReviewForm(): void {
 }
 
 const isDirty = computed(() => getReviewSnapshot() !== initialReviewSnapshot.value)
+const chartMarkers = computed(() => {
+  if (!context.value) return []
+
+  const quantityMap = new Map<string, number>()
+  for (const item of [context.value.record, ...context.value.related_records]) {
+    if (item?.record_id) {
+      quantityMap.set(item.record_id, Number(item.quantity || 0))
+    }
+  }
+
+  return (context.value.markers || []).map((item) => {
+    const quantity = quantityMap.get(item.record_id)
+    const sideLabel = item.side === 'buy' ? '买' : item.side === 'sell' ? '卖' : '标'
+    return {
+      ...item,
+      label: quantity && quantity > 0 ? `${sideLabel} ${quantity}股` : item.label,
+    }
+  })
+})
 
 function getReviewSnapshot(): string {
   return JSON.stringify({
