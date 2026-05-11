@@ -29,121 +29,89 @@
       <section class="content-grid" v-if="context">
         <div class="left-panel">
           <div class="chart-card">
-            <div class="chart-meta">
-              <div class="chart-title-block">
-                <div>
-                  <strong>{{ context.stock.name || context.stock.ts_code }}</strong>
-                  <span>{{ context.stock.ts_code }}</span>
-                </div>
-                <el-radio-group v-model="selectedKlinePeriod" size="small" class="period-switch">
-                  <el-radio-button
-                    v-for="option in klinePeriodOptions"
-                    :key="option.value"
-                    :label="option.value"
-                  >
-                    {{ option.label }}
-                  </el-radio-button>
-                </el-radio-group>
-              </div>
-              <div class="trade-chip-group">
-                <span class="trade-chip">{{ context.stock.industry || '未知行业' }}</span>
-                <span class="trade-chip" :class="getPnlClass(context.stock.latest_pct_chg)">
-                  {{ formatSignedPct(context.stock.latest_pct_chg) }}
-                </span>
-                <span class="trade-chip" :class="getPnlClass(context.stock.recent_30d_pct_chg)">
-                  近30日 {{ formatSignedPct(context.stock.recent_30d_pct_chg) }}
-                </span>
-              </div>
-              <div class="trade-chip-group">
+            <StockReviewChartPanel
+              :chart-key="`${context.record.record_id}-trade-review`"
+              :stock="context.stock"
+              :daily="context.daily"
+              :weekly="context.weekly"
+              :monthly="context.monthly"
+              :markers="context.markers"
+              :initial-zoom-start="context.zoom.start"
+              :initial-zoom-end="context.zoom.end"
+            >
+              <template #extraChips>
                 <span class="trade-chip">{{ formatTradeDate(context.record.trade_date) }}</span>
                 <span class="trade-chip">{{ context.record.side === 'buy' ? '买入' : '卖出' }}</span>
                 <span class="trade-chip">{{ formatNumber(context.record.price) }}</span>
                 <span class="trade-chip">{{ context.record.quantity }} 股</span>
-              </div>
-            </div>
-            <div class="chart-wrap">
-              <StockChart
-                :key="`${context.record.record_id}-${selectedKlinePeriod}`"
-                :data="selectedChartData"
-                :ts-code="context.stock.ts_code"
-                :markers="selectedChartMarkers"
-                preserve-zoom
-                :initial-zoom-start="context.zoom.start"
-                :initial-zoom-end="context.zoom.end"
-              />
-            </div>
-          </div>
+              </template>
 
-          <div class="related-card">
-            <div class="related-header">
-              <h2>同股其他交易</h2>
-              <span>{{ context.related_records.length }} 条</span>
-            </div>
-            <div class="related-table-wrap">
-              <el-table :data="context.related_records" height="100%" stripe :row-class-name="getRelatedRowClassName">
-                <el-table-column prop="trade_date" label="日期" width="108">
-                  <template #default="{ row }">{{ formatTradeDate(row.trade_date) }}</template>
-                </el-table-column>
-                <el-table-column prop="side" label="方向" width="80">
-                  <template #default="{ row }">
-                    <el-tag
-                      v-if="row.side"
-                      :type="row.side === 'buy' ? 'danger' : 'success'"
-                      effect="plain"
-                      round
-                      size="small"
-                    >
-                      {{ row.side === 'buy' ? '买入' : '卖出' }}
-                    </el-tag>
-                    <span v-else>-</span>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="price" label="价格" width="100">
-                  <template #default="{ row }">{{ formatNumber(row.price) }}</template>
-                </el-table-column>
-                <el-table-column prop="quantity" label="数量" width="96" />
-                <el-table-column prop="reviewed" label="复盘" width="86">
-                  <template #default="{ row }">
-                    <el-tag :type="row.reviewed ? 'success' : 'info'" effect="plain" round size="small">
-                      {{ row.reviewed ? '已写' : '未写' }}
-                    </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作" min-width="100" fixed="right">
-                  <template #default="{ row }">
-                    <el-button
-                      link
-                      type="primary"
-                      :disabled="row.record_id === context.record.record_id"
-                      @click="switchRelatedRecord(row.record_id)"
-                    >
-                      切换
-                    </el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </div>
+              <template #footer>
+                <div class="related-card">
+                  <div class="related-header">
+                    <h2>同股其他交易</h2>
+                    <span>{{ context.related_records.length }} 条</span>
+                  </div>
+                  <div class="related-table-wrap">
+                    <el-table :data="context.related_records" height="100%" stripe :row-class-name="getRelatedRowClassName">
+                      <el-table-column prop="trade_date" label="日期" width="108">
+                        <template #default="{ row }">{{ formatTradeDate(row.trade_date) }}</template>
+                      </el-table-column>
+                      <el-table-column prop="side" label="方向" width="80">
+                        <template #default="{ row }">
+                          <el-tag
+                            v-if="row.side"
+                            :type="row.side === 'buy' ? 'danger' : 'success'"
+                            effect="plain"
+                            round
+                            size="small"
+                          >
+                            {{ row.side === 'buy' ? '买入' : '卖出' }}
+                          </el-tag>
+                          <span v-else>-</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column prop="price" label="价格" width="100">
+                        <template #default="{ row }">{{ formatNumber(row.price) }}</template>
+                      </el-table-column>
+                      <el-table-column prop="quantity" label="数量" width="96" />
+                      <el-table-column prop="reviewed" label="复盘" width="86">
+                        <template #default="{ row }">
+                          <el-tag :type="row.reviewed ? 'success' : 'info'" effect="plain" round size="small">
+                            {{ row.reviewed ? '已写' : '未写' }}
+                          </el-tag>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="操作" min-width="100" fixed="right">
+                        <template #default="{ row }">
+                          <el-button
+                            link
+                            type="primary"
+                            :disabled="row.record_id === context.record.record_id"
+                            @click="switchRelatedRecord(row.record_id)"
+                          >
+                            切换
+                          </el-button>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </div>
+                </div>
+              </template>
+            </StockReviewChartPanel>
           </div>
         </div>
 
         <aside class="right-panel">
           <div class="summary-card">
-            <div class="summary-grid">
-              <div class="summary-item">
-                <span>最新价</span>
-                <strong>{{ context.stock.latest_price ? formatNumber(context.stock.latest_price) : '--' }}</strong>
-              </div>
-              <div class="summary-item" :class="getPnlClass(context.stock.latest_pct_chg)">
-                <span>最新涨跌</span>
-                <strong>{{ formatSignedPct(context.stock.latest_pct_chg) }}</strong>
-              </div>
-              <div class="summary-item" :class="getPnlClass(context.stock.recent_30d_pct_chg)">
-                <span>近30日涨幅</span>
-                <strong>{{ formatSignedPct(context.stock.recent_30d_pct_chg) }}</strong>
-              </div>
+            <div class="summary-grid minimal">
               <div class="summary-item">
                 <span>上市日期</span>
                 <strong>{{ formatTradeDate(context.stock.list_date) }}</strong>
+              </div>
+              <div class="summary-item">
+                <span>成交金额</span>
+                <strong>{{ formatNumber(context.record.amount) }}</strong>
               </div>
             </div>
 
@@ -240,9 +208,8 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { tradeReviewApi } from '@/api'
-import StockChart from '@/components/charts/StockChart.vue'
-import type { StockDaily } from '@/api/types'
-import type { TradeReviewKlineContext, TradeReviewKlineMarker } from '@/api/modules/trade-review'
+import StockReviewChartPanel from '@/components/review/StockReviewChartPanel.vue'
+import type { TradeReviewKlineContext } from '@/api/modules/trade-review'
 import { TRADE_REVIEW_REASON_OPTIONS } from '@/api/modules/trade-review'
 
 const route = useRoute()
@@ -253,12 +220,6 @@ const saving = ref(false)
 const savingAndMoving = ref(false)
 const context = ref<TradeReviewKlineContext | null>(null)
 const initialReviewSnapshot = ref('')
-const selectedKlinePeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
-const klinePeriodOptions = [
-  { label: '日K', value: 'daily' },
-  { label: '周K', value: 'weekly' },
-  { label: '月K', value: 'monthly' },
-] as const
 
 const reviewForm = reactive<{
   operation_reason: string
@@ -280,58 +241,6 @@ const currentReasonOptions = computed<string[]>(() => {
   return []
 })
 
-const selectedChartData = computed<StockDaily[]>(() => {
-  if (!context.value) return []
-  if (selectedKlinePeriod.value === 'weekly') return context.value.weekly || []
-  if (selectedKlinePeriod.value === 'monthly') return context.value.monthly || []
-  return context.value.daily || []
-})
-
-function normalizeTradeDateString(value?: string | null): string | null {
-  if (!value) return null
-  if (/^\d{8}$/.test(value)) return value
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return null
-  const year = parsed.getFullYear()
-  const month = `${parsed.getMonth() + 1}`.padStart(2, '0')
-  const date = `${parsed.getDate()}`.padStart(2, '0')
-  return `${year}${month}${date}`
-}
-
-function mapMarkersToSelectedPeriod(
-  markers: TradeReviewKlineMarker[] = [],
-  candles: StockDaily[] = [],
-): TradeReviewKlineMarker[] {
-  if (!markers.length || !candles.length) return []
-
-  return markers
-    .map((marker) => {
-      const normalizedTradeDate = normalizeTradeDateString(marker.trade_date)
-      if (!normalizedTradeDate) return null
-
-      const matched =
-        candles.find((item) => item.trade_date >= normalizedTradeDate) ||
-        [...candles].reverse().find((item) => item.trade_date <= normalizedTradeDate) ||
-        null
-
-      if (!matched) return null
-
-      const markerPrice = Number(marker.price || matched.close || matched.open || 0)
-      if (!markerPrice) return null
-
-      return {
-        ...marker,
-        trade_date: matched.trade_date,
-        price: markerPrice,
-      }
-    })
-    .filter((item): item is TradeReviewKlineMarker => Boolean(item))
-}
-
-const selectedChartMarkers = computed<TradeReviewKlineMarker[]>(() => {
-  return mapMarkersToSelectedPeriod(context.value?.markers || [], selectedChartData.value)
-})
-
 function getQueryString(key: string, fallback = ''): string {
   const value = route.query[key]
   return typeof value === 'string' ? value : fallback
@@ -344,19 +253,6 @@ function formatTradeDate(value?: string | null): string {
 
 function formatNumber(value: number): string {
   return Number(value || 0).toFixed(2)
-}
-
-function formatSignedPct(value?: number | null): string {
-  if (value == null || Number.isNaN(Number(value))) return '-'
-  const numeric = Number(value)
-  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(2)}%`
-}
-
-function getPnlClass(value?: number | null): string {
-  if (value == null || Number.isNaN(Number(value))) return ''
-  if (value > 0) return 'price-up'
-  if (value < 0) return 'price-down'
-  return ''
 }
 
 function syncReviewForm(): void {

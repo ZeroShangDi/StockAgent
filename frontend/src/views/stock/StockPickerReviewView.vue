@@ -26,38 +26,38 @@
         <section class="content-grid">
           <div class="left-panel">
             <div class="chart-card">
-              <div class="chart-meta">
-                <div>
-                  <strong>{{ context.stock.name }}</strong>
-                  <span>{{ context.stock.ts_code }}</span>
-                </div>
-                <el-radio-group v-model="selectedKlinePeriod" size="small">
-                  <el-radio-button label="daily">日K</el-radio-button>
-                  <el-radio-button label="weekly">周K</el-radio-button>
-                  <el-radio-button label="monthly">月K</el-radio-button>
-                </el-radio-group>
-              </div>
-
-              <div class="stock-chip-group">
-                <span class="stock-chip">{{ context.stock.industry || '未知行业' }}</span>
-                <span class="stock-chip" :class="getPnlClass(context.stock.latest_pct_chg)">
-                  {{ formatSignedPct(context.stock.latest_pct_chg) }}
-                </span>
-                <span class="stock-chip" :class="getPnlClass(context.stock.recent_30d_pct_chg)">
-                  近30日 {{ formatSignedPct(context.stock.recent_30d_pct_chg) }}
-                </span>
-                <span class="stock-chip">{{ context.stock.latest_price ? context.stock.latest_price.toFixed(2) : '--' }}</span>
-              </div>
-
-              <div class="chart-wrap">
-                <StockChart
-                  :data="selectedChartData"
-                  :ts-code="context.stock.ts_code"
-                  preserve-zoom
-                  :initial-zoom-start="70"
-                  :initial-zoom-end="100"
-                />
-              </div>
+              <StockReviewChartPanel
+                :chart-key="`${context.stock.ts_code}-picker`"
+                :stock="context.stock"
+                :daily="chartDaily"
+                :weekly="chartWeekly"
+                :monthly="chartMonthly"
+                :initial-zoom-start="70"
+                :initial-zoom-end="100"
+              >
+                <template #footer>
+                  <div class="block">
+                    <label>本次结果导航</label>
+                    <div class="related-list">
+                      <button
+                        v-for="item in context.related_stocks"
+                        :key="item.ts_code"
+                        type="button"
+                        :class="['related-item', { active: item.is_current }]"
+                        @click="jumpTo(item.ts_code)"
+                      >
+                        <div>
+                          <strong>{{ item.name || item.ts_code }}</strong>
+                          <span>{{ item.ts_code }}</span>
+                        </div>
+                        <span :class="['pct-text', getPnlClass(item.latest_pct_chg)]">
+                          {{ formatSignedPct(item.latest_pct_chg) }}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </template>
+              </StockReviewChartPanel>
             </div>
           </div>
 
@@ -65,20 +65,12 @@
             <div class="info-card">
               <div class="info-grid">
                 <div class="info-item">
-                  <span>最新价</span>
-                  <strong>{{ context.stock.latest_price ? context.stock.latest_price.toFixed(2) : '--' }}</strong>
-                </div>
-                <div class="info-item" :class="getPnlClass(context.stock.latest_pct_chg)">
-                  <span>最新涨跌</span>
-                  <strong>{{ formatSignedPct(context.stock.latest_pct_chg) }}</strong>
-                </div>
-                <div class="info-item" :class="getPnlClass(context.stock.recent_30d_pct_chg)">
-                  <span>近30日涨幅</span>
-                  <strong>{{ formatSignedPct(context.stock.recent_30d_pct_chg) }}</strong>
-                </div>
-                <div class="info-item">
                   <span>上市日期</span>
                   <strong>{{ formatTradeDate(context.stock.list_date) }}</strong>
+                </div>
+                <div class="info-item">
+                  <span>结果总数</span>
+                  <strong>{{ context.run.total }}</strong>
                 </div>
               </div>
 
@@ -115,27 +107,6 @@
                   <p><strong>生成时间：</strong>{{ formatDateTime(context.run.created_at) }}</p>
                 </div>
               </div>
-
-              <div class="block">
-                <label>本次结果导航</label>
-                <div class="related-list">
-                  <button
-                    v-for="item in context.related_stocks"
-                    :key="item.ts_code"
-                    type="button"
-                    :class="['related-item', { active: item.is_current }]"
-                    @click="jumpTo(item.ts_code)"
-                  >
-                    <div>
-                      <strong>{{ item.name || item.ts_code }}</strong>
-                      <span>{{ item.ts_code }}</span>
-                    </div>
-                    <span :class="['pct-text', getPnlClass(item.latest_pct_chg)]">
-                      {{ formatSignedPct(item.latest_pct_chg) }}
-                    </span>
-                  </button>
-                </div>
-              </div>
             </div>
           </aside>
         </section>
@@ -150,7 +121,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
-import StockChart from '@/components/charts/StockChart.vue'
+import StockReviewChartPanel from '@/components/review/StockReviewChartPanel.vue'
 import { stockPickerApi } from '@/api'
 import { useUserStore } from '@/stores/user'
 import type { StockDaily } from '@/api'
@@ -163,7 +134,6 @@ const userStore = useUserStore()
 const loading = ref(false)
 const watchlistLoading = ref(false)
 const context = ref<StockPickerRunReviewContext | null>(null)
-const selectedKlinePeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
 
 const currentRunId = computed(() => String(route.params.runId || ''))
 const currentTsCode = computed(() => String(route.params.tsCode || '').toUpperCase())
@@ -199,12 +169,6 @@ function normalizeChartSeries(items: Array<{
 const chartDaily = computed<StockDaily[]>(() => normalizeChartSeries(context.value?.daily || []))
 const chartWeekly = computed<StockDaily[]>(() => normalizeChartSeries(context.value?.weekly || []))
 const chartMonthly = computed<StockDaily[]>(() => normalizeChartSeries(context.value?.monthly || []))
-
-const selectedChartData = computed<StockDaily[]>(() => {
-  if (selectedKlinePeriod.value === 'weekly') return chartWeekly.value
-  if (selectedKlinePeriod.value === 'monthly') return chartMonthly.value
-  return chartDaily.value
-})
 
 async function loadContext(): Promise<void> {
   if (!currentRunId.value || !currentTsCode.value) {

@@ -34,43 +34,22 @@
       <section class="content-grid">
         <div class="left-panel">
           <div class="chart-card">
-            <div class="chart-meta">
-              <div class="chart-title-block">
-                <div>
-                  <strong>{{ context.stock.name }}</strong>
-                  <span>{{ context.stock.ts_code }}</span>
-                </div>
-                <el-radio-group v-model="selectedKlinePeriod" size="small" class="period-switch">
-                  <el-radio-button
-                    v-for="option in klinePeriodOptions"
-                    :key="option.value"
-                    :label="option.value"
-                  >
-                    {{ option.label }}
-                  </el-radio-button>
-                </el-radio-group>
-              </div>
-              <div class="stock-chip-group">
-                <span class="stock-chip">{{ context.stock.industry || '未知行业' }}</span>
-                <span class="stock-chip" :class="getPnlClass(context.stock.latest_pct_chg)">
-                  {{ formatSignedPct(context.stock.latest_pct_chg) }}
-                </span>
-                <span class="stock-chip">{{ context.stock.latest_price ? context.stock.latest_price.toFixed(2) : '--' }}</span>
+            <StockReviewChartPanel
+              ref="chartRef"
+              :chart-key="`${context.stock.ts_code}-pool-review`"
+              :stock="context.stock"
+              :daily="chartDaily"
+              :weekly="chartWeekly"
+              :monthly="chartMonthly"
+              :markers="chartMarkers"
+              :initial-zoom-start="70"
+              :initial-zoom-end="100"
+              :reset-zoom-on-ts-code-change="false"
+            >
+              <template #extraChips>
                 <span class="stock-chip">{{ getSourceModuleLabel(context.stock.source_module) }}</span>
-              </div>
-            </div>
-            <div class="chart-wrap">
-              <StockChart
-                ref="chartRef"
-                :data="selectedChartData"
-                :ts-code="context.stock.ts_code"
-                :markers="chartMarkers"
-                preserve-zoom
-                :initial-zoom-start="70"
-                :initial-zoom-end="100"
-                :reset-zoom-on-ts-code-change="false"
-              />
-            </div>
+              </template>
+            </StockReviewChartPanel>
           </div>
 
         </div>
@@ -78,18 +57,6 @@
         <aside class="right-panel">
           <div class="action-card">
             <div class="info-grid">
-              <div class="info-item">
-                <span>最新价</span>
-                <strong>{{ context.stock.latest_price ? context.stock.latest_price.toFixed(2) : '--' }}</strong>
-              </div>
-              <div class="info-item" :class="getPnlClass(context.stock.latest_pct_chg)">
-                <span>最新涨跌</span>
-                <strong>{{ formatSignedPct(context.stock.latest_pct_chg) }}</strong>
-              </div>
-              <div class="info-item" :class="getPnlClass(context.stock.recent_30d_pct_chg)">
-                <span>近30日涨幅</span>
-                <strong>{{ formatSignedPct(context.stock.recent_30d_pct_chg) }}</strong>
-              </div>
               <div class="info-item">
                 <span>加入时间</span>
                 <strong>{{ context.stock.added_at ? formatDateTime(context.stock.added_at) : '-' }}</strong>
@@ -435,7 +402,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { stockApi, stockPickerApi, subscriptionApi } from '@/api'
 import { useUserStore } from '@/stores/user'
-import StockChart from '@/components/charts/StockChart.vue'
+import StockReviewChartPanel from '@/components/review/StockReviewChartPanel.vue'
 import type { StockDaily } from '@/api'
 import { StrategyType } from '@/api/types'
 import type { StrategyStockConfig, StrategyStockPoint, StrategyTypeInfo } from '@/api/types'
@@ -460,7 +427,7 @@ const strategyTypes = ref<StrategyTypeInfo[]>([])
 const targetPools = ref<StockPoolSummary[]>([])
 const selectedStrategyType = ref('')
 const selectedTargetPoolId = ref('')
-const chartRef = ref<InstanceType<typeof StockChart> | null>(null)
+const chartRef = ref<InstanceType<typeof StockReviewChartPanel> | null>(null)
 const repairTask = ref<StockRepairTaskStatus | null>(null)
 const stockConfigDialogVisible = ref(false)
 const editingStockConfig = ref<StrategyStockConfig>({})
@@ -481,13 +448,6 @@ const lineModeOptions = [
 
 const currentPoolId = computed(() => String(route.params.poolId || ''))
 const currentTsCode = computed(() => String(route.params.tsCode || '').toUpperCase())
-const selectedKlinePeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
-const klinePeriodOptions = [
-  { label: '日K', value: 'daily' },
-  { label: '周K', value: 'weekly' },
-  { label: '月K', value: 'monthly' },
-] as const
-
 function normalizeChartSeries(items: Array<{
   ts_code: string
   trade_date: string
@@ -520,12 +480,6 @@ const chartDaily = computed<StockDaily[]>(() => normalizeChartSeries(context.val
 const chartWeekly = computed<StockDaily[]>(() => normalizeChartSeries(context.value?.weekly || []))
 const chartMonthly = computed<StockDaily[]>(() => normalizeChartSeries(context.value?.monthly || []))
 
-const selectedChartData = computed<StockDaily[]>(() => {
-  if (selectedKlinePeriod.value === 'weekly') return chartWeekly.value
-  if (selectedKlinePeriod.value === 'monthly') return chartMonthly.value
-  return chartDaily.value
-})
-
 function normalizeTradeDateString(value?: string | null): string | null {
   if (!value) return null
   if (/^\d{8}$/.test(value)) return value
@@ -538,30 +492,15 @@ function normalizeTradeDateString(value?: string | null): string | null {
 }
 
 const chartMarkers = computed(() => {
-  const candles = selectedChartData.value
   const addedTradeDate = normalizeTradeDateString(context.value?.stock.added_at)
-  if (!candles.length || !addedTradeDate) {
-    return []
-  }
-
-  const matched =
-    candles.find((item) => item.trade_date >= addedTradeDate) ||
-    [...candles].reverse().find((item) => item.trade_date <= addedTradeDate) ||
-    null
-
-  if (!matched) {
-    return []
-  }
-
-  const markerPrice = Number(matched.close || matched.open || 0)
-  if (!markerPrice) {
+  if (!addedTradeDate) {
     return []
   }
 
   return [
     {
-      trade_date: matched.trade_date,
-      price: markerPrice,
+      trade_date: addedTradeDate,
+      price: null,
       side: 'buy',
       label: '入池',
       is_current: true,
@@ -749,19 +688,6 @@ function formatDateTime(value?: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString('zh-CN', { hour12: false })
-}
-
-function formatSignedPct(value?: number | null): string {
-  if (value == null || Number.isNaN(Number(value))) return '-'
-  const numeric = Number(value)
-  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(2)}%`
-}
-
-function getPnlClass(value?: number | null): string {
-  const numeric = Number(value || 0)
-  if (numeric > 0) return 'is-profit'
-  if (numeric < 0) return 'is-loss'
-  return ''
 }
 
 function getSourceModuleLabel(sourceModule?: string): string {

@@ -45,6 +45,7 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     SearchBar: typeof import('./components/common/SearchBar.vue')['default']
     StockChart: typeof import('./components/charts/StockChart.vue')['default']
+    StockReviewChartPanel: typeof import('./components/review/StockReviewChartPanel.vue')['default']
     TaskProgressCard: typeof import('./components/dashboard/TaskProgressCard.vue')['default']
     TaskStatusBadge: typeof import('./components/agent/TaskStatusBadge.vue')['default']
     WatchlistCard: typeof import('./components/dashboard/WatchlistCard.vue')['default']
