@@ -140,6 +140,22 @@ export interface StockPoolReviewContext {
   }
 }
 
+export interface StockPickerRunReviewContext {
+  run: {
+    run_id: string
+    input: string
+    query_condition: string
+    total: number
+    created_at?: string
+  }
+  stock: StockPoolReviewContext['stock']
+  daily: StockPoolReviewContext['daily']
+  weekly: StockPoolReviewContext['weekly']
+  monthly: StockPoolReviewContext['monthly']
+  related_stocks: StockPoolReviewContext['related_stocks']
+  navigation: StockPoolReviewContext['navigation']
+}
+
 export interface StockPoolListResult {
   items: StockPoolSummary[]
 }
@@ -185,6 +201,10 @@ export const stockPickerApi = {
 
   getPoolReviewContext(poolId: string, tsCode: string): Promise<StockPoolReviewContext> {
     return api.get(`/stock-picker/pools/${poolId}/review/${tsCode}`)
+  },
+
+  getRunReviewContext(runId: string, tsCode: string): Promise<StockPickerRunReviewContext> {
+    return api.get(`/stock-picker/runs/${runId}/review/${tsCode}`)
   },
 
   createPool(data: CreateStockPoolRequest): Promise<StockPoolSummary> {

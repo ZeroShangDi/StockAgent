@@ -52,6 +52,9 @@
         </div>
       </div>
       <div class="toolbar-actions">
+        <el-button :disabled="!result || result.total === 0" @click="openDeepReview()">
+          深度复盘首只
+        </el-button>
         <el-button @click="copyCodes">复制 code</el-button>
         <el-button @click="downloadCodes">下载 code</el-button>
         <el-button type="primary" :disabled="selectedRows.length === 0" @click="openPoolDialog">
@@ -94,6 +97,13 @@
               <span :class="valueClass(column, row[column])">
                 {{ formatCell(column, row[column]) }}
               </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openDeepReview(row)">
+                深度复盘
+              </el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -152,6 +162,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { stockPickerApi } from '@/api'
@@ -165,6 +176,7 @@ const quickExamples = [
 ]
 
 const poolTypeOptions = STOCK_POOL_TYPE_OPTIONS
+const router = useRouter()
 
 const loading = ref(false)
 const queryText = ref('')
@@ -241,6 +253,26 @@ function valueClass(column: string, value: unknown): string {
 function buildCodeList(): string {
   const targetRows = selectedRows.value.length > 0 ? selectedRows.value : (result.value?.data_list || [])
   return targetRows.map((row) => row.__meta.code).filter(Boolean).join('\n')
+}
+
+function openDeepReview(targetRow?: StockPickerRow): void {
+  const candidate = targetRow
+    || selectedRows.value[0]
+    || result.value?.data_list?.[0]
+    || null
+  const runId = result.value?.run_id
+  const tsCode = candidate?.__meta?.ts_code
+  if (!runId || !tsCode) {
+    ElMessage.warning('当前没有可复盘的选股结果')
+    return
+  }
+  router.push({
+    name: 'StockPickerReview',
+    params: {
+      runId,
+      tsCode,
+    },
+  })
 }
 
 async function copyCodes(): Promise<void> {

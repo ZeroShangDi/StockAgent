@@ -128,6 +128,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '一句话选股' },
       },
       {
+        path: 'stock-picker/runs/:runId/review/:tsCode',
+        name: 'StockPickerReview',
+        component: () => import('@/views/stock/StockPickerReviewView.vue'),
+        meta: { title: '一句话选股深度复盘' },
+      },
+      {
         path: 'assistant',
         name: 'AssistantWorkspace',
         component: () => import('@/views/assistant/AssistantWorkspaceView.vue'),

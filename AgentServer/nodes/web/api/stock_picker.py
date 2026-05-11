@@ -64,6 +64,16 @@ def _pool_summary(pool: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _run_summary(run: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "run_id": run.get("run_id"),
+        "input": run.get("input"),
+        "query_condition": run.get("query_condition"),
+        "total": int(run.get("total") or len(run.get("ts_code_list") or [])),
+        "created_at": run.get("created_at"),
+    }
+
+
 def _parse_added_at(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
         return value
@@ -475,6 +485,32 @@ async def _get_stock_sector_context(ts_code: str) -> Dict[str, List[Dict[str, An
     }
 
 
+def _serialize_review_related_stock(
+    *,
+    ts_code: str,
+    stock_item: Dict[str, Any],
+    latest_map: Dict[str, Dict[str, Any]],
+    basic_map: Dict[str, Dict[str, Any]],
+    current_ts_code: str,
+) -> Dict[str, Any]:
+    normalized_ts_code = str(ts_code or "").strip().upper()
+    latest = latest_map.get(normalized_ts_code, {})
+    basic = basic_map.get(normalized_ts_code, {})
+    return {
+        "ts_code": normalized_ts_code,
+        "code": stock_item.get("code") or normalized_ts_code.split(".")[0],
+        "name": stock_item.get("name") or basic.get("name") or normalized_ts_code,
+        "status": stock_item.get("status"),
+        "source_module": stock_item.get("source_module"),
+        "source_query": stock_item.get("source_query"),
+        "source_pool_name": stock_item.get("source_pool_name"),
+        "latest_pct_chg": latest.get("pct_chg"),
+        "latest_price": latest.get("close"),
+        "latest_trade_date": latest.get("trade_date"),
+        "is_current": normalized_ts_code == current_ts_code,
+    }
+
+
 @router.post("/query")
 async def query_stock_picker(
     body: StockPickerQueryRequest,
@@ -612,6 +648,111 @@ async def get_stock_pool_review_context(
             "total": len(related_stocks),
             "previous_ts_code": related_stocks[current_index - 1]["ts_code"] if current_index > 0 else None,
             "next_ts_code": related_stocks[current_index + 1]["ts_code"] if current_index < len(related_stocks) - 1 else None,
+        },
+    }
+
+
+@router.get("/runs/{run_id}/review/{ts_code}")
+async def get_stock_picker_run_review_context(
+    run_id: str,
+    ts_code: str,
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    normalized_ts_code = ts_code.strip().upper()
+    run = await mongo_manager.find_one(
+        stock_picker_service.RUN_COLLECTION,
+        {"run_id": run_id, "user_id": user_id},
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="选股结果不存在")
+
+    ts_code_list = [
+        str(code or "").strip().upper()
+        for code in list(run.get("ts_code_list", []) or [])
+        if str(code or "").strip()
+    ]
+    if normalized_ts_code not in ts_code_list:
+        raise HTTPException(status_code=404, detail="该股票不在当前选股结果中")
+
+    data_rows = list(run.get("data_list", []) or [])
+    stock_rows: Dict[str, Dict[str, Any]] = {}
+    for row in data_rows:
+        meta = dict(row.get("__meta", {}) or {})
+        item_ts_code = str(meta.get("ts_code") or "").strip().upper()
+        if not item_ts_code:
+            continue
+        stock_rows[item_ts_code] = {
+            "ts_code": item_ts_code,
+            "code": meta.get("code") or item_ts_code.split(".")[0],
+            "name": meta.get("name") or row.get("名称") or item_ts_code,
+            "source_module": "one_line_picker",
+            "source_query": run.get("query_condition") or run.get("input"),
+            "source_pool_name": "一句话选股结果",
+            "status": "active",
+        }
+
+    latest_map = await _get_latest_daily_map(ts_code_list)
+    basic_map = await _get_stock_basic_map(ts_code_list)
+
+    daily_records = await mongo_manager.find_many(
+        "stock_daily",
+        {"ts_code": normalized_ts_code},
+        sort=[("trade_date", 1)],
+        limit=5000,
+    )
+    if not daily_records:
+        raise HTTPException(status_code=404, detail="该股票本地日线数据不完整，请先补充数据")
+
+    daily = [_serialize_daily_record(item) for item in daily_records]
+    weekly = _build_period_candles(daily_records, "weekly")
+    monthly = _build_period_candles(daily_records, "monthly")
+    recent_30d_pct_chg = _calculate_recent_return(daily_records, days=30)
+    sector_context = await _get_stock_sector_context(normalized_ts_code)
+
+    related_stocks = [
+        _serialize_review_related_stock(
+            ts_code=item_ts_code,
+            stock_item=stock_rows.get(item_ts_code, {"ts_code": item_ts_code}),
+            latest_map=latest_map,
+            basic_map=basic_map,
+            current_ts_code=normalized_ts_code,
+        )
+        for item_ts_code in ts_code_list
+    ]
+    current_index = ts_code_list.index(normalized_ts_code)
+    basic_info = basic_map.get(normalized_ts_code, {})
+    selected_stock = stock_rows.get(normalized_ts_code, {"ts_code": normalized_ts_code})
+    selected_latest = latest_map.get(normalized_ts_code, {})
+
+    return {
+        "run": _run_summary(run),
+        "stock": {
+            "ts_code": normalized_ts_code,
+            "code": selected_stock.get("code") or normalized_ts_code.split(".")[0],
+            "name": selected_stock.get("name") or basic_info.get("name") or normalized_ts_code,
+            "status": selected_stock.get("status"),
+            "source_module": selected_stock.get("source_module"),
+            "source_query": selected_stock.get("source_query"),
+            "source_pool_name": selected_stock.get("source_pool_name"),
+            "latest_pct_chg": selected_latest.get("pct_chg"),
+            "latest_price": selected_latest.get("close"),
+            "latest_trade_date": selected_latest.get("trade_date"),
+            "industry": basic_info.get("industry"),
+            "market": basic_info.get("market"),
+            "list_date": basic_info.get("list_date"),
+            "recent_30d_pct_chg": recent_30d_pct_chg,
+            "concepts": sector_context.get("concepts", []),
+            "sectors": sector_context.get("sectors", []),
+        },
+        "daily": daily,
+        "weekly": weekly,
+        "monthly": monthly,
+        "related_stocks": related_stocks,
+        "navigation": {
+            "position": current_index + 1,
+            "total": len(related_stocks),
+            "previous_ts_code": ts_code_list[current_index - 1] if current_index > 0 else None,
+            "next_ts_code": ts_code_list[current_index + 1] if current_index < len(ts_code_list) - 1 else None,
         },
     }
 
