@@ -15,6 +15,7 @@
 
         <div class="topbar-actions">
           <div class="mode-switch">
+            <el-button size="small" @click="goHistory">历史战绩</el-button>
             <el-button size="small" disabled>沉浸模式</el-button>
             <el-button type="primary" plain size="small" @click="goClassic">经典模式</el-button>
           </div>
@@ -22,7 +23,7 @@
             :loading="starting"
             :disabled="actionBusy"
             type="primary"
-            @click="startSession(true)"
+            @click="startSessionAndReset(true)"
           >
             新开一局
           </el-button>
@@ -51,7 +52,7 @@
             :loading="starting"
             :disabled="actionBusy"
             type="primary"
-            @click="startSession(false)"
+            @click="startSessionAndReset(false)"
           >
             开始练习
           </el-button>
@@ -68,7 +69,7 @@
           <article class="status-pill" :class="pnlClass(currentPositionReturnPct)">
             <span>当前操作盈亏</span>
             <strong>{{ formatPct(currentPositionReturnPct) }}</strong>
-            <small>{{ session.position_shares > 0 ? `${session.position_shares} 股持仓` : '当前空仓' }}</small>
+            <small>{{ session.position_shares > 0 ? `当前仓位 ${formatPct(session.position_pct)}` : '当前空仓' }}</small>
           </article>
           <article class="status-pill" :class="pnlClass(session.total_return_pct)">
             <span>总盈亏</span>
@@ -143,11 +144,23 @@
         </section>
 
         <section class="chart-shell">
+          <div class="chart-toolbar">
+            <div class="chart-toolbar-title">
+              <strong>盲练 K 线</strong>
+              <span>支持日线、周线、月线切换，交易点会直接标在图上。</span>
+            </div>
+            <el-radio-group v-model="selectedPeriod" size="small">
+              <el-radio-button label="daily">日K</el-radio-button>
+              <el-radio-button label="weekly">周K</el-radio-button>
+              <el-radio-button label="monthly">月K</el-radio-button>
+            </el-radio-group>
+          </div>
           <div class="chart-stage">
             <StockChart
               :key="session.session_id"
-              :data="session.visible_candles"
+              :data="selectedChartData"
               :ts-code="session.label"
+              :markers="chartMarkers"
               :preserve-zoom="true"
               :initial-zoom-start="0"
               :initial-zoom-end="100"
@@ -184,8 +197,8 @@
               <strong>{{ formatCurrency(session.cash) }}</strong>
             </div>
             <div class="drawer-card">
-              <span>持仓股数</span>
-              <strong>{{ session.position_shares }}</strong>
+              <span>当前仓位</span>
+              <strong>{{ session.position_shares > 0 ? formatPct(session.position_pct) : '0.00%' }}</strong>
             </div>
             <div class="drawer-card">
               <span>持仓成本</span>
@@ -236,6 +249,9 @@
                 </template>
               </el-table-column>
               <el-table-column prop="shares" label="股数" width="90" />
+              <el-table-column prop="allocation_pct" label="仓位" width="90">
+                <template #default="{ row }">{{ formatPct((row.allocation_pct || 0) * 100) }}</template>
+              </el-table-column>
               <el-table-column prop="price" label="价格" width="90">
                 <template #default="{ row }">{{ row.price.toFixed(2) }}</template>
               </el-table-column>
@@ -253,15 +269,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import StockChart from '@/components/charts/StockChart.vue'
 import { usePracticeSession } from './usePracticeSession'
+import type { StockDaily } from '@/api'
 
+const route = useRoute()
 const router = useRouter()
 const detailsVisible = ref(false)
 const tradeAllocation = ref<0.25 | 0.5 | 1>(1)
+const selectedPeriod = ref<'daily' | 'weekly' | 'monthly'>('daily')
 const {
   session,
   starting,
@@ -270,6 +289,7 @@ const {
   tradingAction,
   actionBusy,
   loadLatestSession,
+  loadSession,
   startSession,
   stepSession,
   trade,
@@ -290,8 +310,35 @@ const progressPct = computed(() => {
   return (session.value.step / session.value.total_steps) * 100
 })
 
+const selectedChartData = computed<StockDaily[]>(() => {
+  if (!session.value) return []
+  if (selectedPeriod.value === 'weekly') return session.value.visible_weekly_candles
+  if (selectedPeriod.value === 'monthly') return session.value.visible_monthly_candles
+  return session.value.visible_candles
+})
+
+const chartMarkers = computed(() => {
+  return (session.value?.trade_markers || []).map((item) => ({
+    trade_date: item.trade_date,
+    price: item.price,
+    side: item.side,
+    label: item.label,
+  }))
+})
+
 function goClassic(): void {
   router.push('/kline-practice/classic')
+}
+
+function goHistory(): void {
+  router.push({ name: 'KlinePracticeHistory' })
+}
+
+async function startSessionAndReset(forceConfirm = true): Promise<void> {
+  await startSession(forceConfirm)
+  if (session.value) {
+    await router.replace({ name: 'KlinePractice' })
+  }
 }
 
 function formatCurrency(value: number): string {
@@ -364,7 +411,7 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
   }
   if (key === 'n') {
     event.preventDefault()
-    await startSession(true)
+    await startSessionAndReset(true)
     return
   }
   if (key === 'r' && session.value?.status === 'active') {
@@ -378,8 +425,24 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
   }
 }
 
-onMounted(async () => {
+async function loadByRoute(): Promise<void> {
+  const targetSessionId = typeof route.query.sessionId === 'string' ? route.query.sessionId : ''
+  if (targetSessionId) {
+    await loadSession(targetSessionId)
+    return
+  }
   await loadLatestSession()
+}
+
+watch(
+  () => route.query.sessionId,
+  async () => {
+    await loadByRoute()
+  },
+)
+
+onMounted(async () => {
+  await loadByRoute()
   window.addEventListener('keydown', handleKeydown)
 })
 
@@ -549,6 +612,25 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.chart-toolbar-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chart-toolbar-title span {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .chart-stage {
   min-width: 0;
   min-height: calc(100vh - 360px);
@@ -625,6 +707,7 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .chart-toolbar,
   .action-ribbon,
   .studio-topbar {
     flex-direction: column;

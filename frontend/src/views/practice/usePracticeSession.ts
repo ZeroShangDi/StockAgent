@@ -31,6 +31,17 @@ export function usePracticeSession() {
     }
   }
 
+  async function loadSession(sessionId: string): Promise<void> {
+    loading.value = true
+    try {
+      session.value = await practiceApi.getSession(sessionId)
+    } catch {
+      session.value = null
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function startSession(forceConfirm = true): Promise<void> {
     if (forceConfirm && hasActiveSession.value) {
       try {
@@ -127,6 +138,7 @@ export function usePracticeSession() {
     hasActiveSession,
     actionBusy,
     loadLatestSession,
+    loadSession,
     startSession,
     stepSession,
     trade,

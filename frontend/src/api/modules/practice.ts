@@ -13,6 +13,13 @@ export interface PracticeTrade {
   note?: string | null
 }
 
+export interface PracticeTradeMarker {
+  trade_date: string
+  price: number
+  side?: string | null
+  label: string
+}
+
 export interface PracticeReveal {
   ts_code: string
   name: string
@@ -34,11 +41,15 @@ export interface PracticeSessionState {
   equity: number
   realized_pnl: number
   unrealized_pnl: number
+  position_pct: number
   total_return_pct: number
   step: number
   total_steps: number
   visible_candles: StockDaily[]
+  visible_weekly_candles: StockDaily[]
+  visible_monthly_candles: StockDaily[]
   trades: PracticeTrade[]
+  trade_markers: PracticeTradeMarker[]
   current_trade_date?: string | null
   latest_close?: number | null
   can_step: boolean
@@ -46,6 +57,28 @@ export interface PracticeSessionState {
   can_sell: boolean
   is_revealed: boolean
   reveal?: PracticeReveal | null
+  created_at?: string | null
+  completed_at?: string | null
+}
+
+export interface PracticeSessionSummary {
+  session_id: string
+  label: string
+  status: 'active' | 'completed'
+  total_return_pct: number
+  realized_pnl: number
+  trade_count: number
+  current_trade_date?: string | null
+  created_at?: string | null
+  completed_at?: string | null
+  reveal?: PracticeReveal | null
+}
+
+export interface PracticeSessionHistoryResult {
+  items: PracticeSessionSummary[]
+  total: number
+  skip: number
+  limit: number
 }
 
 export interface PracticeStartRequest {
@@ -70,6 +103,10 @@ export const practiceApi = {
 
   getSession(sessionId: string): Promise<PracticeSessionState> {
     return api.get(`/practice/kline/${sessionId}`)
+  },
+
+  getHistory(params?: { skip?: number; limit?: number }): Promise<PracticeSessionHistoryResult> {
+    return api.get('/practice/kline/history', { params })
   },
 
   startSession(data?: PracticeStartRequest): Promise<PracticeSessionState> {

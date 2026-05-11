@@ -176,6 +176,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '盘感练习' },
       },
       {
+        path: 'kline-practice/history',
+        name: 'KlinePracticeHistory',
+        component: () => import('@/views/practice/KlinePracticeHistoryView.vue'),
+        meta: { title: '盘感练习历史战绩' },
+      },
+      {
         path: 'kline-practice/classic',
         name: 'KlinePracticeClassic',
         component: () => import('@/views/practice/KlinePracticeClassicView.vue'),

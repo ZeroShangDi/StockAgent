@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from core.managers import mongo_manager
+from src.analysis.stock_chart_context import build_period_candles
 from .auth import get_current_user_id
 
 
@@ -75,6 +76,13 @@ class PracticeReveal(BaseModel):
     segment_end_date: str
 
 
+class PracticeTradeMarker(BaseModel):
+    trade_date: str
+    price: float
+    side: Optional[str] = None
+    label: str
+
+
 class PracticeSessionState(BaseModel):
     session_id: str
     label: str
@@ -87,11 +95,15 @@ class PracticeSessionState(BaseModel):
     equity: float
     realized_pnl: float
     unrealized_pnl: float
+    position_pct: float
     total_return_pct: float
     step: int
     total_steps: int
     visible_candles: List[PracticeCandle]
+    visible_weekly_candles: List[PracticeCandle]
+    visible_monthly_candles: List[PracticeCandle]
     trades: List[PracticeTrade]
+    trade_markers: List[PracticeTradeMarker]
     current_trade_date: Optional[str] = None
     latest_close: Optional[float] = None
     can_step: bool
@@ -99,6 +111,28 @@ class PracticeSessionState(BaseModel):
     can_sell: bool
     is_revealed: bool
     reveal: Optional[PracticeReveal] = None
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class PracticeSessionSummary(BaseModel):
+    session_id: str
+    label: str
+    status: Literal["active", "completed"]
+    total_return_pct: float
+    realized_pnl: float
+    trade_count: int
+    current_trade_date: Optional[str] = None
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    reveal: Optional[PracticeReveal] = None
+
+
+class PracticeSessionHistoryResult(BaseModel):
+    items: List[PracticeSessionSummary]
+    total: int
+    skip: int
+    limit: int
 
 
 def _sanitize_candle(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -129,6 +163,7 @@ def _build_state(session: Dict[str, Any]) -> PracticeSessionState:
     realized_pnl = float(session.get("realized_pnl", 0.0))
     unrealized_pnl = ((latest_close or 0.0) - avg_cost) * position_shares if position_shares else 0.0
     equity = cash + market_value
+    position_pct = (market_value / equity * 100) if equity > 0 else 0.0
     initial_capital = float(session["initial_capital"])
     reveal = None
     is_revealed = session["status"] == "completed"
@@ -143,6 +178,28 @@ def _build_state(session: Dict[str, Any]) -> PracticeSessionState:
             segment_end_date=candles[-1]["trade_date"],
         )
 
+    action_label_map = {
+        "buy": "买入",
+        "sell": "卖出",
+        "close": "平仓",
+        "auto_close": "自动平仓",
+    }
+    trade_markers = [
+        PracticeTradeMarker(
+            trade_date=trade.get("trade_date"),
+            price=float(trade.get("price", 0) or 0),
+            side=trade.get("action"),
+            label=(
+                f"{action_label_map.get(trade.get('action'), '操作')}"
+                f" {round(float(trade.get('allocation_pct', 0) or 0) * 100)}%"
+            ),
+        )
+        for trade in session.get("trades", [])
+        if trade.get("trade_date") and trade.get("price")
+    ]
+    weekly_candles = build_period_candles(visible_candles, "weekly")
+    monthly_candles = build_period_candles(visible_candles, "monthly")
+
     return PracticeSessionState(
         session_id=session["session_id"],
         label=session["label"],
@@ -155,11 +212,15 @@ def _build_state(session: Dict[str, Any]) -> PracticeSessionState:
         equity=round(equity, 2),
         realized_pnl=round(realized_pnl, 2),
         unrealized_pnl=round(unrealized_pnl, 2),
+        position_pct=round(position_pct, 2),
         total_return_pct=round((equity - initial_capital) / initial_capital * 100, 2),
         step=revealed_count,
         total_steps=len(candles),
         visible_candles=[PracticeCandle(**_sanitize_candle(item)) for item in reversed(visible_candles)],
+        visible_weekly_candles=[PracticeCandle(**_sanitize_candle(item)) for item in weekly_candles],
+        visible_monthly_candles=[PracticeCandle(**_sanitize_candle(item)) for item in monthly_candles],
         trades=[PracticeTrade(**trade) for trade in session.get("trades", [])],
+        trade_markers=trade_markers,
         current_trade_date=visible_candles[-1]["trade_date"] if visible_candles else None,
         latest_close=round(latest_close, 4) if latest_close is not None else None,
         can_step=revealed_count < len(candles) and session["status"] == "active",
@@ -167,6 +228,24 @@ def _build_state(session: Dict[str, Any]) -> PracticeSessionState:
         can_sell=session["status"] == "active" and position_shares > 0,
         is_revealed=is_revealed,
         reveal=reveal,
+        created_at=session.get("created_at"),
+        completed_at=session.get("completed_at"),
+    )
+
+
+def _build_history_summary(session: Dict[str, Any]) -> PracticeSessionSummary:
+    state = _build_state(session)
+    return PracticeSessionSummary(
+        session_id=state.session_id,
+        label=state.label,
+        status=state.status,
+        total_return_pct=state.total_return_pct,
+        realized_pnl=state.realized_pnl,
+        trade_count=len(state.trades),
+        current_trade_date=state.current_trade_date,
+        created_at=state.created_at,
+        completed_at=state.completed_at,
+        reveal=state.reveal,
     )
 
 
@@ -302,6 +381,29 @@ async def get_latest_practice_session(user_id: str = Depends(get_current_user_id
     return _build_state(recent[0]) if recent else None
 
 
+@router.get("/kline/history", response_model=PracticeSessionHistoryResult)
+async def get_practice_session_history(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    user_id: str = Depends(get_current_user_id),
+):
+    history_filter = {"user_id": user_id, "status": "completed"}
+    total = await mongo_manager.count("kline_practice_sessions", history_filter)
+    sessions = await mongo_manager.find_many(
+        "kline_practice_sessions",
+        history_filter,
+        sort=[("completed_at", -1), ("created_at", -1)],
+        skip=skip,
+        limit=limit,
+    )
+    return PracticeSessionHistoryResult(
+        items=[_build_history_summary(item) for item in sessions],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
+
+
 @router.get("/kline/{session_id}", response_model=PracticeSessionState)
 async def get_practice_session(session_id: str, user_id: str = Depends(get_current_user_id)):
     """获取练习会话状态"""
@@ -346,6 +448,8 @@ async def start_practice_session(
         "revealed_count": body.init_bars,
         "candles": sanitized_segment,
         "trades": [],
+        "created_at": datetime.utcnow(),
+        "completed_at": None,
     }
     await mongo_manager.insert_one("kline_practice_sessions", session)
     return _build_state(session)
