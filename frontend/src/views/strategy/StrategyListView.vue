@@ -141,6 +141,14 @@ function isMarketWideStrategy(strategyType: string): boolean {
 }
 
 function getParamDisplayValue(strategyType: string, key: string, fallback: unknown): string {
+  if (key === 'notification_channel_id') {
+    const channelId = String(fallback || '').trim()
+    if (!channelId) {
+      return '系统默认（企业微信）'
+    }
+    const channel = userStore.notificationChannels.find(item => item.channel_id === channelId)
+    return channel ? `${channel.name}（${channel.provider === 'dingtalk' ? '钉钉' : '企业微信'}）` : '自定义机器人'
+  }
   if (key === 'position_group_id') {
     const sub = getSubscription(strategyType)
     const groupName = sub?.params?.position_group_name
@@ -833,6 +841,16 @@ function getStringParamValue(key: string, defaultValue: boolean | string | numbe
     return defaultValue
   }
   return value == null ? '' : String(value)
+}
+
+function getNotificationChannelOptions(): Array<{ label: string; value: string }> {
+  return [
+    { label: '系统默认（企业微信）', value: '' },
+    ...userStore.notificationChannels.map((item) => ({
+      label: `${item.name}（${item.provider === 'dingtalk' ? '钉钉' : '企业微信'}）`,
+      value: item.channel_id,
+    })),
+  ]
 }
 
 function setEditingParam(key: string, value: boolean | number | string | undefined): void {
@@ -1791,7 +1809,21 @@ onMounted(async () => {
             <label class="param-form-label">{{ param.label }}</label>
 
             <el-select
-              v-if="param.type === 'string' && param.options?.length"
+              v-if="param.key === 'notification_channel_id'"
+              :model-value="getStringParamValue(param.key, param.default)"
+              placeholder="选择通知机器人"
+              @update:model-value="setEditingParam(param.key, $event)"
+            >
+              <el-option
+                v-for="option in getNotificationChannelOptions()"
+                :key="option.value || 'default'"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+
+            <el-select
+              v-else-if="param.type === 'string' && param.options?.length"
               :model-value="getStringParamValue(param.key, param.default)"
               @update:model-value="setEditingParam(param.key, $event)"
             >
@@ -1834,6 +1866,20 @@ onMounted(async () => {
               :active-text="'是'"
               :inactive-text="'否'"
             />
+
+            <el-select
+              v-else-if="param.key === 'notification_channel_id'"
+              :model-value="getStringParamValue(param.key, param.default)"
+              placeholder="选择通知机器人"
+              @update:model-value="setEditingParam(param.key, $event)"
+            >
+              <el-option
+                v-for="option in getNotificationChannelOptions()"
+                :key="option.value || 'default'"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
 
             <el-select
               v-else-if="param.key === 'position_group_id'"
