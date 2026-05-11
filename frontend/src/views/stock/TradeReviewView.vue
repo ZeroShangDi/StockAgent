@@ -217,6 +217,71 @@
                     </ul>
                   </article>
                 </section>
+
+                <section class="stock-pnl-section">
+                  <div class="stock-pnl-header">
+                    <div>
+                      <h3>按股票统计盈亏</h3>
+                      <p>按总盈亏从高到低排序，同时拆开已实现盈亏和当前持仓浮盈浮亏，方便快速判断哪些标的真正贡献了结果。</p>
+                    </div>
+                    <span>共 {{ stats.stock_pnl_ranking.length }} 只</span>
+                  </div>
+
+                  <el-table :data="pagedStockPnlRanking" stripe class="stock-pnl-table">
+                    <el-table-column label="排名" width="80">
+                      <template #default="{ $index }">
+                        {{ ($index + 1) + (stockPnlPage - 1) * stockPnlPageSize }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="股票" min-width="180">
+                      <template #default="{ row }">
+                        <div class="stock-name-cell">
+                          <strong>{{ row.name || row.code }}</strong>
+                          <span>{{ row.ts_code }}</span>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="trade_count" label="交易笔数" width="100" />
+                    <el-table-column prop="position_quantity" label="持仓数量" width="100" />
+                    <el-table-column prop="total_buy_amount" label="买入总额" width="130">
+                      <template #default="{ row }">{{ formatAmount(row.total_buy_amount) }}</template>
+                    </el-table-column>
+                    <el-table-column prop="realized_pnl" label="已实现盈亏" width="130">
+                      <template #default="{ row }">
+                        <span :class="pnlClass(row.realized_pnl)">{{ formatAmount(row.realized_pnl) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="unrealized_pnl" label="浮动盈亏" width="130">
+                      <template #default="{ row }">
+                        <span :class="pnlClass(row.unrealized_pnl)">{{ formatAmount(row.unrealized_pnl) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="net_pnl" label="总盈亏" width="130" sortable>
+                      <template #default="{ row }">
+                        <strong :class="pnlClass(row.net_pnl)">{{ formatAmount(row.net_pnl) }}</strong>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="net_pnl_pct" label="收益率" width="110">
+                      <template #default="{ row }">
+                        <span :class="pnlClass(row.net_pnl_pct)">{{ formatPercent(row.net_pnl_pct) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="last_trade_date" label="最后交易日" width="120">
+                      <template #default="{ row }">{{ formatTradeDate(row.last_trade_date) }}</template>
+                    </el-table-column>
+                  </el-table>
+
+                  <div class="pagination-wrap">
+                    <el-pagination
+                      background
+                      layout="total, prev, pager, next"
+                      :total="stats.stock_pnl_ranking.length"
+                      :current-page="stockPnlPage"
+                      :page-size="stockPnlPageSize"
+                      @current-change="handleStockPnlPageChange"
+                    />
+                  </div>
+                </section>
               </div>
               <el-empty v-else description="暂无统计数据" />
             </el-tab-pane>
@@ -301,6 +366,8 @@ const pageSize = ref(100)
 const currentPage = ref(1)
 const records = ref<TradeReviewRecordListResult>({ items: [], total: 0, skip: 0, limit: 100 })
 const stats = ref<TradeReviewStatsResult | null>(null)
+const stockPnlPage = ref(1)
+const stockPnlPageSize = 15
 
 const createDialogVisible = ref(false)
 const creatingGroup = ref(false)
@@ -316,6 +383,11 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 
 const activeGroup = computed(() => groups.value.find((item) => item.group_id === activeGroupId.value) || null)
 const totalPages = computed(() => Math.max(1, Math.ceil((records.value.total || 0) / pageSize.value)))
+const pagedStockPnlRanking = computed(() => {
+  const items = stats.value?.stock_pnl_ranking || []
+  const start = (stockPnlPage.value - 1) * stockPnlPageSize
+  return items.slice(start, start + stockPnlPageSize)
+})
 
 const categoryOptions = [
   { label: '成交记录', value: 'trade' },
@@ -345,6 +417,18 @@ function formatNumber(value: number): string {
 function formatAmount(value: number): string {
   const amount = Number(value || 0)
   return amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function formatPercent(value: number): string {
+  const numeric = Number(value || 0)
+  const prefix = numeric > 0 ? '+' : ''
+  return `${prefix}${numeric.toFixed(2)}%`
+}
+
+function pnlClass(value: number): string {
+  if (value > 0) return 'is-profit'
+  if (value < 0) return 'is-loss'
+  return ''
 }
 
 function formatMonth(value: string): string {
@@ -391,6 +475,7 @@ async function loadRecords(): Promise<void> {
 async function loadStats(): Promise<void> {
   if (!activeGroupId.value) return
   stats.value = await tradeReviewApi.getStats(activeGroupId.value)
+  stockPnlPage.value = 1
 }
 
 function handleFilterChange(): void {
@@ -407,6 +492,10 @@ function handlePageSizeChange(size: number): void {
   pageSize.value = size
   currentPage.value = 1
   loadRecords()
+}
+
+function handleStockPnlPageChange(page: number): void {
+  stockPnlPage.value = page
 }
 
 function openReviewSession(record: TradeReviewRecord): void {
@@ -699,6 +788,53 @@ onMounted(() => {
   gap: 16px;
 }
 
+.stock-pnl-section {
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.stock-pnl-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stock-pnl-header h3 {
+  margin: 0 0 8px;
+}
+
+.stock-pnl-header p {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.7;
+}
+
+.stock-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stock-name-cell span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.stock-pnl-table :deep(.cell strong) {
+  font-weight: 700;
+}
+
+.is-profit {
+  color: #dc2626;
+}
+
+.is-loss {
+  color: #16a34a;
+}
+
 .stats-card h3 {
   margin: 0 0 10px;
 }
@@ -749,6 +885,10 @@ onMounted(() => {
   .summary-grid,
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .stock-pnl-header {
+    flex-direction: column;
   }
 }
 </style>

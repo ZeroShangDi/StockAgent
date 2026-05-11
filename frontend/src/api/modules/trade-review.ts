@@ -79,6 +79,27 @@ export interface TradeReviewStatsResult {
   business_type_counts: Array<{ name: string; count: number }>
   top_stocks: Array<{ name: string; count: number }>
   monthly_trade_counts: Array<{ month: string; count: number }>
+  stock_pnl_ranking: Array<{
+    ts_code: string
+    code: string
+    name?: string | null
+    trade_count: number
+    buy_count: number
+    sell_count: number
+    position_quantity: number
+    total_buy_amount: number
+    total_sell_amount: number
+    total_fee: number
+    realized_pnl: number
+    unrealized_pnl: number
+    net_pnl: number
+    net_pnl_pct: number
+    market_value: number
+    latest_price?: number | null
+    latest_trade_date?: string | null
+    first_trade_date?: string | null
+    last_trade_date?: string | null
+  }>
   reason_counts: {
     success: Array<{ name: string; count: number }>
     failure: Array<{ name: string; count: number }>

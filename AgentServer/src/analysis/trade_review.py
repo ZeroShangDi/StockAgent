@@ -797,6 +797,7 @@ class TradeReviewService:
             for item in trade_records
         )
         monthly_trade_counts = Counter((item.get("trade_date") or "")[:6] for item in trade_records if item.get("trade_date"))
+        stock_pnl_buckets: Dict[str, Dict[str, Any]] = {}
 
         reason_counts: Dict[str, Counter[str]] = {"success": Counter(), "failure": Counter()}
         for item in trade_records:
@@ -804,6 +805,102 @@ class TradeReviewService:
             verdict = reasons.get("verdict")
             if verdict in reason_counts:
                 reason_counts[verdict].update(reasons.get("reasons") or [])
+
+            ts_code = str(item.get("ts_code") or "").upper().strip()
+            if not ts_code:
+                continue
+
+            bucket = stock_pnl_buckets.setdefault(
+                ts_code,
+                {
+                    "ts_code": ts_code,
+                    "code": item.get("code") or ts_code.split(".")[0],
+                    "name": item.get("security_name") or item.get("code") or ts_code,
+                    "quantity": 0,
+                    "total_cost": 0.0,
+                    "buy_count": 0,
+                    "sell_count": 0,
+                    "trade_count": 0,
+                    "total_buy_amount": 0.0,
+                    "total_sell_amount": 0.0,
+                    "total_fee": 0.0,
+                    "realized_pnl": 0.0,
+                    "first_trade_date": item.get("trade_date"),
+                    "last_trade_date": item.get("trade_date"),
+                },
+            )
+
+            quantity = abs(int(item.get("quantity", 0) or 0))
+            if quantity <= 0:
+                continue
+
+            amount = abs(float(item.get("amount", 0) or 0))
+            fee = self._trade_fee(item)
+            bucket["trade_count"] += 1
+            bucket["total_fee"] += fee
+            bucket["last_trade_date"] = item.get("trade_date")
+            if not bucket.get("first_trade_date"):
+                bucket["first_trade_date"] = item.get("trade_date")
+
+            if item.get("side") == "buy":
+                bucket["quantity"] += quantity
+                bucket["total_cost"] += amount + fee
+                bucket["buy_count"] += 1
+                bucket["total_buy_amount"] += amount
+            elif item.get("side") == "sell":
+                bucket["sell_count"] += 1
+                bucket["total_sell_amount"] += amount
+                current_qty = int(bucket.get("quantity", 0) or 0)
+                if current_qty <= 0:
+                    bucket["quantity"] = 0
+                    bucket["total_cost"] = 0.0
+                    continue
+
+                avg_cost = float(bucket.get("total_cost", 0) or 0) / current_qty if current_qty else 0.0
+                reduce_qty = min(current_qty, quantity)
+                realized_pnl = amount - fee - avg_cost * reduce_qty
+                bucket["realized_pnl"] += realized_pnl
+                bucket["quantity"] = current_qty - reduce_qty
+                bucket["total_cost"] = max(0.0, float(bucket.get("total_cost", 0) or 0) - avg_cost * reduce_qty)
+
+        latest_price_map = await self._load_latest_price_map(list(stock_pnl_buckets.keys()))
+        stock_basic_meta = await self._load_stock_basic_meta(list(stock_pnl_buckets.keys()))
+        stock_pnl_ranking: List[Dict[str, Any]] = []
+        for item in stock_pnl_buckets.values():
+            latest_info = latest_price_map.get(item["ts_code"], {})
+            latest_price = latest_info.get("latest_price")
+            latest_trade_date = latest_info.get("latest_trade_date")
+            quantity = int(item.get("quantity", 0) or 0)
+            current_total_cost = round(float(item.get("total_cost", 0) or 0), 2)
+            market_value = round((latest_price or 0.0) * quantity, 2) if quantity > 0 and latest_price else 0.0
+            unrealized_pnl = round(market_value - current_total_cost, 2) if quantity > 0 and latest_price else 0.0
+            realized_pnl = round(float(item.get("realized_pnl", 0) or 0), 2)
+            net_pnl = round(realized_pnl + unrealized_pnl, 2)
+            base_amount = float(item.get("total_buy_amount", 0) or 0)
+            stock_pnl_ranking.append(
+                {
+                    "ts_code": item["ts_code"],
+                    "code": item.get("code") or item["ts_code"].split(".")[0],
+                    "name": stock_basic_meta.get(item["ts_code"], {}).get("name") or item.get("name"),
+                    "trade_count": int(item.get("trade_count", 0) or 0),
+                    "buy_count": int(item.get("buy_count", 0) or 0),
+                    "sell_count": int(item.get("sell_count", 0) or 0),
+                    "position_quantity": quantity,
+                    "total_buy_amount": round(float(item.get("total_buy_amount", 0) or 0), 2),
+                    "total_sell_amount": round(float(item.get("total_sell_amount", 0) or 0), 2),
+                    "total_fee": round(float(item.get("total_fee", 0) or 0), 2),
+                    "realized_pnl": realized_pnl,
+                    "unrealized_pnl": unrealized_pnl,
+                    "net_pnl": net_pnl,
+                    "net_pnl_pct": round((net_pnl / base_amount * 100), 2) if base_amount > 0 else 0.0,
+                    "market_value": market_value,
+                    "latest_price": latest_price,
+                    "latest_trade_date": latest_trade_date,
+                    "first_trade_date": item.get("first_trade_date"),
+                    "last_trade_date": item.get("last_trade_date"),
+                }
+            )
+        stock_pnl_ranking.sort(key=lambda item: (item.get("net_pnl", 0), item.get("realized_pnl", 0)), reverse=True)
 
         return {
             "summary": {
@@ -829,6 +926,7 @@ class TradeReviewService:
             "business_type_counts": [{"name": key, "count": value} for key, value in business_type_counts.most_common()],
             "top_stocks": [{"name": key, "count": value} for key, value in stock_trade_counts.most_common(12)],
             "monthly_trade_counts": [{"month": key, "count": value} for key, value in sorted(monthly_trade_counts.items())],
+            "stock_pnl_ranking": stock_pnl_ranking,
             "reason_counts": {
                 reason_type: [{"name": key, "count": value} for key, value in counter.most_common(20)]
                 for reason_type, counter in reason_counts.items()
