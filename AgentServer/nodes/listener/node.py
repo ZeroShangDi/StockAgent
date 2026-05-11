@@ -657,12 +657,18 @@ class ListenerNode(BaseNode):
             "trigger_reason": alert.trigger_reason,
             "extra_data": alert.extra_data,
             "triggered_at": alert.triggered_at,
+            "notification_channel_id": str(subscription.params.get("notification_channel_id") or ""),
+            "notification_user_id": subscription.user_id,
             "notification_sent": False,
             "transition_results": [],
         }
         await mongo_manager.insert_one("listener_trigger_events", event_doc)
 
-        notification_sent = await notification_manager.send_alert(alert)
+        notification_sent = await notification_manager.send_alert(
+            alert,
+            user_id=subscription.user_id,
+            channel_id=str(subscription.params.get("notification_channel_id") or "") or None,
+        )
         transition_results = await self._execute_transition_rules(
             subscription=subscription,
             alert=alert,

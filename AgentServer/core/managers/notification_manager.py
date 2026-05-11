@@ -3,18 +3,20 @@
 
 负责:
 - 发送企业微信 Markdown 消息
+- 发送企业微信 / 钉钉 文本消息
 - 消息频率控制
 - 失败重试
 """
 
 import asyncio
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 import httpx
 
 from core.base import BaseManager
 from ..settings import settings
 from ..protocols import StrategyAlert
+from .mongo_manager import mongo_manager
 
 
 class NotificationManager(BaseManager):
@@ -41,19 +43,17 @@ class NotificationManager(BaseManager):
         """初始化 HTTP 客户端"""
         if self._initialized:
             return
-        
-        if not self._config.is_configured:
-            self.logger.warning("Notification webhook not configured, skipping initialization")
-            self._initialized = True
-            return
-        
+
         self.logger.info("Initializing NotificationManager...")
-        
+
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(10.0),
             headers={"Content-Type": "application/json"},
         )
-        
+
+        if not self._config.is_configured:
+            self.logger.warning("Default notification webhook not configured, user-bound channels may still be used")
+
         self._initialized = True
         self.logger.info("NotificationManager initialized ✓")
     
@@ -69,12 +69,75 @@ class NotificationManager(BaseManager):
         """健康检查"""
         return self._initialized
     
-    async def send_alert(self, alert: StrategyAlert, dry_run: bool = False) -> bool:
+    async def _resolve_user_channel(
+        self,
+        user_id: Optional[str],
+        channel_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        if not user_id or not channel_id:
+            return None
+
+        user = await mongo_manager.find_one(
+            "users",
+            {"user_id": user_id},
+            projection={"notification_channels": 1, "preferences.notification_enabled": 1},
+        )
+        if not user:
+            return None
+
+        preferences = user.get("preferences", {}) or {}
+        if preferences.get("notification_enabled") is False:
+            return None
+
+        channels = user.get("notification_channels", []) or []
+        for channel in channels:
+            if not isinstance(channel, dict):
+                continue
+            if str(channel.get("channel_id") or "") == channel_id:
+                return channel
+        return None
+
+    async def _resolve_delivery_target(
+        self,
+        user_id: Optional[str],
+        channel_id: Optional[str],
+    ) -> Optional[Tuple[str, str]]:
+        if user_id:
+            user = await mongo_manager.find_one(
+                "users",
+                {"user_id": user_id},
+                projection={"preferences.notification_enabled": 1},
+            )
+            preferences = user.get("preferences", {}) if user else {}
+            if preferences.get("notification_enabled") is False:
+                return None
+
+        custom_channel = await self._resolve_user_channel(user_id=user_id, channel_id=channel_id)
+        if custom_channel:
+            provider = str(custom_channel.get("provider") or "").strip().lower()
+            webhook = str(custom_channel.get("webhook") or "").strip()
+            if provider and webhook:
+                return provider, webhook
+
+        if self._config.is_configured and self._config.wecom_webhook:
+            return "wecom", self._config.wecom_webhook
+
+        return None
+
+    async def send_alert(
+        self,
+        alert: StrategyAlert,
+        user_id: Optional[str] = None,
+        channel_id: Optional[str] = None,
+        dry_run: bool = False,
+    ) -> bool:
         """
         发送策略预警消息
         
         Args:
             alert: 预警对象
+            user_id: 所属用户
+            channel_id: 用户绑定的通知机器人 ID
             dry_run: 仅构建并记录消息，不实际发送
             
         Returns:
@@ -96,8 +159,11 @@ class NotificationManager(BaseManager):
             self.logger.warning("[NOTIFY] Notification disabled (config.enabled=False)")
             return False
             
-        if not self._config.is_configured:
-            self.logger.warning("[NOTIFY] Notification not configured (webhook missing)")
+        delivery_target = await self._resolve_delivery_target(user_id=user_id, channel_id=channel_id)
+        if not delivery_target:
+            self.logger.warning(
+                "[NOTIFY] Notification not configured (no user channel and no default webhook)"
+            )
             return False
         
         # 频率控制
@@ -115,7 +181,8 @@ class NotificationManager(BaseManager):
         # 构建消息（使用纯文本格式，兼容性更好）
         self.logger.info(f"[NOTIFY] Sending text message, length={len(text_content)}")
         
-        success = await self.send_text(text_content)
+        provider, webhook = delivery_target
+        success = await self._send_text_via_target(provider=provider, webhook=webhook, content=text_content)
         
         if success:
             async with self._lock:
@@ -210,29 +277,47 @@ class NotificationManager(BaseManager):
             return False
         
         self._ensure_initialized()
-        
-        payload = {
-            "msgtype": "text",
-            "text": {
-                "content": content,
+        return await self._send_text_via_target(
+            provider="wecom",
+            webhook=self._config.wecom_webhook,
+            content=content,
+            mentioned_list=mentioned_list,
+        )
+
+    async def _send_text_via_target(
+        self,
+        provider: str,
+        webhook: str,
+        content: str,
+        mentioned_list: Optional[List[str]] = None,
+    ) -> bool:
+        self._ensure_initialized()
+
+        payload: Dict[str, Any]
+        provider_key = provider.strip().lower()
+        if provider_key == "dingtalk":
+            payload = {
+                "msgtype": "text",
+                "text": {"content": content},
             }
-        }
-        
-        # if mentioned_list:
-        #     payload["text"]["mentioned_list"] = mentioned_list
-        
+        else:
+            payload = {
+                "msgtype": "text",
+                "text": {"content": content},
+            }
+
+        if provider_key == "wecom" and mentioned_list:
+            payload["text"]["mentioned_list"] = mentioned_list
+
         try:
-            response = await self._client.post(
-                self._config.wecom_webhook,
-                json=payload,
-            )
+            response = await self._client.post(webhook, json=payload)
             response.raise_for_status()
-            
             result = response.json()
+            if provider_key == "dingtalk":
+                return result.get("errcode") == 0
             return result.get("errcode") == 0
-            
         except Exception as e:
-            self.logger.error(f"Error sending text notification: {e}")
+            self.logger.error(f"Error sending {provider_key} text notification: {e}")
             return False
     
     def _build_alert_text(self, alert: StrategyAlert) -> str:

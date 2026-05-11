@@ -50,6 +50,12 @@ ALERT_FREQUENCY_OPTIONS = [
     {"label": "提醒后关闭", "value": "once_then_disable"},
     {"label": "不限次数", "value": "unlimited"},
 ]
+NOTIFICATION_CHANNEL_PARAM = {
+    "key": "notification_channel_id",
+    "label": "通知机器人",
+    "type": "string",
+    "default": "",
+}
 
 # 策略元信息（名称、描述、默认参数）
 STRATEGY_META = {
@@ -327,6 +333,22 @@ STRATEGY_META = {
     },
 }
 
+for meta in STRATEGY_META.values():
+    basic_keys = list(meta.get("basic_param_keys", []))
+    if "notification_channel_id" not in basic_keys:
+        basic_keys.append("notification_channel_id")
+    meta["basic_param_keys"] = basic_keys
+
+    default_params = dict(meta.get("default_params", {}) or {})
+    default_params.setdefault("notification_channel_id", "")
+    meta["default_params"] = default_params
+
+    param_schema = list(meta.get("param_schema", []) or [])
+    if not any(item.get("key") == "notification_channel_id" for item in param_schema):
+        insert_index = 1 if param_schema else 0
+        param_schema.insert(insert_index, dict(NOTIFICATION_CHANNEL_PARAM))
+    meta["param_schema"] = param_schema
+
 
 # ==================== RPC 通知 ====================
 
@@ -391,6 +413,7 @@ class SubscriptionResponse(BaseModel):
     effective_watch_breakdown: Dict[str, int] = Field(default_factory=dict)
     params: dict
     is_active: bool
+    user_id: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -559,6 +582,7 @@ async def _to_response(record: dict) -> SubscriptionResponse:
         },
         params=record.get("params", {}),
         is_active=record.get("is_active", True),
+        user_id=record.get("user_id"),
         created_at=created_at.isoformat() if isinstance(created_at, datetime) else str(created_at or ""),
         updated_at=updated_at.isoformat() if isinstance(updated_at, datetime) else str(updated_at or ""),
     )
@@ -1074,6 +1098,37 @@ async def _normalize_position_group_params(
     return normalized_params
 
 
+async def _normalize_notification_channel_params(
+    user_id: str,
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    normalized_params = dict(params)
+    channel_id = str(normalized_params.get("notification_channel_id") or "").strip()
+    if not channel_id:
+        normalized_params["notification_channel_id"] = ""
+        return normalized_params
+
+    user = await mongo_manager.find_one(
+        "users",
+        {"user_id": user_id},
+        projection={"notification_channels": 1},
+    )
+    channels = user.get("notification_channels", []) if user else []
+    matched = None
+    for item in channels:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("channel_id") or "") == channel_id:
+            matched = item
+            break
+
+    if not matched:
+        raise HTTPException(status_code=400, detail="通知机器人不存在或无权限访问")
+
+    normalized_params["notification_channel_id"] = channel_id
+    return normalized_params
+
+
 def _normalize_alert_frequency(params: Dict[str, Any]) -> Dict[str, Any]:
     normalized_params = dict(params)
     raw_value = str(normalized_params.get("alert_frequency") or "").strip().lower()
@@ -1233,6 +1288,7 @@ async def update_strategy_params(
         updated_params["transition_rules"] = current_params["transition_rules"]
     updated_params = await _normalize_transition_rules(admin.user_id, updated_params)
     updated_params = await _normalize_position_group_params(admin.user_id, updated_params)
+    updated_params = await _normalize_notification_channel_params(admin.user_id, updated_params)
     updated_params = _normalize_alert_frequency(updated_params)
     
     # 更新参数
@@ -1242,6 +1298,7 @@ async def update_strategy_params(
         {
             "$set": {
                 "params": updated_params,
+                "user_id": admin.user_id,
                 "updated_at": datetime.utcnow(),
             }
         },
