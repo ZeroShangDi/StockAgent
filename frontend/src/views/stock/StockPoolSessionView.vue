@@ -44,8 +44,11 @@
               @previous="jumpToPrevious"
               @next="jumpToNext"
             >
-              <template #extraChips>
-                <span class="stock-chip">{{ getSourceModuleLabel(context.stock.source_module) }}</span>
+              <template #toolbarActions>
+                <el-button type="primary" class="toolbar-top-button" :loading="watchlistLoading" @click="addCurrentToWatchlist">
+                  加自选
+                  <span class="button-shortcut">W</span>
+                </el-button>
               </template>
             </StockReviewChartPanel>
           </div>
@@ -68,9 +71,6 @@
             <div class="block">
               <label>快捷操作</label>
               <div class="block-actions">
-                <el-button type="primary" plain :loading="watchlistLoading" @click="addCurrentToWatchlist">
-                  加入自选
-                </el-button>
                 <el-button
                   type="warning"
                   plain
@@ -81,6 +81,7 @@
                 </el-button>
                 <el-button type="danger" plain :loading="removeLoading" @click="removeCurrentFromPool">
                   从当前股池移除
+                  <span class="button-shortcut">X</span>
                 </el-button>
               </div>
               <div v-if="repairTask" class="task-inline-status" :class="repairTask.status">
@@ -116,6 +117,7 @@
                   @click="addCurrentToStrategy"
                 >
                   {{ isPerStockConfigStrategy(selectedStrategyType) ? '添加并配置' : '添加到该策略' }}
+                  <span class="button-shortcut">A</span>
                 </el-button>
               </div>
             </div>
@@ -144,6 +146,7 @@
                   @click="copyToTargetPool"
                 >
                   复制到目标池
+                  <span class="button-shortcut">C</span>
                 </el-button>
                 <el-button
                   type="warning"
@@ -152,6 +155,7 @@
                   @click="moveToTargetPool"
                 >
                   移动到目标池
+                  <span class="button-shortcut">M</span>
                 </el-button>
               </div>
             </div>
@@ -1283,6 +1287,15 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.button-shortcut {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 11px;
+  line-height: 18px;
 }
 
 .task-inline-status {

@@ -2,12 +2,53 @@
   <div class="review-chart-panel">
     <div class="chart-meta">
       <div class="chart-toolbar">
-        <div class="chart-title-block">
+        <div v-if="showTitleBlock" class="chart-title-block">
           <strong>{{ stock.name || stock.ts_code }}</strong>
           <span v-if="stock.ts_code">{{ stock.ts_code }}</span>
         </div>
 
         <div class="toolbar-right">
+          <div class="toolbar-actions">
+            <slot name="toolbarActions" />
+            <el-button
+              v-if="showNavigation"
+              size="default"
+              type="primary"
+              round
+              class="nav-button"
+              :disabled="previousDisabled"
+              @click="emit('previous')"
+            >
+              <span>{{ previousLabel }}</span>
+              <kbd>←</kbd>
+            </el-button>
+            <el-button
+              v-if="showNavigation"
+              size="default"
+              type="primary"
+              round
+              class="nav-button"
+              :disabled="nextDisabled"
+              @click="emit('next')"
+            >
+              <span>{{ nextLabel }}</span>
+              <kbd>→</kbd>
+            </el-button>
+            <el-radio-group v-model="selectedKlinePeriod" size="small" class="period-switch">
+              <el-radio-button
+                v-for="option in klinePeriodOptions"
+                :key="option.value"
+                :label="option.value"
+                :disabled="!option.available"
+              >
+                <span class="period-button-label">
+                  <span>{{ option.label }}</span>
+                  <kbd>{{ option.shortcut }}</kbd>
+                </span>
+              </el-radio-button>
+            </el-radio-group>
+          </div>
+
           <div class="quote-meta" v-if="showCommonMeta">
             <span class="meta-item">{{ stock.industry || '未知行业' }}</span>
             <span class="meta-item" :class="getPnlClass(stock.latest_pct_chg)">
@@ -17,36 +58,6 @@
               30日 {{ formatSignedPct(stock.recent_30d_pct_chg) }}
             </span>
             <span class="meta-item">{{ stock.latest_price ? formatNumber(stock.latest_price) : '--' }}</span>
-          </div>
-
-          <div class="toolbar-actions">
-            <el-button
-              v-if="showNavigation"
-              size="small"
-              text
-              :disabled="previousDisabled"
-              @click="emit('previous')"
-            >
-              {{ previousLabel }}
-            </el-button>
-            <el-button
-              v-if="showNavigation"
-              size="small"
-              text
-              :disabled="nextDisabled"
-              @click="emit('next')"
-            >
-              {{ nextLabel }}
-            </el-button>
-            <el-radio-group v-model="selectedKlinePeriod" size="small" class="period-switch">
-              <el-radio-button
-                v-for="option in klinePeriodOptions"
-                :key="option.value"
-                :label="option.value"
-              >
-                {{ option.label }}
-              </el-radio-button>
-            </el-radio-group>
           </div>
         </div>
       </div>
@@ -76,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import StockChart from '@/components/charts/StockChart.vue'
 import type { StockDaily } from '@/api/types'
@@ -118,6 +129,7 @@ const props = withDefaults(defineProps<{
   previousLabel?: string
   nextLabel?: string
   enableKeyboardShortcuts?: boolean
+  showTitleBlock?: boolean
 }>(), {
   markers: () => [],
   chartKey: '',
@@ -132,6 +144,7 @@ const props = withDefaults(defineProps<{
   previousLabel: '上一只',
   nextLabel: '下一只',
   enableKeyboardShortcuts: true,
+  showTitleBlock: true,
 })
 
 const emit = defineEmits<{
@@ -141,17 +154,35 @@ const emit = defineEmits<{
 
 const chartRef = ref<InstanceType<typeof StockChart> | null>(null)
 const selectedKlinePeriod = ref<KlinePeriod>('daily')
-const klinePeriodOptions = [
-  { label: '日K', value: 'daily' },
-  { label: '周K', value: 'weekly' },
-  { label: '月K', value: 'monthly' },
-] as const
+const periodAvailability = computed<Record<KlinePeriod, boolean>>(() => ({
+  daily: (props.daily?.length || 0) > 0,
+  weekly: (props.weekly?.length || 0) > 0,
+  monthly: (props.monthly?.length || 0) > 0,
+}))
+
+const klinePeriodOptions = computed(() => [
+  { label: '日K', value: 'daily' as const, available: periodAvailability.value.daily, shortcut: 'R' },
+  { label: '周K', value: 'weekly' as const, available: periodAvailability.value.weekly, shortcut: 'Z' },
+  { label: '月K', value: 'monthly' as const, available: periodAvailability.value.monthly, shortcut: 'Y' },
+])
 
 const selectedChartData = computed<StockDaily[]>(() => {
   if (selectedKlinePeriod.value === 'weekly') return props.weekly || []
   if (selectedKlinePeriod.value === 'monthly') return props.monthly || []
   return props.daily || []
 })
+
+function pickFirstAvailablePeriod(): KlinePeriod {
+  if (periodAvailability.value.daily) return 'daily'
+  if (periodAvailability.value.weekly) return 'weekly'
+  if (periodAvailability.value.monthly) return 'monthly'
+  return 'daily'
+}
+
+function ensureValidSelectedPeriod(): void {
+  if (periodAvailability.value[selectedKlinePeriod.value]) return
+  selectedKlinePeriod.value = pickFirstAvailablePeriod()
+}
 
 function normalizeTradeDateString(value?: string | null): string | null {
   if (!value) return null
@@ -232,6 +263,26 @@ function isTypingElement(target: EventTarget | null): boolean {
 function handleKeydown(event: KeyboardEvent): void {
   if (!props.enableKeyboardShortcuts || isTypingElement(event.target)) return
 
+  const lowerKey = event.key.toLowerCase()
+
+  if (lowerKey === 'r' && periodAvailability.value.daily) {
+    event.preventDefault()
+    selectedKlinePeriod.value = 'daily'
+    return
+  }
+
+  if (lowerKey === 'z' && periodAvailability.value.weekly) {
+    event.preventDefault()
+    selectedKlinePeriod.value = 'weekly'
+    return
+  }
+
+  if (lowerKey === 'y' && periodAvailability.value.monthly) {
+    event.preventDefault()
+    selectedKlinePeriod.value = 'monthly'
+    return
+  }
+
   if (event.key === 'ArrowLeft' && props.showNavigation && !props.previousDisabled) {
     event.preventDefault()
     emit('previous')
@@ -257,12 +308,27 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
+  ensureValidSelectedPeriod()
   window.addEventListener('keydown', handleKeydown)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
 })
+
+watch(
+  () => [
+    props.stock.ts_code,
+    props.chartKey,
+    props.daily?.length || 0,
+    props.weekly?.length || 0,
+    props.monthly?.length || 0,
+  ],
+  () => {
+    ensureValidSelectedPeriod()
+  },
+  { immediate: true },
+)
 
 defineExpose({
   zoomIn,
@@ -274,6 +340,7 @@ defineExpose({
 .review-chart-panel {
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
 }
 
@@ -314,7 +381,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -327,10 +394,33 @@ defineExpose({
   justify-content: flex-end;
 }
 
+.toolbar-actions {
+  align-items: center;
+  padding: 0;
+}
+
 .meta-item {
   font-size: 12px;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+.period-button-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.period-button-label kbd,
+.nav-button kbd {
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
 }
 
 .extra-chip-group {
@@ -339,6 +429,89 @@ defineExpose({
 
 .period-switch {
   flex-shrink: 0;
+}
+
+:deep(.toolbar-top-button),
+.nav-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-weight: 600;
+  border: none;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+:deep(.toolbar-top-button:hover),
+.nav-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.24);
+}
+
+:deep(.toolbar-top-button.is-disabled),
+.nav-button.is-disabled {
+  box-shadow: none;
+}
+
+:deep(.toolbar-top-button.el-button--primary),
+.nav-button.el-button--primary {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #fff;
+}
+
+:deep(.toolbar-top-button.el-button--primary:hover),
+.nav-button.el-button--primary:hover {
+  background: linear-gradient(135deg, #4f8df7, #2d6df0);
+}
+
+:deep(.toolbar-top-button.el-button--primary.is-disabled),
+.nav-button.el-button--primary.is-disabled {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.45), rgba(37, 99, 235, 0.45));
+  box-shadow: none;
+}
+
+:deep(.toolbar-top-button .el-button__text),
+.nav-button .el-button__text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+:deep(.toolbar-top-button .button-shortcut),
+.nav-button kbd,
+.period-button-label kbd {
+  background: rgba(255, 255, 255, 0.18);
+  color: inherit;
+}
+
+:deep(.period-switch .el-radio-button__inner) {
+  min-height: 40px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.06) !important;
+  color: #475569;
+  font-weight: 600;
+}
+
+:deep(.period-switch .el-radio-button__inner:hover) {
+  color: #0f172a;
+}
+
+:deep(.period-switch .el-radio-button:first-child .el-radio-button__inner),
+:deep(.period-switch .el-radio-button:last-child .el-radio-button__inner) {
+  border-radius: 999px !important;
+}
+
+:deep(.period-switch .el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.24);
 }
 
 .price-up {
@@ -350,8 +523,16 @@ defineExpose({
 }
 
 .chart-wrap {
-  flex: 1;
-  min-height: 0;
+  flex: 0 0 auto;
+  height: clamp(560px, 66vh, 760px);
+  min-height: 560px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chart-wrap :deep(.stock-chart),
+.chart-wrap :deep(.echarts) {
+  height: 100%;
 }
 
 .panel-footer {

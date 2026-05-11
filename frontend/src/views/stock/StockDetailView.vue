@@ -1094,8 +1094,20 @@ $color-ai: linear-gradient(135deg, #8b5cf6, #6366f1);
 }
 
 .chart-container {
-  height: 420px;
+  min-height: 680px;
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-container :deep(.review-chart-panel) {
+  flex: 1;
+  min-height: 0;
+}
+
+.chart-container :deep(.chart-wrap),
+.chart-container :deep(.stock-chart) {
+  min-height: 600px;
 }
 
 .chart-skeleton {

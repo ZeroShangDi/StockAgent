@@ -36,27 +36,11 @@
                 @previous="jumpTo(context.navigation.previous_ts_code)"
                 @next="jumpTo(context.navigation.next_ts_code)"
               >
-                <template #footer>
-                  <div class="block">
-                    <label>本次结果导航</label>
-                    <div class="related-list">
-                      <button
-                        v-for="item in context.related_stocks"
-                        :key="item.ts_code"
-                        type="button"
-                        :class="['related-item', { active: item.is_current }]"
-                        @click="jumpTo(item.ts_code)"
-                      >
-                        <div>
-                          <strong>{{ item.name || item.ts_code }}</strong>
-                          <span>{{ item.ts_code }}</span>
-                        </div>
-                        <span :class="['pct-text', getPnlClass(item.latest_pct_chg)]">
-                          {{ formatSignedPct(item.latest_pct_chg) }}
-                        </span>
-                      </button>
-                    </div>
-                  </div>
+                <template #toolbarActions>
+                  <el-button type="primary" class="toolbar-top-button" :loading="watchlistLoading" @click="addCurrentToWatchlist">
+                    加自选
+                    <span class="button-shortcut">W</span>
+                  </el-button>
                 </template>
               </StockReviewChartPanel>
             </div>
@@ -78,9 +62,6 @@
               <div class="block">
                 <label>快捷操作</label>
                 <div class="block-actions">
-                  <el-button type="primary" plain :loading="watchlistLoading" @click="addCurrentToWatchlist">
-                    加入自选
-                  </el-button>
                   <el-button @click="openStockDetail">
                     打开个股详情
                   </el-button>
@@ -118,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
@@ -221,8 +202,27 @@ function openStockDetail(): void {
   if (!context.value) return
   router.push({
     name: 'StockDetail',
-    params: { code: context.value.stock.code },
+    params: { code: context.value.stock.ts_code },
   })
+}
+
+function isTypingElement(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null
+  if (!element) return false
+  const tagName = element.tagName?.toLowerCase()
+  return tagName === 'input'
+    || tagName === 'textarea'
+    || !!element.closest('.el-input, .el-textarea, .el-select')
+    || element.isContentEditable
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (isTypingElement(event.target)) return
+
+  if (event.key.toLowerCase() === 'w') {
+    event.preventDefault()
+    void addCurrentToWatchlist()
+  }
 }
 
 function formatTradeDate(value?: string | null): string {
@@ -236,20 +236,6 @@ function formatDateTime(value?: string | null): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
 }
 
-function formatSignedPct(value?: number | null): string {
-  if (value == null || Number.isNaN(Number(value))) return '--'
-  const numeric = Number(value)
-  const prefix = numeric > 0 ? '+' : ''
-  return `${prefix}${numeric.toFixed(2)}%`
-}
-
-function getPnlClass(value?: number | null): string {
-  if (value == null || Number.isNaN(Number(value))) return ''
-  if (Number(value) > 0) return 'is-up'
-  if (Number(value) < 0) return 'is-down'
-  return ''
-}
-
 watch(
   () => [currentRunId.value, currentTsCode.value],
   () => {
@@ -257,6 +243,14 @@ watch(
   },
   { immediate: true },
 )
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
+})
 </script>
 
 <style scoped lang="scss">
@@ -318,46 +312,27 @@ watch(
   align-items: start;
 }
 
+.left-panel {
+  min-width: 0;
+}
+
 .chart-card {
   padding: 18px;
-}
-
-.chart-meta {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
+  flex-direction: column;
+  height: clamp(700px, 78vh, 980px);
+  min-height: 700px;
 }
 
-.chart-meta strong,
-.related-item strong {
-  display: block;
-  font-size: 20px;
+.chart-card :deep(.review-chart-panel) {
+  flex: 1;
+  min-height: 0;
 }
 
-.chart-meta span,
-.related-item span {
-  color: var(--el-text-color-secondary);
-}
-
-.stock-chip-group {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
-
-.stock-chip {
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.12);
-  color: var(--el-text-color-regular);
-  font-size: 13px;
-}
-
-.chart-wrap {
-  min-height: 680px;
+.chart-card :deep(.chart-wrap),
+.chart-card :deep(.stock-chart) {
+  height: 100%;
+  min-height: 620px;
 }
 
 .info-card {
@@ -404,6 +379,24 @@ watch(
   flex-wrap: wrap;
 }
 
+.toolbar-top-button,
+.button-shortcut {
+  display: inline-flex;
+  align-items: center;
+}
+
+.button-shortcut {
+  margin-left: 8px;
+  min-width: 18px;
+  justify-content: center;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--el-text-color-secondary);
+}
+
 .source-box,
 .related-list {
   display: grid;
@@ -430,29 +423,6 @@ watch(
   font-size: 12px;
 }
 
-.related-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-}
-
-.related-item.active {
-  border-color: rgba(59, 130, 246, 0.3);
-  background: rgba(59, 130, 246, 0.06);
-}
-
-.pct-text {
-  font-weight: 600;
-}
-
 .is-up {
   color: #dc2626;
 }
@@ -466,7 +436,8 @@ watch(
     grid-template-columns: 1fr;
   }
 
-  .chart-wrap {
+  .chart-card :deep(.chart-wrap),
+  .chart-card :deep(.stock-chart) {
     min-height: 560px;
   }
 }
@@ -477,7 +448,8 @@ watch(
   }
 
   .review-header,
-  .chart-meta {
+  .left-panel,
+  .right-panel {
     grid-template-columns: 1fr;
     display: grid;
   }

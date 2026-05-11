@@ -144,12 +144,6 @@
         </section>
 
         <section class="chart-shell">
-          <div class="chart-toolbar">
-            <div class="chart-toolbar-title">
-              <strong>盲练 K 线</strong>
-              <span>支持日线、周线、月线切换，交易点会直接标在图上。</span>
-            </div>
-          </div>
           <div class="chart-stage">
             <StockReviewChartPanel
               :chart-key="session.session_id"
@@ -612,25 +606,6 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
-.chart-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 14px;
-}
-
-.chart-toolbar-title {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.chart-toolbar-title span {
-  color: #64748b;
-  font-size: 12px;
-}
-
 .practice-chip {
   font-size: 12px;
   color: #64748b;
@@ -712,7 +687,6 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .chart-toolbar,
   .action-ribbon,
   .studio-topbar {
     flex-direction: column;

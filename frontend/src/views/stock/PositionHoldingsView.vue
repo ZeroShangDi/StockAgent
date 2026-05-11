@@ -136,7 +136,7 @@
             </el-table-column>
             <el-table-column label="操作" width="140" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="viewDetail(row.ts_code)">详情</el-button>
+                <el-button link type="primary" @click="openReview(row.ts_code)">复盘</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -214,7 +214,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { subscriptionApi, tradeReviewApi } from '@/api'
@@ -224,6 +224,7 @@ import type { StrategyTypeInfo } from '@/api/types'
 import type { TradeReviewGroupSummary, TradeReviewPositionItem, TradeReviewPositionResult } from '@/api/modules/trade-review'
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 
 const loading = ref(false)
@@ -341,8 +342,15 @@ function handleSelectionChange(rows: TradeReviewPositionItem[]): void {
   selectedPositions.value = rows
 }
 
-function viewDetail(tsCode: string): void {
-  router.push(`/stock/${tsCode}`)
+function openReview(tsCode: string): void {
+  if (!activeGroupId.value) return
+  router.push({
+    name: 'PositionReviewSession',
+    params: {
+      groupId: activeGroupId.value,
+      tsCode,
+    },
+  })
 }
 
 async function addSelectedToWatchlist(): Promise<void> {
@@ -392,6 +400,10 @@ async function handleBatchAddStrategy(): Promise<void> {
 }
 
 onMounted(() => {
+  const queryGroupId = typeof route.query.groupId === 'string' ? route.query.groupId : ''
+  if (queryGroupId) {
+    activeGroupId.value = queryGroupId
+  }
   loadGroups()
 })
 </script>
