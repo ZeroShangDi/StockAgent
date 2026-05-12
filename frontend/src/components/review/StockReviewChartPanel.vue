@@ -20,7 +20,7 @@
               @click="emit('previous')"
             >
               <span>{{ previousLabel }}</span>
-              <kbd>←</kbd>
+              <span class="shortcut-hint">←</span>
             </el-button>
             <el-button
               v-if="showNavigation"
@@ -32,7 +32,7 @@
               @click="emit('next')"
             >
               <span>{{ nextLabel }}</span>
-              <kbd>→</kbd>
+              <span class="shortcut-hint">→</span>
             </el-button>
             <el-radio-group v-model="selectedKlinePeriod" size="small" class="period-switch">
               <el-radio-button
@@ -43,7 +43,7 @@
               >
                 <span class="period-button-label">
                   <span>{{ option.label }}</span>
-                  <kbd>{{ option.shortcut }}</kbd>
+                  <span class="shortcut-hint">{{ option.shortcut }}</span>
                 </span>
               </el-radio-button>
             </el-radio-group>
@@ -411,16 +411,11 @@ defineExpose({
   gap: 6px;
 }
 
-.period-button-label kbd,
-.nav-button kbd {
-  min-width: 18px;
-  padding: 0 4px;
-  border-radius: 6px;
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--el-text-color-secondary);
+.shortcut-hint {
+  margin-left: 6px;
   font-size: 11px;
-  line-height: 18px;
-  text-align: center;
+  color: inherit;
+  opacity: 0.72;
 }
 
 .extra-chip-group {
@@ -436,41 +431,7 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 40px;
-  padding: 0 16px;
-  border-radius: 999px;
   font-weight: 600;
-  border: none;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-}
-
-:deep(.toolbar-top-button:hover),
-.nav-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.24);
-}
-
-:deep(.toolbar-top-button.is-disabled),
-.nav-button.is-disabled {
-  box-shadow: none;
-}
-
-:deep(.toolbar-top-button.el-button--primary),
-.nav-button.el-button--primary {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  color: #fff;
-}
-
-:deep(.toolbar-top-button.el-button--primary:hover),
-.nav-button.el-button--primary:hover {
-  background: linear-gradient(135deg, #4f8df7, #2d6df0);
-}
-
-:deep(.toolbar-top-button.el-button--primary.is-disabled),
-.nav-button.el-button--primary.is-disabled {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.45), rgba(37, 99, 235, 0.45));
-  box-shadow: none;
 }
 
 :deep(.toolbar-top-button .el-button__text),
@@ -480,38 +441,8 @@ defineExpose({
   gap: 8px;
 }
 
-:deep(.toolbar-top-button .button-shortcut),
-.nav-button kbd,
-.period-button-label kbd {
-  background: rgba(255, 255, 255, 0.18);
-  color: inherit;
-}
-
 :deep(.period-switch .el-radio-button__inner) {
-  min-height: 40px;
-  padding: 0 14px;
-  border: none;
-  border-radius: 999px !important;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.06) !important;
-  color: #475569;
   font-weight: 600;
-}
-
-:deep(.period-switch .el-radio-button__inner:hover) {
-  color: #0f172a;
-}
-
-:deep(.period-switch .el-radio-button:first-child .el-radio-button__inner),
-:deep(.period-switch .el-radio-button:last-child .el-radio-button__inner) {
-  border-radius: 999px !important;
-}
-
-:deep(.period-switch .el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  border-color: transparent;
-  color: #fff;
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.24);
 }
 
 .price-up {
