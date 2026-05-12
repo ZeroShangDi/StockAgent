@@ -5,11 +5,16 @@
 - 你把代码推到远端 `feature-monitor` 分支
 - GitHub Actions 自动通过 SSH 登录阿里云服务器
 - 服务器进入项目目录，拉取最新代码
-- 使用根目录 `docker compose --env-file .env.docker up -d --build` 重启服务
+- 使用轻量部署文件 `docker-compose.lite.yml` 重启核心服务
 
 ## 适用前提
 
-当前仓库的服务器部署方式基于项目根目录的 `docker-compose.yml`，所以这套 CI/CD 默认也是围绕它设计的。
+当前仓库同时提供两套部署文件：
+
+- `docker-compose.yml`：完整栈
+- `docker-compose.lite.yml`：轻量核心栈
+
+CI/CD 默认走轻量版，优先保证云服务器在较低配置下也能稳定部署和运行。
 
 服务器需要满足：
 
@@ -26,6 +31,27 @@
 
 - Workflow：`/Users/shangjunhao/Project/StockAgent/.github/workflows/deploy-feature-monitor.yml`
 - 服务器部署脚本：`/Users/shangjunhao/Project/StockAgent/tools/deploy/deploy_feature_monitor.sh`
+- 轻量部署文件：`/Users/shangjunhao/Project/StockAgent/docker-compose.lite.yml`
+
+## 轻量版默认启动哪些服务
+
+轻量版默认只启动这些核心服务：
+
+- `frontend`
+- `web`
+- `data-sync`
+- `listener`
+- `mongodb`
+- `redis`
+
+默认不启动这些较重或当前非核心服务：
+
+- `inference`
+- `backtest`
+- `mcp`
+- `etcd`
+- `minio`
+- `milvus`
 
 ## GitHub 需要配置的 Secrets
 
@@ -58,7 +84,7 @@ cd StockAgent
 git checkout feature-monitor
 cp .env.docker.example .env.docker
 # 然后手动编辑 .env.docker
-docker compose --env-file .env.docker up -d --build
+docker compose -f docker-compose.lite.yml --env-file .env.docker up -d --build
 ```
 
 如果仓库是私有的，务必先让服务器上的 `git pull` 能直接成功。
@@ -72,7 +98,7 @@ docker compose --env-file .env.docker up -d --build
 3. `git fetch origin feature-monitor`
 4. 切到 `feature-monitor`
 5. `git pull --ff-only origin feature-monitor`
-6. `docker compose --env-file .env.docker up -d --build`
+6. `docker compose -f docker-compose.lite.yml --env-file .env.docker up -d --build`
 7. 输出当前容器状态
 
 ## 为什么没有用强制 reset
@@ -100,7 +126,7 @@ chmod +x tools/deploy/deploy_feature_monitor.sh
 
 2. 确认脚本能成功：
    - `git pull` 正常
-   - `docker compose up -d --build` 正常
+   - `docker compose -f docker-compose.lite.yml up -d --build` 正常
    - 服务正常访问
 
 3. 再推送一笔测试提交到 `feature-monitor`
@@ -115,6 +141,26 @@ chmod +x tools/deploy/deploy_feature_monitor.sh
 2. 在 GitHub 仓库里补上 5 个 Secrets
 3. 手动在服务器跑一次部署脚本
 4. 推送测试提交到 `feature-monitor`
+
+## 如果后面要切回完整栈
+
+手动部署完整栈：
+
+```bash
+docker compose -f docker-compose.yml --env-file .env.docker up -d --build
+```
+
+如果你后面希望 GitHub Actions 也切回完整栈，只需要把 workflow 里的：
+
+```bash
+export DEPLOY_COMPOSE_FILES="docker-compose.lite.yml"
+```
+
+改成：
+
+```bash
+export DEPLOY_COMPOSE_FILES="docker-compose.yml"
+```
 
 ## 后续我还可以继续帮你的事
 

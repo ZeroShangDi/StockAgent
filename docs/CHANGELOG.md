@@ -11,6 +11,7 @@
 
 - 新增基于 GitHub Actions 的 `feature-monitor` 分支自动部署骨架，支持推送后通过 SSH 登录阿里云服务器，拉取最新代码并执行 Docker Compose 重启。
 - 新增服务器侧部署脚本与 CI/CD 说明文档，补充 GitHub Secrets、服务器准备步骤与首次验证流程。
+- 新增轻量部署文件 `docker-compose.lite.yml`，默认仅启动 `frontend / web / data-sync / listener / mongodb / redis`，并将自动部署默认切到轻量版以适配低配云服务器。
 
 ## [0.2.7] - 2026-05-12
 
