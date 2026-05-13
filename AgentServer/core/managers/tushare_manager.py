@@ -12,6 +12,7 @@ import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date, timedelta
 import time
+import random
 
 import pandas as pd
 
@@ -66,10 +67,11 @@ class TokenBucket:
     
     async def wait_and_acquire(self, tokens: int = 1) -> None:
         """等待并获取令牌"""
-        wait_time = await self.acquire(tokens)
-        if wait_time > 0:
+        while True:
+            wait_time = await self.acquire(tokens)
+            if wait_time <= 0:
+                return
             await asyncio.sleep(wait_time)
-            await self.acquire(tokens)
 
 
 class TushareManager(BaseManager):
@@ -86,6 +88,59 @@ class TushareManager(BaseManager):
         self._pro = None  # tushare pro api
         self._config = settings.tushare
         self._bucket: Optional[TokenBucket] = None
+        self._request_lock = asyncio.Lock()
+        self._effective_rate_limit = 0
+        self._safe_rate_limit = 0
+
+    RATE_LIMIT_ERROR_KEYWORDS = (
+        "429",
+        "rate limit",
+        "too many requests",
+        "frequency",
+        "frequency limit",
+        "limit exceeded",
+        "访问过于频繁",
+        "频次",
+        "限频",
+        "请稍后",
+        "每分钟最多访问",
+    )
+
+    TRANSIENT_ERROR_KEYWORDS = (
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "connection reset",
+        "connection aborted",
+        "connection refused",
+        "remote disconnected",
+        "max retries exceeded",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+    )
+
+    def _get_rate_limit_safety_ratio(self) -> float:
+        raw = os.getenv("TUSHARE_RATE_LIMIT_SAFETY_RATIO", "0.85").strip()
+        try:
+            ratio = float(raw)
+        except ValueError:
+            ratio = 0.85
+        return min(max(ratio, 0.1), 1.0)
+
+    def _get_max_retries(self) -> int:
+        raw = os.getenv("TUSHARE_MAX_RETRIES", "6").strip()
+        try:
+            retries = int(raw)
+        except ValueError:
+            retries = 6
+        return max(retries, 1)
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        message = str(error or "").lower()
+        if any(keyword in message for keyword in self.RATE_LIMIT_ERROR_KEYWORDS):
+            return True
+        return any(keyword in message for keyword in self.TRANSIENT_ERROR_KEYWORDS)
     
     async def initialize(self) -> None:
         """初始化 Tushare 连接"""
@@ -108,13 +163,22 @@ class TushareManager(BaseManager):
         self._ts = ts  # 保存 tushare 模块引用，用于非 pro 接口
         self._pro = ts.pro_api(token)
         
-        # 频率控制（暂时禁用）
-        # rate_per_second = self._config.rate_limit / 60.0
-        # self._bucket = TokenBucket(rate=rate_per_second, capacity=20)
-        self._bucket = None
+        self._effective_rate_limit = max(int(self._config.rate_limit or 200), 1)
+        self._safe_rate_limit = max(
+            1,
+            int(self._effective_rate_limit * self._get_rate_limit_safety_ratio()),
+        )
+        rate_per_second = self._safe_rate_limit / 60.0
+        burst_capacity = min(max(int(rate_per_second * 3), 1), 10)
+        self._bucket = TokenBucket(rate=rate_per_second, capacity=burst_capacity)
         
         self._initialized = True
-        self.logger.info(f"Tushare initialized, rate_limit={self._config.rate_limit}/min ✓")
+        self.logger.info(
+            "Tushare initialized, configured_rate_limit=%s/min, safe_rate_limit=%s/min, burst=%s ✓",
+            self._effective_rate_limit,
+            self._safe_rate_limit,
+            burst_capacity,
+        )
     
     async def shutdown(self) -> None:
         """关闭"""
@@ -160,12 +224,45 @@ class TushareManager(BaseManager):
             DataFrame 结果
         """
         self._ensure_initialized()
-        
-        # 在线程池中执行同步调用
+
         loop = asyncio.get_event_loop()
         api_func = getattr(self._pro, api_name)
-        result = await loop.run_in_executor(None, lambda: api_func(**kwargs))
-        return result
+        max_retries = self._get_max_retries()
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                if self._bucket is not None:
+                    await self._bucket.wait_and_acquire()
+
+                async with self._request_lock:
+                    result = await loop.run_in_executor(None, lambda: api_func(**kwargs))
+
+                return result
+            except Exception as exc:
+                last_error = exc
+                if not self._is_retryable_error(exc) or attempt >= max_retries:
+                    raise
+
+                base_delay = 1.5 if any(
+                    keyword in str(exc or "").lower() for keyword in self.RATE_LIMIT_ERROR_KEYWORDS
+                ) else 0.8
+                backoff = min(base_delay * (2 ** (attempt - 1)), 30.0)
+                jitter = random.uniform(0.0, 0.8)
+                wait_seconds = backoff + jitter
+                self.logger.warning(
+                    "Tushare %s attempt %s/%s failed, retrying in %.2fs: %s",
+                    api_name,
+                    attempt,
+                    max_retries,
+                    wait_seconds,
+                    exc,
+                )
+                await asyncio.sleep(wait_seconds)
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"Tushare API call failed unexpectedly: {api_name}")
     
     # ==================== 股票基础信息 ====================
     
