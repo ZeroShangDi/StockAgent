@@ -5,3 +5,4 @@
 export { useWebSocket } from './useWebSocket'
 export { useAuth } from './useAuth'
 export { useTask } from './useTask'
+export { useBuildVersion } from './useBuildVersion'

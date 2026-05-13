@@ -6,6 +6,7 @@ import { onMounted } from 'vue'
 import { ElConfigProvider } from 'element-plus'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 import { useAuth } from '@/hooks'
+import BuildVersionWidget from '@/components/common/BuildVersionWidget.vue'
 
 const { checkAuth } = useAuth()
 
@@ -18,6 +19,7 @@ onMounted(async () => {
 <template>
   <ElConfigProvider :locale="zhCn">
     <RouterView />
+    <BuildVersionWidget />
   </ElConfigProvider>
 </template>
 
