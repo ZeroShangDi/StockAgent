@@ -16,6 +16,7 @@ import axios, {
 } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import router from '@/router'
+import { generateUuid } from '@/utils/id'
 
 // ==================== 类型定义 ====================
 
@@ -86,7 +87,7 @@ client.interceptors.request.use(
     }
     
     // 注入 Trace ID (用于分布式追踪)
-    const traceId = crypto.randomUUID()
+    const traceId = generateUuid()
     config.headers['X-Trace-ID'] = traceId
     
     return config
