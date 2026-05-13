@@ -6,6 +6,7 @@ FastAPI 应用工厂
 
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+from datetime import datetime
 import uuid
 
 from fastapi import FastAPI, Request
@@ -18,7 +19,55 @@ from core.managers import (
 )
 
 from .api import auth_router, user_router, task_router, stock_router, market_router, subscription_router, backtest_router, report_router, system_router, market_weather_router, stock_picker_router, practice_router, trade_review_router, assistant_router
+from .api.auth import hash_password, verify_password
 from .websocket import websocket_router
+
+
+async def ensure_default_admin_user() -> None:
+    """使用 Mongo 管理员凭据初始化默认平台管理员账号。"""
+    username = (settings.mongo.username or "").strip()
+    password_secret = settings.mongo.password
+    password = password_secret.get_secret_value() if password_secret else ""
+
+    if not username or not password:
+        return
+
+    existing = await mongo_manager.find_one("users", {"username": username})
+
+    if existing:
+        update_data = {
+            "email": existing.get("email") or f"{username}@stockagent.local",
+            "nickname": existing.get("nickname") or username,
+            "is_admin": True,
+        }
+        current_hash = existing.get("password_hash")
+        if not current_hash or not verify_password(password, current_hash):
+            update_data["password_hash"] = hash_password(password)
+
+        await mongo_manager.update_one(
+            "users",
+            {"username": username},
+            {"$set": update_data},
+        )
+        return
+
+    await mongo_manager.insert_one(
+        "users",
+        {
+            "user_id": uuid.uuid4().hex,
+            "username": username,
+            "email": f"{username}@stockagent.local",
+            "password_hash": hash_password(password),
+            "nickname": username,
+            "avatar": None,
+            "watchlist": [],
+            "preferences": {},
+            "notification_channels": [],
+            "is_admin": True,
+            "created_at": datetime.utcnow(),
+            "last_login": None,
+        },
+    )
 
 
 @asynccontextmanager
@@ -32,6 +81,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 初始化必要的管理器 (Web 节点只需要 Redis 和 Mongo)
     await redis_manager.initialize()
     await mongo_manager.initialize()
+    await ensure_default_admin_user()
     
     yield
     
