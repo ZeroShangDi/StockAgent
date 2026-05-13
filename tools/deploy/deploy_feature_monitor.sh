@@ -5,7 +5,7 @@ set -euo pipefail
 PROJECT_ROOT="${DEPLOY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-feature-monitor}"
 DEPLOY_ENV_FILE="${DEPLOY_ENV_FILE:-.env.docker}"
-DEPLOY_COMPOSE_FILES="${DEPLOY_COMPOSE_FILES:-docker-compose.lite.yml}"
+DEPLOY_COMPOSE_FILES="${DEPLOY_COMPOSE_FILES:-docker-compose.yml}"
 
 if ! command -v git >/dev/null 2>&1; then
   echo "[deploy] git is required"

@@ -104,7 +104,7 @@ client.interceptors.response.use(
     return response.data
   },
   async (error) => {
-    const originalRequest = error.config as RequestConfig & { _retry?: boolean }
+    const originalRequest = (error.config ?? {}) as RequestConfig & { _retry?: boolean }
     
     // 401 未授权 - 尝试刷新 Token
     if (error.response?.status === 401 && !originalRequest._retry) {
