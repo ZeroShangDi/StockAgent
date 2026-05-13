@@ -8,6 +8,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     AgentThinking: typeof import('./components/agent/AgentThinking.vue')['default']
+    BuildVersionWidget: typeof import('./components/common/BuildVersionWidget.vue')['default']
     ElBadge: typeof import('element-plus/es')['ElBadge']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
