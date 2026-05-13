@@ -14,6 +14,7 @@ import { Plus, Refresh, Edit } from '@element-plus/icons-vue'
 import { subscriptionApi, stockApi, stockPickerApi, tradeReviewApi } from '@/api'
 import { useUserStore } from '@/stores/user'
 import { StrategyType } from '@/api/types'
+import { generateCompactId } from '@/utils/id'
 import type {
   StrategySubscription,
   StockBasic,
@@ -514,7 +515,7 @@ function createDialogStockConfig(strategyType: string, config?: Partial<Strategy
 function createTransitionRule(): StrategyTransitionRule {
   const defaultPool = availablePools.value[0]
   return {
-    rule_id: crypto.randomUUID().replace(/-/g, ''),
+    rule_id: generateCompactId(),
     enabled: true,
     target_pool_id: defaultPool?.pool_id || '',
     target_pool_name: defaultPool?.name || '',
@@ -528,7 +529,7 @@ function createTransitionRule(): StrategyTransitionRule {
 
 function cloneTransitionRule(rule?: Partial<StrategyTransitionRule>): StrategyTransitionRule {
   return {
-    rule_id: rule?.rule_id || crypto.randomUUID().replace(/-/g, ''),
+    rule_id: rule?.rule_id || generateCompactId(),
     enabled: rule?.enabled ?? true,
     target_pool_id: rule?.target_pool_id || '',
     target_pool_name: rule?.target_pool_name || '',

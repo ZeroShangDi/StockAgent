@@ -16,6 +16,7 @@ import axios, {
 } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import router from '@/router'
+import { generateUuid } from '@/utils/id'
 
 // ==================== 类型定义 ====================
 
@@ -86,7 +87,7 @@ client.interceptors.request.use(
     }
     
     // 注入 Trace ID (用于分布式追踪)
-    const traceId = crypto.randomUUID()
+    const traceId = generateUuid()
     config.headers['X-Trace-ID'] = traceId
     
     return config
@@ -104,7 +105,7 @@ client.interceptors.response.use(
     return response.data
   },
   async (error) => {
-    const originalRequest = error.config as RequestConfig & { _retry?: boolean }
+    const originalRequest = (error.config ?? {}) as RequestConfig & { _retry?: boolean }
     
     // 401 未授权 - 尝试刷新 Token
     if (error.response?.status === 401 && !originalRequest._retry) {

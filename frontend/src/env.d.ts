@@ -9,6 +9,13 @@ interface ImportMeta {
   readonly env: ImportMetaEnv
 }
 
+declare const __APP_BUILD_INFO__: {
+  buildId: string
+  buildTime: string
+  commitSha: string
+  branch: string
+}
+
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
   const component: DefineComponent<{}, {}, any>

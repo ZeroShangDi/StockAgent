@@ -221,12 +221,17 @@
 
 ## 🐳 Docker Compose 一键部署
 
-项目根目录已经补齐了完整的 Docker Compose 部署文件，包含：
+项目根目录已经补齐了 Docker Compose 部署文件，当前默认是轻量版：
 
 - `frontend`：Vue 生产构建 + Nginx 静态服务
 - `web`：FastAPI 网关
-- `data-sync` / `inference` / `listener` / `backtest` / `mcp`：后端节点
-- `mongodb` / `redis` / `milvus` / `etcd` / `minio`：基础设施
+- `data-sync` / `listener`：常用后端节点
+- `mongodb` / `redis`：基础设施
+
+同时保留了完整版备用编排文件：
+
+- 默认轻量版：`docker-compose.yml`
+- 完整版备用：`docker-compose.full.yml`
 
 ### 1. 准备环境文件
 
@@ -244,9 +249,26 @@ cp .env.docker.example .env.docker
 
 ### 2. 一键启动
 
+默认启动轻量版：
+
 ```bash
 docker compose --env-file .env.docker up -d --build
 ```
+
+如果你需要完整版，再显式指定备用文件：
+
+```bash
+docker compose -f docker-compose.full.yml --env-file .env.docker up -d --build
+```
+
+如果你在国内网络环境下拉镜像或构建依赖很慢，可以直接使用 `.env.docker` 里预置的国内镜像与包源配置；它已经覆盖了：
+
+- Docker 基础镜像：`python`、`node`、`nginx`
+- 运行时镜像：`mongo`、`redis`、`etcd`、`minio`、`milvus`
+- Python 包源：Tsinghua PyPI Mirror
+- Node 包源：`npmmirror`
+
+如果你的环境访问官方源更快，也可以把这些变量改回官方地址。
 
 ### 3. 查看状态
 
@@ -277,7 +299,8 @@ docker compose --env-file .env.docker down -v
 说明：
 
 - 前端容器会把 `/api` 和 `/ws` 自动反向代理到后端 `web` 服务。
-- 若要扩容推理节点，建议使用 `docker compose --env-file .env.docker up -d --scale inference=2`。
+- 默认轻量版不包含 `inference`、`backtest`、`mcp`、`milvus`、`minio`、`etcd`。
+- 如果你要测试完整链路，请使用 `docker-compose.full.yml`。
 - 本地构建时会使用根目录 `.dockerignore`，避免把 `node_modules`、日志和 Git 元数据一并打进镜像。
 
 ---

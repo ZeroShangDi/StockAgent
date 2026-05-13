@@ -242,10 +242,11 @@ class TokenBucket:
     
     async def wait_and_acquire(self, tokens: int = 1) -> None:
         """等待并获取令牌"""
-        wait_time = await self.acquire(tokens)
-        if wait_time > 0:
+        while True:
+            wait_time = await self.acquire(tokens)
+            if wait_time <= 0:
+                return
             await asyncio.sleep(wait_time)
-            await self.acquire(tokens)
 
 
 class AsyncDataSourceAdapter(ABC):

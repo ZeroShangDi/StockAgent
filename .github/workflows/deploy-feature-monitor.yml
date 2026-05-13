@@ -28,7 +28,7 @@ jobs:
             export DEPLOY_BRANCH="feature-monitor"
             export DEPLOY_ROOT="${{ secrets.ALIYUN_DEPLOY_PATH }}"
             export DEPLOY_ENV_FILE=".env.docker"
-            export DEPLOY_COMPOSE_FILES="docker-compose.lite.yml"
+            export DEPLOY_COMPOSE_FILES="docker-compose.yml"
 
             if [ -z "$DEPLOY_ROOT" ]; then
               echo "ALIYUN_DEPLOY_PATH is empty"

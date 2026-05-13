@@ -1,4 +1,5 @@
 import { api } from '../client'
+import { generateUuid } from '@/utils/id'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
@@ -73,7 +74,7 @@ export const assistantApi = {
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          'X-Trace-ID': crypto.randomUUID(),
+          'X-Trace-ID': generateUuid(),
         },
         body: JSON.stringify({ content }),
       },
