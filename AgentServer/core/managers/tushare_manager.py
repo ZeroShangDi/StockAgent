@@ -66,10 +66,11 @@ class TokenBucket:
     
     async def wait_and_acquire(self, tokens: int = 1) -> None:
         """等待并获取令牌"""
-        wait_time = await self.acquire(tokens)
-        if wait_time > 0:
+        while True:
+            wait_time = await self.acquire(tokens)
+            if wait_time <= 0:
+                return
             await asyncio.sleep(wait_time)
-            await self.acquire(tokens)
 
 
 class TushareManager(BaseManager):
@@ -108,10 +109,11 @@ class TushareManager(BaseManager):
         self._ts = ts  # 保存 tushare 模块引用，用于非 pro 接口
         self._pro = ts.pro_api(token)
         
-        # 频率控制（暂时禁用）
-        # rate_per_second = self._config.rate_limit / 60.0
-        # self._bucket = TokenBucket(rate=rate_per_second, capacity=20)
-        self._bucket = None
+        rate_limit = max(int(self._config.rate_limit or 200), 1)
+        self._bucket = TokenBucket(
+            rate=rate_limit / 60.0,
+            capacity=rate_limit,
+        )
         
         self._initialized = True
         self.logger.info(f"Tushare initialized, rate_limit={self._config.rate_limit}/min ✓")
@@ -160,6 +162,8 @@ class TushareManager(BaseManager):
             DataFrame 结果
         """
         self._ensure_initialized()
+        if self._bucket is not None:
+            await self._bucket.wait_and_acquire(1)
         
         # 在线程池中执行同步调用
         loop = asyncio.get_event_loop()
