@@ -9,15 +9,16 @@
 - 字段命名统一使用 Tushare 风格 (ts_code, trade_date, etc.)
 - 数值字段统一使用 float，日期字段统一使用 str (YYYYMMDD)
 """
+import asyncio
+import logging
+import time
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any, TypedDict
 from dataclasses import dataclass
 from enum import Enum
-import asyncio
-import time
-import logging
+from typing import Optional, List, Dict, Any, TypedDict
 
 import pandas as pd
+from common.utils import market_now
 
 
 logger = logging.getLogger(__name__)
@@ -496,8 +497,7 @@ class AsyncDataSourceAdapter(ABC):
     
     async def is_trading_time(self) -> bool:
         """检查当前是否为交易时间"""
-        from datetime import datetime
-        now = datetime.now()
+        now = market_now()
         current_time = now.hour * 100 + now.minute
         
         # 上午 09:30 - 11:30

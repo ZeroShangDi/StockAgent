@@ -28,6 +28,7 @@ from core.managers import (
     data_source_manager,
 )
 from core.managers.notification_manager import notification_manager
+from common.utils import market_now, market_today_str
 
 from .strategies import (
     BaseStrategy,
@@ -343,14 +344,14 @@ class ListenerNode(BaseNode):
         
         在交易日 9:15 后获取。
         """
-        today = date.today().strftime("%Y%m%d")
+        today = market_today_str()
         
         # 已经获取过今日数据
         if self._last_limit_fetch_date == today:
             return
         
         # 检查时间 (9:15 后才有数据)
-        now = datetime.now()
+        now = market_now()
         fetch_time = self._parse_time(self._config.limit_fetch_time)
         if now.time() < fetch_time:
             self.logger.debug(f"Before limit fetch time ({self._config.limit_fetch_time}), skipping")
@@ -1007,7 +1008,7 @@ class ListenerNode(BaseNode):
             "limit_up": limit_up_count,
             "limit_down": limit_down_count,
             # 更新时间
-            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "update_time": market_now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         
         # 存入 Redis

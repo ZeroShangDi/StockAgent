@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, date, timedelta
 
 import pandas as pd
+from common.utils import market_now
 
 from .base import (
     AsyncDataSourceAdapter,
@@ -975,7 +976,7 @@ class TushareAdapter(AsyncDataSourceAdapter):
     
     async def is_trading_time(self) -> bool:
         """检查当前是否为交易时间"""
-        now = datetime.now()
+        now = market_now()
         today = now.strftime("%Y%m%d")
         
         # 检查是否为交易日
