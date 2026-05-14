@@ -195,6 +195,50 @@ function normalizeTradeDateString(value?: string | null): string | null {
   return `${year}${month}${date}`
 }
 
+function toTimestamp(value: string): number {
+  const year = Number(value.slice(0, 4))
+  const month = Number(value.slice(4, 6)) - 1
+  const date = Number(value.slice(6, 8))
+  return new Date(year, month, date).getTime()
+}
+
+function resolveMarkerCandle(
+  candles: StockDaily[],
+  normalizedTradeDate: string,
+  period: KlinePeriod,
+): StockDaily | null {
+  if (!candles.length) return null
+
+  const firstTradeDate = candles[0]?.trade_date
+  const lastTradeDate = candles[candles.length - 1]?.trade_date
+  if (!firstTradeDate || !lastTradeDate) return null
+
+  // 超出当前可见区间的点不再强行吸附到边界 K 线上，避免多个点挤在一起。
+  if (normalizedTradeDate < firstTradeDate || normalizedTradeDate > lastTradeDate) {
+    return null
+  }
+
+  const exactMatch = candles.find((item) => item.trade_date === normalizedTradeDate)
+  if (exactMatch) return exactMatch
+
+  const nextCandle = candles.find((item) => item.trade_date >= normalizedTradeDate) || null
+  if (!nextCandle) return null
+
+  if (period !== 'daily') {
+    return nextCandle
+  }
+
+  const nextIndex = candles.findIndex((item) => item.trade_date === nextCandle.trade_date)
+  const previousCandle = nextIndex > 0 ? candles[nextIndex - 1] : null
+  if (!previousCandle) return nextCandle
+
+  const targetTs = toTimestamp(normalizedTradeDate)
+  const previousDiff = Math.abs(targetTs - toTimestamp(previousCandle.trade_date))
+  const nextDiff = Math.abs(toTimestamp(nextCandle.trade_date) - targetTs)
+
+  return previousDiff <= nextDiff ? previousCandle : nextCandle
+}
+
 const selectedChartMarkers = computed(() => {
   const candles = selectedChartData.value || []
   if (!props.markers?.length || !candles.length) return []
@@ -204,11 +248,7 @@ const selectedChartMarkers = computed(() => {
       const normalizedTradeDate = normalizeTradeDateString(marker.trade_date)
       if (!normalizedTradeDate) return null
 
-      const matched =
-        candles.find((item) => item.trade_date >= normalizedTradeDate)
-        || [...candles].reverse().find((item) => item.trade_date <= normalizedTradeDate)
-        || null
-
+      const matched = resolveMarkerCandle(candles, normalizedTradeDate, selectedKlinePeriod.value)
       if (!matched) return null
 
       const markerPrice = Number(marker.price || matched.close || matched.open || 0)
