@@ -95,6 +95,7 @@ services:
   mongodb:
     image: "docker.m.daocloud.io/mongo:7.0"
     container_name: stock-agent-mongo
+    command: ["mongod", "--auth", "--bind_ip_all", "--wiredTigerCacheSizeGB", "1.5"]
     env_file:
       - .env.docker
     environment:
