@@ -101,7 +101,7 @@ class NotificationManager(BaseManager):
         self,
         user_id: Optional[str],
         channel_id: Optional[str],
-    ) -> Optional[Tuple[str, str]]:
+    ) -> Optional[Tuple[str, str, str]]:
         if user_id:
             user = await mongo_manager.find_one(
                 "users",
@@ -116,11 +116,12 @@ class NotificationManager(BaseManager):
         if custom_channel:
             provider = str(custom_channel.get("provider") or "").strip().lower()
             webhook = str(custom_channel.get("webhook") or "").strip()
+            keyword = str(custom_channel.get("keyword") or "").strip()
             if provider and webhook:
-                return provider, webhook
+                return provider, webhook, keyword
 
         if self._config.is_configured and self._config.wecom_webhook:
-            return "wecom", self._config.wecom_webhook
+            return "wecom", self._config.wecom_webhook, ""
 
         return None
 
@@ -181,8 +182,13 @@ class NotificationManager(BaseManager):
         # 构建消息（使用纯文本格式，兼容性更好）
         self.logger.info(f"[NOTIFY] Sending text message, length={len(text_content)}")
         
-        provider, webhook = delivery_target
-        success = await self._send_text_via_target(provider=provider, webhook=webhook, content=text_content)
+        provider, webhook, keyword = delivery_target
+        success = await self._send_text_via_target(
+            provider=provider,
+            webhook=webhook,
+            content=text_content,
+            keyword=keyword,
+        )
         
         if success:
             async with self._lock:
@@ -289,21 +295,27 @@ class NotificationManager(BaseManager):
         provider: str,
         webhook: str,
         content: str,
+        keyword: str = "",
         mentioned_list: Optional[List[str]] = None,
     ) -> bool:
         self._ensure_initialized()
 
         payload: Dict[str, Any]
         provider_key = provider.strip().lower()
+        final_content = self._prepare_text_content(
+            provider=provider_key,
+            content=content,
+            keyword=keyword,
+        )
         if provider_key == "dingtalk":
             payload = {
                 "msgtype": "text",
-                "text": {"content": content},
+                "text": {"content": final_content},
             }
         else:
             payload = {
                 "msgtype": "text",
-                "text": {"content": content},
+                "text": {"content": final_content},
             }
 
         if provider_key == "wecom" and mentioned_list:
@@ -313,12 +325,31 @@ class NotificationManager(BaseManager):
             response = await self._client.post(webhook, json=payload)
             response.raise_for_status()
             result = response.json()
-            if provider_key == "dingtalk":
-                return result.get("errcode") == 0
-            return result.get("errcode") == 0
+            success = result.get("errcode") == 0
+            if not success:
+                self.logger.error(
+                    "Notification provider returned failure: provider=%s, keyword=%s, result=%s",
+                    provider_key,
+                    keyword or "-",
+                    result,
+                )
+            return success
         except Exception as e:
             self.logger.error(f"Error sending {provider_key} text notification: {e}")
             return False
+
+    def _prepare_text_content(
+        self,
+        provider: str,
+        content: str,
+        keyword: str = "",
+    ) -> str:
+        """为不同通知渠道补充必要的消息前缀。"""
+        if provider == "dingtalk":
+            normalized_keyword = keyword.strip()
+            if normalized_keyword and normalized_keyword not in content:
+                return f"{normalized_keyword}\n{content}"
+        return content
     
     def _build_alert_text(self, alert: StrategyAlert) -> str:
         """

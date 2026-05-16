@@ -25,6 +25,7 @@ class NotificationChannel(BaseModel):
     name: str
     provider: Literal["wecom", "dingtalk"]
     webhook: str
+    keyword: str = ""
     created_at: datetime
     updated_at: datetime
 
@@ -59,22 +60,26 @@ class NotificationChannelCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=40)
     provider: Literal["wecom", "dingtalk"]
     webhook: str = Field(..., min_length=10)
+    keyword: Optional[str] = Field(default=None, max_length=100)
 
 
 class NotificationChannelUpdateRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=40)
     provider: Optional[Literal["wecom", "dingtalk"]] = None
     webhook: Optional[str] = Field(default=None, min_length=10)
+    keyword: Optional[str] = Field(default=None, max_length=100)
 
 
 def _normalize_notification_channel(raw: dict) -> NotificationChannel:
     created_at = raw.get("created_at")
     updated_at = raw.get("updated_at")
+    provider = str(raw.get("provider") or "wecom")
     return NotificationChannel(
         channel_id=str(raw.get("channel_id") or ""),
         name=str(raw.get("name") or ""),
-        provider=str(raw.get("provider") or "wecom"),
+        provider=provider,
         webhook=str(raw.get("webhook") or ""),
+        keyword=_normalize_keyword(provider, raw.get("keyword")),
         created_at=created_at if isinstance(created_at, datetime) else datetime.utcnow(),
         updated_at=updated_at if isinstance(updated_at, datetime) else datetime.utcnow(),
     )
@@ -89,6 +94,12 @@ def _normalize_webhook(provider: str, webhook: str) -> str:
     if provider == "dingtalk" and "oapi.dingtalk.com" not in value:
         raise HTTPException(status_code=400, detail="钉钉 Webhook 格式不正确")
     return value
+
+
+def _normalize_keyword(provider: str, keyword: object) -> str:
+    if provider != "dingtalk":
+        return ""
+    return str(keyword or "").strip()
 
 
 # ==================== API 端点 ====================
@@ -257,6 +268,7 @@ async def create_notification_channel(
         name=body.name.strip(),
         provider=body.provider,
         webhook=_normalize_webhook(body.provider, body.webhook),
+        keyword=_normalize_keyword(body.provider, body.keyword),
         created_at=now,
         updated_at=now,
     )
@@ -304,9 +316,14 @@ async def update_notification_channel(
         webhook = item.get("webhook") or ""
         if body.webhook is not None:
             webhook = _normalize_webhook(provider, body.webhook)
+        keyword = item.get("keyword") or ""
+        if body.keyword is not None or body.provider is not None:
+            next_keyword = body.keyword if body.keyword is not None else keyword
+            keyword = _normalize_keyword(provider, next_keyword)
         item["provider"] = provider
         item["name"] = body.name.strip() if body.name is not None else str(item.get("name") or "")
         item["webhook"] = webhook
+        item["keyword"] = keyword
         item["updated_at"] = datetime.utcnow()
         updated_channel = _normalize_notification_channel(item)
         break

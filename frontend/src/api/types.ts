@@ -79,6 +79,7 @@ export interface NotificationChannel {
   name: string
   provider: NotificationProvider
   webhook: string
+  keyword: string
   created_at: string
   updated_at: string
 }

@@ -124,6 +124,7 @@ export const useUserStore = defineStore('user', () => {
     name: string
     provider: NotificationChannel['provider']
     webhook: string
+    keyword?: string
   }): Promise<boolean> {
     try {
       const channel = await userApi.createNotificationChannel(payload)
@@ -143,6 +144,7 @@ export const useUserStore = defineStore('user', () => {
       name?: string
       provider?: NotificationChannel['provider']
       webhook?: string
+      keyword?: string
     }
   ): Promise<boolean> {
     try {

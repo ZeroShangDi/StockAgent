@@ -60,6 +60,7 @@ const channelForm = ref({
   name: '',
   provider: 'wecom' as NotificationProvider,
   webhook: '',
+  keyword: '',
 })
 const channelRules: FormRules = {
   name: [{ required: true, message: '请输入机器人名称', trigger: 'blur' }],
@@ -82,6 +83,7 @@ function resetChannelForm(): void {
     name: '',
     provider: 'wecom',
     webhook: '',
+    keyword: '',
   }
 }
 
@@ -96,6 +98,7 @@ function openEditChannelDialog(channel: NotificationChannel): void {
     name: channel.name,
     provider: channel.provider,
     webhook: channel.webhook,
+    keyword: channel.keyword || '',
   }
   channelDialogVisible.value = true
 }
@@ -110,6 +113,7 @@ async function saveChannel(): Promise<void> {
       name: channelForm.value.name.trim(),
       provider: channelForm.value.provider,
       webhook: channelForm.value.webhook.trim(),
+      keyword: channelForm.value.provider === 'dingtalk' ? channelForm.value.keyword.trim() : '',
     }
     const success = editingChannelId.value
       ? await userStore.updateNotificationChannel(editingChannelId.value, payload)
@@ -242,7 +246,7 @@ async function changePassword() {
           <div class="section-head">
             <div>
               <h3>通知机器人</h3>
-              <p class="section-desc">在这里维护你自己的企业微信或钉钉 Webhook，监听策略里可以直接选择使用。</p>
+              <p class="section-desc">在这里维护你自己的企业微信或钉钉 Webhook。钉钉如果配置了安全关键词，也可以一并填写，监听策略里会自动带上。</p>
             </div>
             <el-button type="primary" @click="openCreateChannelDialog">新增机器人</el-button>
           </div>
@@ -259,6 +263,12 @@ async function changePassword() {
                   <el-tag size="small" effect="plain">{{ getProviderLabel(channel.provider) }}</el-tag>
                 </div>
                 <div class="channel-webhook">{{ channel.webhook }}</div>
+                <div
+                  v-if="channel.provider === 'dingtalk' && channel.keyword"
+                  class="channel-meta"
+                >
+                  关键词：{{ channel.keyword }}
+                </div>
                 <div class="channel-meta">
                   更新于 {{ new Date(channel.updated_at).toLocaleString() }}
                 </div>
@@ -353,6 +363,16 @@ async function changePassword() {
             type="textarea"
             :rows="4"
             placeholder="请输入企业微信或钉钉机器人 Webhook 地址"
+          />
+        </el-form-item>
+        <el-form-item
+          v-if="channelForm.provider === 'dingtalk'"
+          label="安全关键词"
+          prop="keyword"
+        >
+          <el-input
+            v-model="channelForm.keyword"
+            placeholder="可选：如果钉钉机器人开启了关键词校验，就填这里"
           />
         </el-form-item>
       </el-form>

@@ -51,6 +51,7 @@ export const userApi = {
     name: string
     provider: NotificationProvider
     webhook: string
+    keyword?: string
   }): Promise<NotificationChannel> {
     return api.post('/users/me/notification-channels', data)
   },
@@ -62,6 +63,7 @@ export const userApi = {
       name?: string
       provider?: NotificationProvider
       webhook?: string
+      keyword?: string
     }
   ): Promise<NotificationChannel> {
     return api.put(`/users/me/notification-channels/${channelId}`, data)

@@ -25,6 +25,19 @@ def test_preview_alert_contains_core_fields() -> None:
     assert "当前价格: 8.20" in preview
 
 
+def test_prepare_text_content_prefixes_dingtalk_keyword() -> None:
+    manager = NotificationManager()
+
+    content = manager._prepare_text_content(
+        provider="dingtalk",
+        content="测试消息",
+        keyword="小财",
+    )
+
+    assert content.startswith("小财\n")
+    assert content.endswith("测试消息")
+
+
 async def test_send_alert_dry_run_succeeds() -> None:
     manager = NotificationManager()
 
