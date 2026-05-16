@@ -44,17 +44,133 @@
               <h2>{{ activeGroup.name }}</h2>
               <p class="detail-desc">{{ activeGroup.description || '暂无说明' }}</p>
             </div>
-            <div class="detail-side">
-              <div class="detail-meta">
-                <span>总记录 {{ activeGroup.record_count }}</span>
-                <span>成交记录 {{ activeGroup.trade_record_count }}</span>
-                <span v-if="activeGroup.last_imported_at">最近导入 {{ formatDateTime(activeGroup.last_imported_at) }}</span>
-              </div>
-              <el-button @click="activeTab = 'heatmap'">查看热力图</el-button>
+            <div class="detail-meta">
+              <span>总记录 {{ activeGroup.record_count }}</span>
+              <span>成交记录 {{ activeGroup.trade_record_count }}</span>
+              <span v-if="activeGroup.last_imported_at">最近导入 {{ formatDateTime(activeGroup.last_imported_at) }}</span>
             </div>
           </header>
 
           <el-tabs v-model="activeTab">
+            <el-tab-pane label="盈亏热力图" name="heatmap">
+              <TradeReviewPnLHeatmap
+                :ranking="stats?.stock_pnl_ranking || []"
+                :loading="loading"
+                @open-stock="openHeatmapStockReview"
+              />
+            </el-tab-pane>
+
+            <el-tab-pane label="持仓股" name="holdings">
+              <div class="holdings-tab">
+                <template v-if="positions">
+                  <div class="holdings-header">
+                    <div>
+                      <h3>持仓股工作台</h3>
+                      <p>基于交割单自动推导当前未卖出的股票持仓，并支持加入自选或批量加入监听。</p>
+                    </div>
+                    <div class="holdings-header-actions">
+                      <el-button :loading="positionsRefreshing" @click="refreshPositions">重算持仓</el-button>
+                      <el-button
+                        type="primary"
+                        plain
+                        :disabled="selectedPositions.length === 0"
+                        @click="addSelectedToWatchlist"
+                      >
+                        加入自选
+                      </el-button>
+                      <el-button
+                        type="primary"
+                        plain
+                        :disabled="selectedPositions.length === 0"
+                        @click="openBatchDialog"
+                      >
+                        批量加入监听
+                      </el-button>
+                    </div>
+                  </div>
+
+                  <div class="holdings-meta">
+                    <span>股票持仓 {{ stockPositions.length }} 只</span>
+                    <span v-if="otherPositions.length > 0">另有 {{ otherPositions.length }} 只非股票资产未在此页展示</span>
+                    <span v-if="positions.summary.latest_valuation_date">估值日 {{ formatTradeDate(positions.summary.latest_valuation_date) }}</span>
+                    <span v-if="positions.summary.updated_at">更新于 {{ formatDateTime(positions.summary.updated_at) }}</span>
+                  </div>
+
+                  <template v-if="stockPositions.length > 0">
+                    <section class="summary-grid">
+                      <article class="summary-card">
+                        <span>持仓数量</span>
+                        <strong>{{ stockPositions.length }}</strong>
+                      </article>
+                      <article class="summary-card">
+                        <span>持仓成本</span>
+                        <strong>{{ formatAmount(positionStockSummary.total_cost) }}</strong>
+                      </article>
+                      <article class="summary-card">
+                        <span>持仓市值</span>
+                        <strong>{{ formatAmount(positionStockSummary.total_market_value) }}</strong>
+                      </article>
+                      <article class="summary-card" :class="pnlClass(positionStockSummary.total_unrealized_pnl)">
+                        <span>浮盈浮亏</span>
+                        <strong>{{ formatSignedAmount(positionStockSummary.total_unrealized_pnl) }}</strong>
+                        <small>{{ formatSignedPct(positionStockSummary.total_unrealized_pnl_pct) }}</small>
+                      </article>
+                    </section>
+
+                    <div class="toolbar">
+                      <el-input
+                        v-model="holdingsKeyword"
+                        class="toolbar-search"
+                        placeholder="按股票名称或代码筛选持仓"
+                        clearable
+                      />
+                      <span class="toolbar-meta">
+                        盈利 {{ profitableStockCount }} 只 · 亏损 {{ lossStockCount }} 只
+                      </span>
+                    </div>
+
+                    <el-table :data="filteredPositions" stripe @selection-change="handleSelectionChange">
+                      <el-table-column type="selection" width="52" />
+                      <el-table-column prop="code" label="代码" width="110" />
+                      <el-table-column prop="name" label="名称" min-width="140" />
+                      <el-table-column prop="quantity" label="持仓数量" width="100" />
+                      <el-table-column prop="avg_cost" label="持仓成本" width="110">
+                        <template #default="{ row }">{{ formatNumber(row.avg_cost) }}</template>
+                      </el-table-column>
+                      <el-table-column prop="latest_price" label="最新价" width="110">
+                        <template #default="{ row }">{{ row.latest_price ? formatNumber(row.latest_price) : '-' }}</template>
+                      </el-table-column>
+                      <el-table-column prop="market_value" label="市值" width="120">
+                        <template #default="{ row }">{{ formatAmount(row.market_value) }}</template>
+                      </el-table-column>
+                      <el-table-column prop="unrealized_pnl" label="浮盈亏" width="120">
+                        <template #default="{ row }">
+                          <span :class="pnlClass(row.unrealized_pnl)">{{ formatSignedAmount(row.unrealized_pnl) }}</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column prop="unrealized_pnl_pct" label="盈亏比" width="110">
+                        <template #default="{ row }">
+                          <span :class="pnlClass(row.unrealized_pnl)">{{ formatSignedPct(row.unrealized_pnl_pct) }}</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column prop="buy_count" label="买入笔数" width="100" />
+                      <el-table-column prop="sell_count" label="卖出笔数" width="100" />
+                      <el-table-column prop="last_trade_date" label="最后交易日" width="120">
+                        <template #default="{ row }">{{ row.last_trade_date ? formatTradeDate(row.last_trade_date) : '-' }}</template>
+                      </el-table-column>
+                      <el-table-column label="操作" width="140" fixed="right">
+                        <template #default="{ row }">
+                          <el-button link type="primary" @click="openPositionReview(row.ts_code)">复盘</el-button>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </template>
+                  <el-empty v-else description="当前分组暂时没有股票持仓，可能已经全部卖出，或剩余的是 ETF / 基金类资产。" />
+                </template>
+                <el-empty v-else description="持仓快照暂未生成" />
+              </div>
+            </el-tab-pane>
+
             <el-tab-pane label="逐笔复盘" name="records">
               <div class="toolbar">
                 <el-select v-model="category" class="toolbar-select" @change="handleFilterChange">
@@ -135,14 +251,6 @@
                   @size-change="handlePageSizeChange"
                 />
               </div>
-            </el-tab-pane>
-
-            <el-tab-pane label="盈亏热力图" name="heatmap">
-              <TradeReviewPnLHeatmap
-                :ranking="stats?.stock_pnl_ranking || []"
-                :loading="loading"
-                @open-stock="openHeatmapStockReview"
-              />
             </el-tab-pane>
 
             <el-tab-pane label="按股汇总" name="stocks">
@@ -273,6 +381,66 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="batchDialogVisible"
+      title="批量加入策略监听"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <div class="dialog-body">
+        <div class="batch-summary-card">
+          <strong>已选持仓</strong>
+          <span>{{ selectedPositions.length }} 只</span>
+        </div>
+
+        <div class="field-block">
+          <label>监听策略</label>
+          <el-select
+            v-model="selectedStrategyType"
+            class="dialog-select"
+            placeholder="请选择策略"
+            :loading="strategyTypeLoading"
+          >
+            <el-option
+              v-for="item in strategyTypes"
+              :key="item.type"
+              :label="item.name"
+              :value="item.type"
+            >
+              <div class="strategy-option">
+                <span>{{ item.name }}</span>
+                <small>{{ item.description }}</small>
+              </div>
+            </el-option>
+          </el-select>
+        </div>
+
+        <p v-if="selectedStrategyType === 'support_resistance'" class="batch-hint">
+          撑压线策略批量加入后，还需要到市场监听页面逐只补充点位配置。
+        </p>
+        <p v-else-if="selectedStrategyType === 'fixed_stop_loss'" class="batch-hint">
+          固定止损策略批量加入后，会按最新本地收盘价初始化止损基准，后续可逐只调整。
+        </p>
+        <p v-else-if="selectedStrategyType === 'trailing_stop_loss'" class="batch-hint">
+          移动止损策略批量加入后，会按最新本地收盘价初始化入场价与最高价，后续可逐只调整。
+        </p>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="batchDialogVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="batchAdding"
+            :disabled="!selectedStrategyType"
+            @click="handleBatchAddStrategy"
+          >
+            确认加入
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -281,10 +449,15 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
-import { tradeReviewApi } from '@/api'
+import { subscriptionApi, tradeReviewApi } from '@/api'
 import TradeReviewPnLHeatmap from '@/components/review/TradeReviewPnLHeatmap.vue'
+import { useUserStore } from '@/stores/user'
+import { StrategyType } from '@/api/types'
+import type { StrategyTypeInfo } from '@/api/types'
 import type {
   TradeReviewGroupSummary,
+  TradeReviewPositionItem,
+  TradeReviewPositionResult,
   TradeReviewRecord,
   TradeReviewRecordListResult,
   TradeReviewStatsResult,
@@ -292,21 +465,26 @@ import type {
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 
 const loading = ref(false)
 const groups = ref<TradeReviewGroupSummary[]>([])
 const activeGroupId = ref('')
-const activeTab = ref<'records' | 'stocks' | 'heatmap'>('records')
+const activeTab = ref<'heatmap' | 'holdings' | 'records' | 'stocks'>('records')
 const category = ref('trade')
 const keyword = ref('')
+const holdingsKeyword = ref('')
 const pageSize = ref(100)
 const currentPage = ref(1)
 const records = ref<TradeReviewRecordListResult>({ items: [], total: 0, skip: 0, limit: 100 })
 const stats = ref<TradeReviewStatsResult | null>(null)
+const positions = ref<TradeReviewPositionResult | null>(null)
 const stockPage = ref(1)
 const stockPageSize = ref(50)
 const stockSortProp = ref<keyof TradeReviewStatsResult['stock_pnl_ranking'][number] | ''>('net_pnl')
 const stockSortOrder = ref<'ascending' | 'descending' | null>('descending')
+const positionsRefreshing = ref(false)
+const selectedPositions = ref<TradeReviewPositionItem[]>([])
 
 const createDialogVisible = ref(false)
 const creatingGroup = ref(false)
@@ -319,6 +497,11 @@ const importDialogVisible = ref(false)
 const importing = ref(false)
 const selectedImportFile = ref<File | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const batchDialogVisible = ref(false)
+const strategyTypes = ref<StrategyTypeInfo[]>([])
+const strategyTypeLoading = ref(false)
+const batchAdding = ref(false)
+const selectedStrategyType = ref('')
 
 const activeGroup = computed(() => groups.value.find((item) => item.group_id === activeGroupId.value) || null)
 const totalPages = computed(() => Math.max(1, Math.ceil((records.value.total || 0) / pageSize.value)))
@@ -352,6 +535,34 @@ const sortedPagedStockRanking = computed(() => {
     return order === 'ascending' ? compare : -compare
   })
 })
+const stockPositions = computed(() => {
+  return (positions.value?.items || []).filter((item) => item.security_type !== 'other')
+})
+const otherPositions = computed(() => {
+  return (positions.value?.items || []).filter((item) => item.security_type === 'other')
+})
+const profitableStockCount = computed(() => stockPositions.value.filter((item) => Number(item.unrealized_pnl || 0) > 0).length)
+const lossStockCount = computed(() => stockPositions.value.filter((item) => Number(item.unrealized_pnl || 0) < 0).length)
+const positionStockSummary = computed(() => {
+  const totalCost = stockPositions.value.reduce((sum, item) => sum + Number(item.total_cost || 0), 0)
+  const totalMarketValue = stockPositions.value.reduce((sum, item) => sum + Number(item.market_value || 0), 0)
+  const totalUnrealizedPnl = totalMarketValue - totalCost
+  return {
+    total_cost: totalCost,
+    total_market_value: totalMarketValue,
+    total_unrealized_pnl: totalUnrealizedPnl,
+    total_unrealized_pnl_pct: totalCost > 0 ? totalUnrealizedPnl / totalCost * 100 : 0,
+  }
+})
+const filteredPositions = computed(() => {
+  const text = holdingsKeyword.value.trim().toLowerCase()
+  if (!text) return stockPositions.value
+  return stockPositions.value.filter((item) => {
+    return item.ts_code.toLowerCase().includes(text)
+      || item.code.toLowerCase().includes(text)
+      || (item.name || '').toLowerCase().includes(text)
+  })
+})
 
 const categoryOptions = [
   { label: '成交记录', value: 'trade' },
@@ -383,6 +594,18 @@ function formatAmount(value: number): string {
   return amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+function formatSignedAmount(value: number): string {
+  const amount = Number(value || 0)
+  const prefix = amount > 0 ? '+' : ''
+  return `${prefix}${formatAmount(amount)}`
+}
+
+function formatSignedPct(value: number): string {
+  const amount = Number(value || 0)
+  const prefix = amount > 0 ? '+' : ''
+  return `${prefix}${amount.toFixed(2)}%`
+}
+
 function formatPercent(value?: number | null): string {
   if (value == null || Number.isNaN(Number(value))) return '--'
   const numeric = Number(value)
@@ -405,11 +628,12 @@ async function loadGroups(): Promise<void> {
       if (!activeGroupId.value || !groups.value.some((item) => item.group_id === activeGroupId.value)) {
         activeGroupId.value = groups.value[0].group_id
       }
-      await Promise.all([loadRecords(), loadStats(false)])
+      await Promise.all([loadRecords(), loadStats(false), loadPositions()])
     } else {
       activeGroupId.value = ''
       records.value = { items: [], total: 0, skip: 0, limit: pageSize.value }
       stats.value = null
+      positions.value = null
     }
   } finally {
     loading.value = false
@@ -419,7 +643,9 @@ async function loadGroups(): Promise<void> {
 async function selectGroup(groupId: string): Promise<void> {
   activeGroupId.value = groupId
   currentPage.value = 1
-  await Promise.all([loadRecords(), loadStats()])
+  holdingsKeyword.value = ''
+  selectedPositions.value = []
+  await Promise.all([loadRecords(), loadStats(), loadPositions()])
 }
 
 async function loadRecords(): Promise<void> {
@@ -438,6 +664,14 @@ async function loadStats(resetStockPage = true): Promise<void> {
   if (resetStockPage) {
     stockPage.value = 1
   }
+}
+
+async function loadPositions(forceRefresh = false): Promise<void> {
+  if (!activeGroupId.value) {
+    positions.value = null
+    return
+  }
+  positions.value = await tradeReviewApi.getPositions(activeGroupId.value, forceRefresh)
 }
 
 function handleFilterChange(): void {
@@ -491,6 +725,20 @@ async function openHeatmapStockReview(payload: {
   await openStockReviewFromCollection(payload.item, {
     tab: 'heatmap',
     summaryTsCodes: payload.summaryTsCodes,
+  })
+}
+
+function openPositionReview(tsCode: string): void {
+  if (!activeGroupId.value) return
+  router.push({
+    name: 'PositionReviewSession',
+    params: {
+      groupId: activeGroupId.value,
+      tsCode,
+    },
+    query: {
+      tab: 'holdings',
+    },
   })
 }
 
@@ -550,6 +798,10 @@ function handleStockSortChange(payload: { prop: string; order: 'ascending' | 'de
   stockSortOrder.value = payload.order
 }
 
+function handleSelectionChange(rows: TradeReviewPositionItem[]): void {
+  selectedPositions.value = rows
+}
+
 function openCreateDialog(): void {
   createForm.name = ''
   createForm.description = ''
@@ -600,16 +852,78 @@ async function handleImportCsv(): Promise<void> {
     const result = await tradeReviewApi.importCsv(activeGroupId.value, selectedImportFile.value)
     closeImportDialog()
     await loadGroups()
-    await Promise.all([loadRecords(), loadStats()])
+    await Promise.all([loadRecords(), loadStats(), loadPositions()])
     ElMessage.success(`导入完成：新增 ${result.imported_rows} 条，跳过重复 ${result.duplicate_rows} 条`)
   } finally {
     importing.value = false
   }
 }
 
+async function refreshPositions(): Promise<void> {
+  if (!activeGroupId.value) return
+  positionsRefreshing.value = true
+  try {
+    positions.value = await tradeReviewApi.rebuildPositions(activeGroupId.value)
+    selectedPositions.value = []
+    ElMessage.success('持仓快照已重算')
+  } finally {
+    positionsRefreshing.value = false
+  }
+}
+
+async function addSelectedToWatchlist(): Promise<void> {
+  if (selectedPositions.value.length === 0) return
+  let added = 0
+  for (const item of selectedPositions.value) {
+    if (userStore.watchlist.includes(item.ts_code)) continue
+    const success = await userStore.addToWatchlist(item.ts_code)
+    if (success) added += 1
+  }
+  ElMessage.success(added > 0 ? `已加入 ${added} 只持仓到自选股` : '选中的持仓已在自选股中')
+}
+
+async function loadStrategyTypes(): Promise<void> {
+  if (strategyTypes.value.length > 0) return
+  strategyTypeLoading.value = true
+  try {
+    strategyTypes.value = (await subscriptionApi.getStrategyTypes()).filter(
+      (item) => item.type !== StrategyType.MARKET_INDEX_ALERT,
+    )
+  } finally {
+    strategyTypeLoading.value = false
+  }
+}
+
+async function openBatchDialog(): Promise<void> {
+  if (selectedPositions.value.length === 0) {
+    ElMessage.warning('请先选择至少一只持仓股')
+    return
+  }
+  await loadStrategyTypes()
+  selectedStrategyType.value = ''
+  batchDialogVisible.value = true
+}
+
+async function handleBatchAddStrategy(): Promise<void> {
+  if (!selectedStrategyType.value || selectedPositions.value.length === 0) return
+  batchAdding.value = true
+  try {
+    const tsCodes = selectedPositions.value.map((item) => item.ts_code)
+    const result = await subscriptionApi.batchAddStocksToStrategy(selectedStrategyType.value, tsCodes)
+    batchDialogVisible.value = false
+    ElMessage.success(result.message || `已处理 ${tsCodes.length} 只持仓股`)
+  } finally {
+    batchAdding.value = false
+  }
+}
+
 watch(activeTab, async (value) => {
   if ((value === 'stocks' || value === 'heatmap') && activeGroupId.value) {
     await loadStats(false)
+    return
+  }
+  if (value === 'holdings' && activeGroupId.value && !positions.value) {
+    await loadPositions()
   }
 })
 
@@ -617,7 +931,7 @@ onMounted(() => {
   if (typeof route.query.groupId === 'string') {
     activeGroupId.value = route.query.groupId
   }
-  if (route.query.tab === 'stocks' || route.query.tab === 'records' || route.query.tab === 'heatmap') {
+  if (route.query.tab === 'stocks' || route.query.tab === 'records' || route.query.tab === 'heatmap' || route.query.tab === 'holdings') {
     activeTab.value = route.query.tab
   } else if (route.query.tab === 'stats') {
     activeTab.value = 'heatmap'
@@ -715,14 +1029,6 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-}
-
-.detail-side {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .group-list-card header h2 {
@@ -850,6 +1156,46 @@ onMounted(() => {
   background: rgba(15, 23, 42, 0.03);
 }
 
+.holdings-tab {
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.holdings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.holdings-header h3 {
+  margin: 0 0 8px;
+}
+
+.holdings-header p {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.7;
+}
+
+.holdings-header-actions,
+.detail-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.holdings-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
 .stock-name-cell {
   display: flex;
   flex-direction: column;
@@ -909,6 +1255,21 @@ onMounted(() => {
   font-weight: 600;
 }
 
+.dialog-select {
+  width: 100%;
+}
+
+.strategy-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.strategy-option small,
+.batch-hint {
+  color: var(--el-text-color-secondary);
+}
+
 .field-tip,
 .file-name {
   margin: 0;
@@ -938,12 +1299,12 @@ onMounted(() => {
 
 @media (max-width: 1200px) {
   .body-grid,
-  .summary-grid,
-  .stats-grid {
+  .summary-grid {
     grid-template-columns: 1fr;
   }
 
-  .stock-pnl-header {
+  .stock-pnl-header,
+  .holdings-header {
     flex-direction: column;
   }
 }

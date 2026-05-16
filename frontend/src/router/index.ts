@@ -152,12 +152,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '股池沉浸复盘' },
       },
       {
-        path: 'positions',
-        name: 'PositionHoldings',
-        component: () => import('@/views/stock/PositionHoldingsView.vue'),
-        meta: { title: '持仓股' },
-      },
-      {
         path: 'positions/:groupId/review/:tsCode',
         name: 'PositionReviewSession',
         component: () => import('@/views/stock/PositionReviewSessionView.vue'),

@@ -226,8 +226,10 @@ function jumpTo(tsCode?: string | null): void {
 
 function backToHoldings(): void {
   router.push({
-    name: 'PositionHoldings',
-    query: currentGroupId.value ? { groupId: currentGroupId.value } : undefined,
+    name: 'TradeReview',
+    query: currentGroupId.value
+      ? { groupId: currentGroupId.value, tab: 'holdings' }
+      : { tab: 'holdings' },
   })
 }
 
