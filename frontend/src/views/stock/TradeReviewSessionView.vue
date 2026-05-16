@@ -6,7 +6,7 @@
           <p class="eyebrow">Immersive Review</p>
           <h1>{{ context?.stock.name || context?.record.security_name || context?.record.code || '沉浸式复盘' }}</h1>
           <p class="subtitle">
-            第 {{ context?.navigation.position || 0 }} / {{ context?.navigation.total || 0 }} 条
+            第 {{ displayPosition }} / {{ displayTotal }} {{ navigationUnit }}
             <span v-if="context?.record.trade_date">· {{ formatTradeDate(context.record.trade_date) }}</span>
             <span v-if="context?.record.side">· {{ context.record.side === 'buy' ? '买入' : '卖出' }}</span>
           </p>
@@ -19,7 +19,7 @@
 
       <section class="content-grid" v-if="context">
         <div class="left-panel">
-          <div class="chart-card">
+          <div v-if="hasRenderableKline" class="chart-card">
             <StockReviewChartPanel
               :chart-key="`${context.record.record_id}-trade-review`"
               :stock="context.stock"
@@ -29,11 +29,11 @@
               :initial-zoom-start="context.zoom.start"
               :initial-zoom-end="context.zoom.end"
               :show-navigation="true"
-              :previous-disabled="!context.navigation.previous_record_id || saving || savingAndMoving"
-              :next-disabled="!context.navigation.next_record_id || saving || savingAndMoving"
+              :previous-disabled="previousDisabled"
+              :next-disabled="nextDisabled"
               :markers="chartMarkers"
-              previous-label="上一条"
-              next-label="下一条"
+              :previous-label="previousLabel"
+              :next-label="nextLabel"
               @previous="jumpToPrevious"
               @next="jumpToNext"
             >
@@ -90,6 +90,120 @@
                 </div>
               </template>
             </StockReviewChartPanel>
+          </div>
+          <div v-else class="chart-card fallback-card">
+            <div class="fallback-header">
+              <div>
+                <h2>K 线暂不可用</h2>
+                <p>{{ context.load_error || '当前记录暂时无法加载图表数据，但你仍然可以保存复盘并切换下一条。' }}</p>
+              </div>
+              <el-tag
+                v-if="context.record.security_type === 'other'"
+                size="small"
+                effect="plain"
+                type="info"
+              >
+                非股票
+              </el-tag>
+            </div>
+
+            <div class="fallback-info-grid">
+              <div class="summary-item">
+                <span>证券名称</span>
+                <strong>{{ context.record.security_name || context.record.code || '-' }}</strong>
+              </div>
+              <div class="summary-item">
+                <span>证券代码</span>
+                <strong>{{ context.record.ts_code || context.record.code || '-' }}</strong>
+              </div>
+              <div class="summary-item">
+                <span>成交日期</span>
+                <strong>{{ formatTradeDate(context.record.trade_date) }}</strong>
+              </div>
+              <div class="summary-item">
+                <span>当前进度</span>
+                <strong>{{ displayPosition }} / {{ displayTotal }} {{ navigationUnit }}</strong>
+              </div>
+            </div>
+
+            <div class="fallback-actions">
+              <el-button
+                :disabled="previousDisabled"
+                @click="jumpToPrevious"
+              >
+                {{ previousLabel }}
+              </el-button>
+              <el-button
+                type="primary"
+                :disabled="nextDisabled"
+                @click="jumpToNext"
+              >
+                {{ nextLabel }}
+              </el-button>
+              <el-button
+                v-if="showRepairButton"
+                :loading="repairLoading"
+                @click="startRepairTask"
+              >
+                补充数据
+              </el-button>
+            </div>
+
+            <div v-if="repairTask" class="repair-status">
+              补数任务：{{ getRepairStatusLabel(repairTask.status) }}
+              <span v-if="repairTask.message">· {{ repairTask.message }}</span>
+            </div>
+          </div>
+
+          <div v-if="context && !hasRenderableKline" class="related-card">
+            <div class="related-header">
+              <h2>同股其他交易</h2>
+              <span>{{ context.related_records.length }} 条</span>
+            </div>
+            <div class="related-table-wrap">
+              <el-table :data="context.related_records" height="100%" stripe :row-class-name="getRelatedRowClassName">
+                <el-table-column prop="trade_date" label="日期" width="108">
+                  <template #default="{ row }">{{ formatTradeDate(row.trade_date) }}</template>
+                </el-table-column>
+                <el-table-column prop="side" label="方向" width="80">
+                  <template #default="{ row }">
+                    <el-tag
+                      v-if="row.side"
+                      :type="row.side === 'buy' ? 'danger' : 'success'"
+                      effect="plain"
+                      round
+                      size="small"
+                    >
+                      {{ row.side === 'buy' ? '买入' : '卖出' }}
+                    </el-tag>
+                    <span v-else>-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="price" label="价格" width="100">
+                  <template #default="{ row }">{{ formatNumber(row.price) }}</template>
+                </el-table-column>
+                <el-table-column prop="quantity" label="数量" width="96" />
+                <el-table-column prop="reviewed" label="复盘" width="86">
+                  <template #default="{ row }">
+                    <el-tag :type="row.reviewed ? 'success' : 'info'" effect="plain" round size="small">
+                      {{ row.reviewed ? '已写' : '未写' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" min-width="100" fixed="right">
+                  <template #default="{ row }">
+                    <el-button
+                      link
+                      type="primary"
+                      :disabled="row.record_id === context.record.record_id"
+                      @click="switchRelatedRecord(row.record_id)"
+                    >
+                      切换
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
           </div>
         </div>
 
@@ -198,10 +312,11 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { tradeReviewApi } from '@/api'
+import { stockApi, tradeReviewApi } from '@/api'
 import StockReviewChartPanel from '@/components/review/StockReviewChartPanel.vue'
 import type { TradeReviewKlineContext } from '@/api/modules/trade-review'
 import { TRADE_REVIEW_REASON_OPTIONS } from '@/api/modules/trade-review'
+import type { StockRepairTaskStatus } from '@/api/modules/stock'
 
 const route = useRoute()
 const router = useRouter()
@@ -209,8 +324,11 @@ const router = useRouter()
 const loading = ref(false)
 const saving = ref(false)
 const savingAndMoving = ref(false)
+const repairLoading = ref(false)
 const context = ref<TradeReviewKlineContext | null>(null)
 const initialReviewSnapshot = ref('')
+const repairTask = ref<StockRepairTaskStatus | null>(null)
+let repairTaskTimer: number | null = null
 
 const reviewForm = reactive<{
   operation_reason: string
@@ -235,6 +353,12 @@ const currentReasonOptions = computed<string[]>(() => {
 function getQueryString(key: string, fallback = ''): string {
   const value = route.query[key]
   return typeof value === 'string' ? value : fallback
+}
+
+function getReturnTab(): 'records' | 'stocks' | 'heatmap' {
+  const tab = getQueryString('tab', '')
+  if (tab === 'stocks' || tab === 'heatmap' || tab === 'records') return tab
+  return isStockSummaryMode.value ? 'stocks' : 'records'
 }
 
 function formatTradeDate(value?: string | null): string {
@@ -277,6 +401,52 @@ const chartMarkers = computed(() => {
   })
 })
 
+const hasRenderableKline = computed(() => {
+  return !!context.value && !context.value.load_error && (context.value.daily?.length || 0) > 0
+})
+const stockSummaryTsCodes = computed<string[]>(() => {
+  const raw = route.query.summaryTsCodes
+  if (typeof raw !== 'string') return []
+  return raw.split(',').map((item) => item.trim().toUpperCase()).filter(Boolean)
+})
+const isStockSummaryMode = computed(() => route.query.navigationMode === 'stock-summary' && stockSummaryTsCodes.value.length > 0)
+const stockSummaryNavigation = computed(() => {
+  const currentTsCode = String(context.value?.record.ts_code || '').toUpperCase()
+  const index = stockSummaryTsCodes.value.findIndex((item) => item === currentTsCode)
+  return {
+    position: index >= 0 ? index + 1 : 0,
+    total: stockSummaryTsCodes.value.length,
+    previousTsCode: index > 0 ? stockSummaryTsCodes.value[index - 1] : '',
+    nextTsCode: index >= 0 && index < stockSummaryTsCodes.value.length - 1 ? stockSummaryTsCodes.value[index + 1] : '',
+  }
+})
+const displayPosition = computed(() => {
+  if (isStockSummaryMode.value) return stockSummaryNavigation.value.position
+  return context.value?.navigation.position || 0
+})
+const displayTotal = computed(() => {
+  if (isStockSummaryMode.value) return stockSummaryNavigation.value.total
+  return context.value?.navigation.total || 0
+})
+const navigationUnit = computed(() => (isStockSummaryMode.value ? '只' : '条'))
+const previousDisabled = computed(() => {
+  if (saving.value || savingAndMoving.value) return true
+  if (isStockSummaryMode.value) return !stockSummaryNavigation.value.previousTsCode
+  return !context.value?.navigation.previous_record_id
+})
+const nextDisabled = computed(() => {
+  if (saving.value || savingAndMoving.value) return true
+  if (isStockSummaryMode.value) return !stockSummaryNavigation.value.nextTsCode
+  return !context.value?.navigation.next_record_id
+})
+const previousLabel = computed(() => (isStockSummaryMode.value ? '上一只' : '上一条'))
+const nextLabel = computed(() => (isStockSummaryMode.value ? '下一只' : '下一条'))
+const showRepairButton = computed(() => {
+  if (!context.value?.load_error) return false
+  if (context.value.record.security_type === 'other') return false
+  return !!context.value.record.ts_code
+})
+
 function getReviewSnapshot(): string {
   return JSON.stringify({
     operation_reason: reviewForm.operation_reason,
@@ -298,10 +468,12 @@ async function loadContext(): Promise<void> {
       keyword: getQueryString('keyword') || undefined,
       anchor_record_id: getQueryString('anchor', recordId),
     })
+    repairTask.value = null
+    stopRepairTaskPolling()
     syncReviewForm()
   } catch (error) {
     context.value = null
-    ElMessage.error('打开复盘 K 线失败，通常是该股票本地日线数据还不完整')
+    ElMessage.error('打开复盘详情失败，请稍后重试')
   } finally {
     loading.value = false
   }
@@ -365,7 +537,34 @@ async function switchRelatedRecord(recordId: string): Promise<void> {
   pushRecord(recordId, getQueryString('anchor', context.value?.navigation.anchor_record_id || recordId))
 }
 
+async function openSummaryNeighbor(tsCode?: string | null): Promise<void> {
+  if (!tsCode || !route.params.groupId) return
+  const response = await tradeReviewApi.listRecords(String(route.params.groupId), {
+    category: 'trade',
+    keyword: tsCode,
+    limit: 1,
+    skip: 0,
+  })
+  const target = response.items[0]
+  if (!target) {
+    ElMessage.warning(`没有找到 ${tsCode} 对应的成交记录`)
+    return
+  }
+  pushRecord(target.record_id, target.record_id)
+}
+
 async function jumpToNext(): Promise<void> {
+  if (isStockSummaryMode.value) {
+    if (!stockSummaryNavigation.value.nextTsCode) return
+    savingAndMoving.value = true
+    try {
+      await saveReview(false)
+      await openSummaryNeighbor(stockSummaryNavigation.value.nextTsCode)
+    } finally {
+      savingAndMoving.value = false
+    }
+    return
+  }
   if (!context.value?.navigation.next_record_id) return
   savingAndMoving.value = true
   try {
@@ -377,6 +576,17 @@ async function jumpToNext(): Promise<void> {
 }
 
 async function jumpToPrevious(): Promise<void> {
+  if (isStockSummaryMode.value) {
+    if (!stockSummaryNavigation.value.previousTsCode) return
+    savingAndMoving.value = true
+    try {
+      await saveReview(false)
+      await openSummaryNeighbor(stockSummaryNavigation.value.previousTsCode)
+    } finally {
+      savingAndMoving.value = false
+    }
+    return
+  }
   if (!context.value?.navigation.previous_record_id) return
   savingAndMoving.value = true
   try {
@@ -393,10 +603,13 @@ async function backToList(): Promise<void> {
     name: 'TradeReview',
     query: {
       groupId: String(route.params.groupId || ''),
+      tab: getReturnTab(),
       category: getQueryString('category', 'trade'),
       keyword: getQueryString('keyword'),
       page: getQueryString('page', '1'),
       pageSize: getQueryString('pageSize', '100'),
+      stockPage: getQueryString('stockPage', '1'),
+      stockPageSize: getQueryString('stockPageSize', '50'),
     },
   })
 }
@@ -427,6 +640,18 @@ function handleKeydown(event: KeyboardEvent): void {
     return
   }
 
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault()
+    void jumpToPrevious()
+    return
+  }
+
+  if (event.key === 'ArrowRight') {
+    event.preventDefault()
+    void jumpToNext()
+    return
+  }
+
   if (event.key === '1') {
     reviewForm.verdict = 'success'
     reviewForm.reasons = reviewForm.reasons.filter((item) => currentReasonOptions.value.includes(item))
@@ -436,6 +661,64 @@ function handleKeydown(event: KeyboardEvent): void {
   if (event.key === '2') {
     reviewForm.verdict = 'failure'
     reviewForm.reasons = reviewForm.reasons.filter((item) => currentReasonOptions.value.includes(item))
+  }
+}
+
+function getRepairStatusLabel(status?: string): string {
+  const mapping: Record<string, string> = {
+    queued: '排队中',
+    running: '进行中',
+    completed: '已完成',
+    failed: '失败',
+  }
+  return mapping[status || ''] || status || '未知'
+}
+
+function stopRepairTaskPolling(): void {
+  if (repairTaskTimer != null) {
+    window.clearTimeout(repairTaskTimer)
+    repairTaskTimer = null
+  }
+}
+
+async function pollRepairTask(taskId: string): Promise<void> {
+  try {
+    const status = await stockApi.getStockRepairTask(taskId)
+    repairTask.value = status
+    if (status.status === 'completed') {
+      ElMessage.success(`${context.value?.stock.name || context.value?.record.security_name || context.value?.record.ts_code} 补数完成`)
+      await loadContext()
+      stopRepairTaskPolling()
+      return
+    }
+    if (status.status === 'failed') {
+      ElMessage.error(status.error_message || '单股补数失败')
+      stopRepairTaskPolling()
+      return
+    }
+    stopRepairTaskPolling()
+    repairTaskTimer = window.setTimeout(() => {
+      void pollRepairTask(taskId)
+    }, 2000)
+  } catch (error) {
+    stopRepairTaskPolling()
+    ElMessage.error('查询单股补数状态失败')
+  }
+}
+
+async function startRepairTask(): Promise<void> {
+  const tsCode = context.value?.record.ts_code
+  if (!tsCode) return
+  repairLoading.value = true
+  try {
+    const response = await stockApi.createStockRepairTask(tsCode)
+    ElMessage.success(response.message || '已创建单股补数任务')
+    stopRepairTaskPolling()
+    await pollRepairTask(response.task_id)
+  } catch (error) {
+    ElMessage.error('发起单股补数失败')
+  } finally {
+    repairLoading.value = false
   }
 }
 
@@ -471,6 +754,7 @@ onBeforeRouteLeave(async (_to, _from, next) => {
 })
 
 onBeforeUnmount(() => {
+  stopRepairTaskPolling()
   window.removeEventListener('keydown', handleKeydown)
 })
 </script>
@@ -565,6 +849,45 @@ onBeforeUnmount(() => {
   flex-direction: column;
   padding: 18px;
   min-height: 0;
+}
+
+.fallback-card {
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.fallback-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.fallback-header h2 {
+  margin: 0 0 8px;
+}
+
+.fallback-header p {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.7;
+}
+
+.fallback-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.fallback-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.repair-status {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 
 .chart-meta {

@@ -724,6 +724,7 @@ class TradeReviewService:
             "source_label": item.get("source_label"),
             "category": item.get("category"),
             "side": item.get("side"),
+            "security_type": item.get("security_type", "other"),
             "is_trade_record": is_trade_record,
             "reviewed": bool(item.get("reviewed")),
             "operation_reason": item.get("operation_reason", ""),
@@ -950,65 +951,6 @@ class TradeReviewService:
         if not record:
             raise ValueError("交割单记录不存在")
 
-        ts_code = record.get("ts_code")
-        if not ts_code:
-            raise ValueError("该记录没有可用的股票代码，暂时无法打开 K 线")
-
-        daily = await mongo_manager.find_many(
-            "stock_daily",
-            {"ts_code": ts_code},
-            sort=[("trade_date", 1)],
-        )
-        if not daily:
-            raise ValueError("本地没有该股票的日线数据")
-
-        same_stock_records = await mongo_manager.find_many(
-            self.RECORD_COLLECTION,
-            {
-                "group_id": record.get("group_id"),
-                "user_id": user_id,
-                "ts_code": ts_code,
-                "is_trade_record": True,
-            },
-            sort=[("trade_date", 1), ("row_no", 1)],
-        )
-
-        trade_dates = [item.get("trade_date") for item in daily]
-        target_trade_date = record.get("trade_date")
-        try:
-            target_index = trade_dates.index(target_trade_date)
-        except ValueError:
-            target_index = max(0, len(trade_dates) - 1)
-
-        start_index = max(0, target_index - window)
-        end_index = min(len(trade_dates) - 1, target_index + window)
-        zoom_start = round(start_index / max(1, len(trade_dates)) * 100, 2)
-        zoom_end = round((end_index + 1) / max(1, len(trade_dates)) * 100, 2)
-
-        markers = [
-            {
-                "record_id": item.get("record_id"),
-                "trade_date": item.get("trade_date"),
-                "price": item.get("price"),
-                "side": item.get("side"),
-                "label": f"{'买' if item.get('side') == 'buy' else '卖'} {item.get('price', 0)}",
-                "is_current": item.get("record_id") == record_id,
-            }
-            for item in same_stock_records
-            if item.get("trade_date") and item.get("price")
-        ]
-
-        stock_basic = await mongo_manager.find_one(
-            "stock_basic",
-            {"ts_code": ts_code},
-            projection={"name": 1, "ts_code": 1, "industry": 1, "market": 1, "list_date": 1},
-        )
-        weekly = build_period_candles(daily, "weekly")
-        monthly = build_period_candles(daily, "monthly")
-        recent_30d_pct_chg = calculate_recent_return(daily, days=30)
-        sector_context = await get_stock_sector_context(ts_code)
-        latest_daily = daily[-1]
-
         navigation_filter: Dict[str, Any] = {
             "group_id": record.get("group_id"),
             "user_id": user_id,
@@ -1038,10 +980,92 @@ class TradeReviewService:
             fallback_anchor = navigation_ids[0]
         current_index = navigation_ids.index(fallback_anchor) if fallback_anchor in navigation_ids else -1
 
+        ts_code = record.get("ts_code")
+        same_stock_records = await mongo_manager.find_many(
+            self.RECORD_COLLECTION,
+            {
+                "group_id": record.get("group_id"),
+                "user_id": user_id,
+                "ts_code": ts_code,
+                "is_trade_record": True,
+            } if ts_code else {
+                "record_id": record_id,
+                "user_id": user_id,
+            },
+            sort=[("trade_date", 1), ("row_no", 1)],
+        )
+
+        markers = [
+            {
+                "record_id": item.get("record_id"),
+                "trade_date": item.get("trade_date"),
+                "price": item.get("price"),
+                "side": item.get("side"),
+                "label": f"{'买' if item.get('side') == 'buy' else '卖'} {item.get('price', 0)}",
+                "is_current": item.get("record_id") == record_id,
+            }
+            for item in same_stock_records
+            if item.get("trade_date") and item.get("price")
+        ]
+
+        stock_basic = await mongo_manager.find_one(
+            "stock_basic",
+            {"ts_code": ts_code},
+            projection={"name": 1, "ts_code": 1, "industry": 1, "market": 1, "list_date": 1},
+        ) if ts_code else None
+
+        load_error: Optional[str] = None
+        daily: List[Dict[str, Any]] = []
+        weekly: List[Dict[str, Any]] = []
+        monthly: List[Dict[str, Any]] = []
+        recent_30d_pct_chg: Optional[float] = None
+        sector_context: Dict[str, Any] = {"concepts": [], "sectors": []}
+        latest_daily: Dict[str, Any] = {}
+        zoom_start = 0.0
+        zoom_end = 100.0
+
+        if not ts_code:
+            load_error = "该记录不是股票或没有可用股票代码，暂时无法展示 K 线"
+        else:
+            try:
+                daily = await mongo_manager.find_many(
+                    "stock_daily",
+                    {"ts_code": ts_code},
+                    sort=[("trade_date", 1)],
+                )
+                if not daily:
+                    load_error = "本地没有该股票的日线数据"
+                else:
+                    trade_dates = [item.get("trade_date") for item in daily]
+                    target_trade_date = record.get("trade_date")
+                    try:
+                        target_index = trade_dates.index(target_trade_date)
+                    except ValueError:
+                        target_index = max(0, len(trade_dates) - 1)
+
+                    start_index = max(0, target_index - window)
+                    end_index = min(len(trade_dates) - 1, target_index + window)
+                    zoom_start = round(start_index / max(1, len(trade_dates)) * 100, 2)
+                    zoom_end = round((end_index + 1) / max(1, len(trade_dates)) * 100, 2)
+                    weekly = build_period_candles(daily, "weekly")
+                    monthly = build_period_candles(daily, "monthly")
+                    recent_30d_pct_chg = calculate_recent_return(daily, days=30)
+                    latest_daily = daily[-1]
+                    try:
+                        sector_context = await get_stock_sector_context(ts_code)
+                    except Exception:
+                        sector_context = {"concepts": [], "sectors": []}
+            except Exception as exc:
+                load_error = f"加载股票图表数据失败：{exc}"
+                daily = []
+                weekly = []
+                monthly = []
+                latest_daily = {}
+
         return {
             "record": self._serialize_record(record),
             "stock": {
-                "ts_code": ts_code,
+                "ts_code": ts_code or "",
                 "name": stock_basic.get("name") if stock_basic else record.get("security_name"),
                 "industry": stock_basic.get("industry") if stock_basic else None,
                 "market": stock_basic.get("market") if stock_basic else None,
@@ -1070,6 +1094,7 @@ class TradeReviewService:
                 "end": zoom_end,
                 "window": window,
             },
+            "load_error": load_error,
         }
 
 

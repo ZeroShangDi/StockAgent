@@ -42,6 +42,7 @@ export interface TradeReviewRecord {
   source_label?: string | null
   category: string
   side?: 'buy' | 'sell' | null
+  security_type?: 'stock' | 'other'
   is_trade_record: boolean
   reviewed: boolean
   operation_reason: string
@@ -188,6 +189,7 @@ export interface TradeReviewKlineContext {
     end: number
     window: number
   }
+  load_error?: string | null
 }
 
 export const tradeReviewApi = {

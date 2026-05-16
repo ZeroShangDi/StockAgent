@@ -486,7 +486,7 @@ async function loadGroups(): Promise<void> {
       if (!activeGroupId.value || !groups.value.some((item) => item.group_id === activeGroupId.value)) {
         activeGroupId.value = groups.value[0].group_id
       }
-      await Promise.all([loadRecords(), loadStats()])
+      await Promise.all([loadRecords(), loadStats(false)])
     } else {
       activeGroupId.value = ''
       records.value = { items: [], total: 0, skip: 0, limit: pageSize.value }
@@ -513,10 +513,12 @@ async function loadRecords(): Promise<void> {
   })
 }
 
-async function loadStats(): Promise<void> {
+async function loadStats(resetStockPage = true): Promise<void> {
   if (!activeGroupId.value) return
   stats.value = await tradeReviewApi.getStats(activeGroupId.value)
-  stockPage.value = 1
+  if (resetStockPage) {
+    stockPage.value = 1
+  }
 }
 
 function handleFilterChange(): void {
@@ -543,6 +545,7 @@ function openReviewSession(record: TradeReviewRecord): void {
       recordId: record.record_id,
     },
     query: {
+      tab: 'records',
       category: category.value,
       keyword: keyword.value.trim() || undefined,
       anchor: record.record_id,

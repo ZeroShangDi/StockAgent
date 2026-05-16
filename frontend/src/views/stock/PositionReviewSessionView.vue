@@ -16,9 +16,9 @@
         </div>
       </header>
 
-      <section v-if="reviewContext && currentPosition" class="content-grid">
+      <section v-if="currentPosition" class="content-grid">
         <div class="left-panel">
-          <div class="chart-card">
+          <div v-if="hasRenderableReviewContext && reviewContext" class="chart-card">
             <StockReviewChartPanel
               :chart-key="`${currentPosition.ts_code}-position-review`"
               :stock="reviewContext.stock"
@@ -42,6 +42,40 @@
                 </el-button>
               </template>
             </StockReviewChartPanel>
+          </div>
+          <div v-else class="chart-card fallback-card">
+            <div class="fallback-header">
+              <div>
+                <h2>K 线暂不可用</h2>
+                <p>{{ contextErrorMessage || '当前股票暂时无法加载图表数据，但你仍然可以切换到下一只继续复盘。' }}</p>
+              </div>
+            </div>
+            <div class="fallback-info-grid">
+              <div class="info-item">
+                <span>股票名称</span>
+                <strong>{{ currentPosition.name || currentPosition.ts_code }}</strong>
+              </div>
+              <div class="info-item">
+                <span>股票代码</span>
+                <strong>{{ currentPosition.ts_code }}</strong>
+              </div>
+              <div class="info-item">
+                <span>当前进度</span>
+                <strong>{{ navigation.position }} / {{ navigation.total }}</strong>
+              </div>
+              <div class="info-item">
+                <span>持仓组</span>
+                <strong>{{ groupName || '-' }}</strong>
+              </div>
+            </div>
+            <div class="fallback-actions">
+              <el-button :disabled="!navigation.previousTsCode" @click="jumpTo(navigation.previousTsCode)">
+                上一只
+              </el-button>
+              <el-button type="primary" :disabled="!navigation.nextTsCode" @click="jumpTo(navigation.nextTsCode)">
+                下一只
+              </el-button>
+            </div>
           </div>
         </div>
 
@@ -79,10 +113,10 @@
             <div class="block">
               <label>板块概念</label>
               <div class="source-box">
-                <p><strong>所属行业：</strong>{{ reviewContext.stock.industry || '暂无行业信息' }}</p>
-                <div v-if="reviewContext.stock.concepts?.length" class="tag-flow">
+                <p><strong>所属行业：</strong>{{ reviewContext?.stock.industry || '暂无行业信息' }}</p>
+                <div v-if="reviewContext?.stock.concepts?.length" class="tag-flow">
                   <span
-                    v-for="item in reviewContext.stock.concepts"
+                    v-for="item in reviewContext?.stock.concepts || []"
                     :key="`concept-${item.ts_code}`"
                     class="sector-tag"
                   >
@@ -126,6 +160,7 @@ const userStore = useUserStore()
 const loading = ref(false)
 const watchlistLoading = ref(false)
 const reviewContext = ref<StockReviewContext | null>(null)
+const contextErrorMessage = ref('')
 const positions = ref<TradeReviewPositionItem[]>([])
 const groupName = ref('')
 
@@ -142,10 +177,12 @@ const navigation = computed(() => {
     nextTsCode: index >= 0 && index < positions.value.length - 1 ? positions.value[index + 1].ts_code : '',
   }
 })
+const hasRenderableReviewContext = computed(() => !!reviewContext.value && (reviewContext.value.daily?.length || 0) > 0)
 
 async function loadContext(): Promise<void> {
   if (!currentGroupId.value || !currentTsCode.value) {
     reviewContext.value = null
+    contextErrorMessage.value = ''
     positions.value = []
     groupName.value = ''
     return
@@ -153,16 +190,23 @@ async function loadContext(): Promise<void> {
 
   loading.value = true
   try {
-    const [positionResult, stockContext] = await Promise.all([
-      tradeReviewApi.getPositions(currentGroupId.value, false),
-      stockApi.getStockReviewContext(currentTsCode.value),
-    ])
+    contextErrorMessage.value = ''
+    const positionResult = await tradeReviewApi.getPositions(currentGroupId.value, false)
     groupName.value = positionResult.group.name
     positions.value = (positionResult.items || []).filter((item) => item.security_type !== 'other')
-    reviewContext.value = stockContext
+
+    try {
+      reviewContext.value = await stockApi.getStockReviewContext(currentTsCode.value)
+    } catch (error: any) {
+      console.error('加载持仓复盘图表失败:', error)
+      reviewContext.value = null
+      const detail = String(error?.response?.data?.detail || '')
+      contextErrorMessage.value = detail || '该股票本地日线数据不存在或接口暂时异常'
+    }
   } catch (error) {
     console.error('加载持仓复盘数据失败:', error)
     reviewContext.value = null
+    contextErrorMessage.value = ''
     ElMessage.error('加载持仓复盘失败')
   } finally {
     loading.value = false
@@ -196,12 +240,12 @@ function openStockDetail(): void {
 }
 
 async function addCurrentToWatchlist(): Promise<void> {
-  if (!currentTsCode.value || !reviewContext.value) return
+  if (!currentTsCode.value || !currentPosition.value) return
   watchlistLoading.value = true
   try {
     const success = await userStore.addToWatchlist(currentTsCode.value)
     if (success) {
-      ElMessage.success(`已将 ${reviewContext.value.stock.name} 加入自选`)
+      ElMessage.success(`已将 ${currentPosition.value.name || currentTsCode.value} 加入自选`)
     } else {
       ElMessage.warning('加入自选失败，可能已存在')
     }
@@ -252,6 +296,18 @@ function isTypingElement(target: EventTarget | null): boolean {
 
 function handleKeydown(event: KeyboardEvent): void {
   if (isTypingElement(event.target)) return
+
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault()
+    jumpTo(navigation.value.previousTsCode)
+    return
+  }
+
+  if (event.key === 'ArrowRight') {
+    event.preventDefault()
+    jumpTo(navigation.value.nextTsCode)
+    return
+  }
 
   if (event.key.toLowerCase() === 'w') {
     event.preventDefault()
@@ -342,6 +398,34 @@ onBeforeUnmount(() => {
   min-height: 720px;
   display: flex;
   height: clamp(720px, 80vh, 1020px);
+}
+
+.fallback-card {
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.fallback-header h2 {
+  margin: 0 0 8px;
+}
+
+.fallback-header p {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.7;
+}
+
+.fallback-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.fallback-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .chart-card :deep(.review-chart-panel) {
