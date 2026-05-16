@@ -44,10 +44,13 @@
               <h2>{{ activeGroup.name }}</h2>
               <p class="detail-desc">{{ activeGroup.description || '暂无说明' }}</p>
             </div>
-            <div class="detail-meta">
-              <span>总记录 {{ activeGroup.record_count }}</span>
-              <span>成交记录 {{ activeGroup.trade_record_count }}</span>
-              <span v-if="activeGroup.last_imported_at">最近导入 {{ formatDateTime(activeGroup.last_imported_at) }}</span>
+            <div class="detail-side">
+              <div class="detail-meta">
+                <span>总记录 {{ activeGroup.record_count }}</span>
+                <span>成交记录 {{ activeGroup.trade_record_count }}</span>
+                <span v-if="activeGroup.last_imported_at">最近导入 {{ formatDateTime(activeGroup.last_imported_at) }}</span>
+              </div>
+              <el-button @click="activeTab = 'heatmap'">查看热力图</el-button>
             </div>
           </header>
 
@@ -134,92 +137,12 @@
               </div>
             </el-tab-pane>
 
-            <el-tab-pane label="统计总览" name="stats">
-              <div v-if="stats" class="stats-panel">
-                <div class="stats-note">
-                  当前统计由后端基于分组内全量数据聚合，不受当前表格分页影响。更细维度的交割单分析已记录到待办，后续会继续扩展。
-                </div>
-                <section class="summary-grid">
-                  <article class="summary-card">
-                    <span>总记录</span>
-                    <strong>{{ stats.summary.total_records }}</strong>
-                  </article>
-                  <article class="summary-card">
-                    <span>成交记录</span>
-                    <strong>{{ stats.summary.trade_records }}</strong>
-                  </article>
-                  <article class="summary-card">
-                    <span>复盘覆盖率</span>
-                    <strong>{{ stats.summary.review_coverage_pct }}%</strong>
-                  </article>
-                  <article class="summary-card">
-                    <span>总手续费</span>
-                    <strong>{{ formatAmount(stats.summary.total_fee) }}</strong>
-                  </article>
-                </section>
-
-                <section class="stats-grid">
-                  <article class="stats-card">
-                    <h3>交易概览</h3>
-                    <ul class="stats-list">
-                      <li>买入笔数：{{ stats.summary.buy_count }}</li>
-                      <li>卖出笔数：{{ stats.summary.sell_count }}</li>
-                      <li>买入总额：{{ formatAmount(stats.summary.total_buy_amount) }}</li>
-                      <li>卖出总额：{{ formatAmount(stats.summary.total_sell_amount) }}</li>
-                      <li>净现金流：{{ formatAmount(stats.summary.net_cash_flow) }}</li>
-                    </ul>
-                  </article>
-
-                  <article class="stats-card">
-                    <h3>业务类型</h3>
-                    <ul class="stats-list">
-                      <li v-for="item in stats.business_type_counts.slice(0, 8)" :key="item.name">
-                        {{ item.name }}：{{ item.count }}
-                      </li>
-                    </ul>
-                  </article>
-
-                  <article class="stats-card">
-                    <h3>高频交易标的</h3>
-                    <ul class="stats-list">
-                      <li v-for="item in stats.top_stocks.slice(0, 8)" :key="item.name">
-                        {{ item.name }}：{{ item.count }}
-                      </li>
-                    </ul>
-                  </article>
-
-                  <article class="stats-card">
-                    <h3>成功原因标签</h3>
-                    <ul class="stats-list">
-                      <li v-for="item in stats.reason_counts.success.slice(0, 8)" :key="`s-${item.name}`">
-                        {{ item.name }}：{{ item.count }}
-                      </li>
-                      <li v-if="stats.reason_counts.success.length === 0">还没有成功原因统计</li>
-                    </ul>
-                  </article>
-
-                  <article class="stats-card">
-                    <h3>失败原因标签</h3>
-                    <ul class="stats-list">
-                      <li v-for="item in stats.reason_counts.failure.slice(0, 8)" :key="`f-${item.name}`">
-                        {{ item.name }}：{{ item.count }}
-                      </li>
-                      <li v-if="stats.reason_counts.failure.length === 0">还没有失败原因统计</li>
-                    </ul>
-                  </article>
-
-                  <article class="stats-card">
-                    <h3>按月成交笔数</h3>
-                    <ul class="stats-list">
-                      <li v-for="item in stats.monthly_trade_counts.slice(-8)" :key="item.month">
-                        {{ formatMonth(item.month) }}：{{ item.count }}
-                      </li>
-                    </ul>
-                  </article>
-                </section>
-
-              </div>
-              <el-empty v-else description="暂无统计数据" />
+            <el-tab-pane label="盈亏热力图" name="heatmap">
+              <TradeReviewPnLHeatmap
+                :ranking="stats?.stock_pnl_ranking || []"
+                :loading="loading"
+                @open-stock="openHeatmapStockReview"
+              />
             </el-tab-pane>
 
             <el-tab-pane label="按股汇总" name="stocks">
@@ -359,6 +282,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { tradeReviewApi } from '@/api'
+import TradeReviewPnLHeatmap from '@/components/review/TradeReviewPnLHeatmap.vue'
 import type {
   TradeReviewGroupSummary,
   TradeReviewRecord,
@@ -372,7 +296,7 @@ const router = useRouter()
 const loading = ref(false)
 const groups = ref<TradeReviewGroupSummary[]>([])
 const activeGroupId = ref('')
-const activeTab = ref<'records' | 'stats' | 'stocks'>('records')
+const activeTab = ref<'records' | 'stocks' | 'heatmap'>('records')
 const category = ref('trade')
 const keyword = ref('')
 const pageSize = ref(100)
@@ -457,11 +381,6 @@ function formatNumber(value: number): string {
 function formatAmount(value: number): string {
   const amount = Number(value || 0)
   return amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-function formatMonth(value: string): string {
-  if (!value || value.length !== 6) return value
-  return `${value.slice(0, 4)}-${value.slice(4, 6)}`
 }
 
 function formatPercent(value?: number | null): string {
@@ -556,6 +475,34 @@ function openReviewSession(record: TradeReviewRecord): void {
 }
 
 async function openStockSummaryReview(item: TradeReviewStatsResult['stock_pnl_ranking'][number]): Promise<void> {
+  const summaryTsCodes = sortedPagedStockRanking.value.map((row) => row.ts_code)
+  await openStockReviewFromCollection(item, {
+    tab: 'stocks',
+    summaryTsCodes,
+    stockPage: String(stockPage.value),
+    stockPageSize: String(stockPageSize.value),
+  })
+}
+
+async function openHeatmapStockReview(payload: {
+  item: TradeReviewStatsResult['stock_pnl_ranking'][number]
+  summaryTsCodes: string[]
+}): Promise<void> {
+  await openStockReviewFromCollection(payload.item, {
+    tab: 'heatmap',
+    summaryTsCodes: payload.summaryTsCodes,
+  })
+}
+
+async function openStockReviewFromCollection(
+  item: TradeReviewStatsResult['stock_pnl_ranking'][number],
+  options: {
+    tab: 'stocks' | 'heatmap'
+    summaryTsCodes: string[]
+    stockPage?: string
+    stockPageSize?: string
+  },
+): Promise<void> {
   if (!activeGroupId.value) return
   const response = await tradeReviewApi.listRecords(activeGroupId.value, {
     category: 'trade',
@@ -568,7 +515,25 @@ async function openStockSummaryReview(item: TradeReviewStatsResult['stock_pnl_ra
     ElMessage.warning('没有找到该股票对应的成交记录')
     return
   }
-  openReviewSession(target)
+  router.push({
+    name: 'TradeReviewSession',
+    params: {
+      groupId: activeGroupId.value,
+      recordId: target.record_id,
+    },
+    query: {
+      tab: options.tab,
+      category: 'trade',
+      keyword: item.ts_code,
+      anchor: target.record_id,
+      page: String(currentPage.value),
+      pageSize: String(pageSize.value),
+      stockPage: options.stockPage,
+      stockPageSize: options.stockPageSize,
+      navigationMode: 'stock-summary',
+      summaryTsCodes: options.summaryTsCodes.join(','),
+    },
+  })
 }
 
 function handleStockPageChange(page: number): void {
@@ -643,14 +608,19 @@ async function handleImportCsv(): Promise<void> {
 }
 
 watch(activeTab, async (value) => {
-  if ((value === 'stats' || value === 'stocks') && activeGroupId.value) {
-    await loadStats()
+  if ((value === 'stocks' || value === 'heatmap') && activeGroupId.value) {
+    await loadStats(false)
   }
 })
 
 onMounted(() => {
   if (typeof route.query.groupId === 'string') {
     activeGroupId.value = route.query.groupId
+  }
+  if (route.query.tab === 'stocks' || route.query.tab === 'records' || route.query.tab === 'heatmap') {
+    activeTab.value = route.query.tab
+  } else if (route.query.tab === 'stats') {
+    activeTab.value = 'heatmap'
   }
   if (typeof route.query.category === 'string') {
     category.value = route.query.category
@@ -665,6 +635,14 @@ onMounted(() => {
   if (typeof route.query.pageSize === 'string') {
     const size = Number(route.query.pageSize)
     if (size > 0) pageSize.value = size
+  }
+  if (typeof route.query.stockPage === 'string') {
+    const page = Number(route.query.stockPage)
+    if (page > 0) stockPage.value = page
+  }
+  if (typeof route.query.stockPageSize === 'string') {
+    const size = Number(route.query.stockPageSize)
+    if (size > 0) stockPageSize.value = size
   }
   loadGroups()
 })
@@ -737,6 +715,14 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.detail-side {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .group-list-card header h2 {

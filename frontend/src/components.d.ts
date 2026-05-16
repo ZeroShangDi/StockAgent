@@ -28,6 +28,7 @@ declare module 'vue' {
     ElRadio: typeof import('element-plus/es')['ElRadio']
     ElRadioButton: typeof import('element-plus/es')['ElRadioButton']
     ElRadioGroup: typeof import('element-plus/es')['ElRadioGroup']
+    ElSegmented: typeof import('element-plus/es')['ElSegmented']
     ElSelect: typeof import('element-plus/es')['ElSelect']
     ElSkeleton: typeof import('element-plus/es')['ElSkeleton']
     ElSlider: typeof import('element-plus/es')['ElSlider']
@@ -49,6 +50,7 @@ declare module 'vue' {
     StockReviewChartPanel: typeof import('./components/review/StockReviewChartPanel.vue')['default']
     TaskProgressCard: typeof import('./components/dashboard/TaskProgressCard.vue')['default']
     TaskStatusBadge: typeof import('./components/agent/TaskStatusBadge.vue')['default']
+    TradeReviewPnLHeatmap: typeof import('./components/review/TradeReviewPnLHeatmap.vue')['default']
     WatchlistCard: typeof import('./components/dashboard/WatchlistCard.vue')['default']
   }
   export interface ComponentCustomProperties {
