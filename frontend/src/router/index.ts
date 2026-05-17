@@ -73,6 +73,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/market/MarketWeatherView.vue'),
         meta: { title: '市场晴雨表' },
       },
+      {
+        path: 'stock-statistics',
+        name: 'StockStatistics',
+        component: () => import('@/views/market/StockStatisticsView.vue'),
+        meta: { title: '股票统计' },
+      },
       
       // 板块策略
       {

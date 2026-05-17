@@ -11,8 +11,9 @@
 """
 
 from fastapi import APIRouter, HTTPException, Query, Depends
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timedelta, date
+from collections import defaultdict
 
 from core.managers import mongo_manager, theme_manager, redis_manager
 from .auth import require_admin, CurrentUser
@@ -21,6 +22,12 @@ router = APIRouter(prefix="/market", tags=["Market Analysis"])
 
 # 数据源切换时间点 (18:00)
 DATA_SOURCE_SWITCH_HOUR = 18
+PERIOD_DAY_MAP = {
+    "1w": 5,
+    "1m": 22,
+    "3m": 66,
+    "1y": 250,
+}
 
 
 def _safe_float(val, default: float = 0.0) -> float:
@@ -31,6 +38,348 @@ def _safe_float(val, default: float = 0.0) -> float:
         return float(val)
     except (ValueError, TypeError):
         return default
+
+
+def _normalize_trade_date_input(trade_date: Optional[str]) -> Optional[str]:
+    if not trade_date:
+        return None
+    text = str(trade_date).strip()
+    if not text:
+        return None
+    if "-" in text:
+        return text.replace("-", "")
+    return text
+
+
+def _display_trade_date(trade_date: Optional[str]) -> str:
+    text = str(trade_date or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    return text
+
+
+def _safe_percent(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator * 100, 1)
+
+
+def _resolve_period_days(period: str) -> int:
+    return PERIOD_DAY_MAP.get(period, PERIOD_DAY_MAP["1m"])
+
+
+def _resolve_period_trade_dates(trade_dates: List[str], latest_trade_date: str, period: str) -> List[str]:
+    if not trade_dates:
+        return []
+    latest = latest_trade_date or trade_dates[-1]
+    if latest not in trade_dates:
+        latest = trade_dates[-1]
+    latest_index = trade_dates.index(latest)
+    days = _resolve_period_days(period)
+    start_index = max(0, latest_index - days + 1)
+    return trade_dates[start_index: latest_index + 1]
+
+
+def _resolve_limit_type(limit_doc: Dict[str, Any]) -> str:
+    first_time = str(limit_doc.get("first_time") or "")
+    last_time = str(limit_doc.get("last_time") or "")
+    open_times = int(limit_doc.get("open_times") or 0)
+    turnover_ratio = _safe_float(limit_doc.get("turnover_ratio"), 0.0)
+    if first_time in {"092500", "093000"} and open_times == 0:
+        return "一字板"
+    if open_times >= 2:
+        return "回封板"
+    if last_time and last_time >= "144500":
+        return "尾盘板"
+    if first_time and first_time <= "093500" and open_times > 0:
+        return "T字板"
+    if turnover_ratio >= 8 or open_times > 0:
+        return "换手板"
+    return "换手板"
+
+
+def _format_limit_time(raw_value: Any) -> str:
+    text = str(raw_value or "").strip()
+    if len(text) == 6 and text.isdigit():
+        return f"{text[:2]}:{text[2:4]}"
+    if len(text) == 4 and text.isdigit():
+        return f"{text[:2]}:{text[2:4]}"
+    return text or "--:--"
+
+
+def _resolve_theme_name(doc: Dict[str, Any]) -> str:
+    return str(doc.get("industry") or doc.get("theme") or doc.get("market") or "未分类")
+
+
+def _board_group_label(board_count: int) -> str:
+    if board_count >= 7:
+        return "7板+"
+    if board_count <= 1:
+        return "首板"
+    return f"{board_count}板"
+
+
+async def _get_market_trade_dates(limit: int = 260) -> List[str]:
+    docs = await mongo_manager.find_many(
+        "daily_stats",
+        {},
+        projection={"trade_date": 1, "_id": 0},
+        sort=[("trade_date", -1)],
+        limit=limit,
+    )
+    dates = [str(item.get("trade_date") or "") for item in docs if item.get("trade_date")]
+    unique = sorted(set(filter(None, dates)))
+    return unique
+
+
+async def _get_stock_meta_map(ts_codes: List[str]) -> Dict[str, Dict[str, Any]]:
+    if not ts_codes:
+        return {}
+    docs = await mongo_manager.find_many(
+        "stock_basic",
+        {"ts_code": {"$in": ts_codes}},
+        projection={"ts_code": 1, "symbol": 1, "name": 1, "industry": 1, "market": 1, "_id": 0},
+    )
+    return {str(doc.get("ts_code")): doc for doc in docs if doc.get("ts_code")}
+
+
+async def _scan_stock_period_metrics(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    cursor = mongo_manager.db["stock_daily"].find(
+        {"trade_date": {"$gte": start_date, "$lte": end_date}},
+        {"ts_code": 1, "trade_date": 1, "open": 1, "high": 1, "low": 1, "close": 1, "pct_chg": 1, "_id": 0},
+    ).sort([("ts_code", 1), ("trade_date", 1)])
+
+    results: List[Dict[str, Any]] = []
+    current_ts: Optional[str] = None
+    first_close = 0.0
+    last_close = 0.0
+    min_low = float("inf")
+    min_low_date = ""
+
+    async for doc in cursor:
+        ts_code = str(doc.get("ts_code") or "")
+        close = _safe_float(doc.get("close"), 0.0)
+        low = _safe_float(doc.get("low"), close)
+        trade_date = str(doc.get("trade_date") or "")
+
+        if ts_code != current_ts:
+            if current_ts and first_close > 0 and last_close > 0 and min_low < float("inf"):
+                results.append({
+                    "ts_code": current_ts,
+                    "start_price": round(first_close, 2),
+                    "current_price": round(last_close, 2),
+                    "lowest_price": round(min_low, 2),
+                    "lowest_date": min_low_date,
+                    "gain_pct": round((last_close - first_close) / first_close * 100, 2),
+                    "max_drawdown_pct": round((min_low - first_close) / first_close * 100, 2),
+                    "rebound_pct": round((last_close - min_low) / min_low * 100, 2) if min_low > 0 else 0.0,
+                })
+            current_ts = ts_code
+            first_close = close
+            last_close = close
+            min_low = low
+            min_low_date = trade_date
+            continue
+
+        last_close = close
+        if low < min_low:
+            min_low = low
+            min_low_date = trade_date
+
+    if current_ts and first_close > 0 and last_close > 0 and min_low < float("inf"):
+        results.append({
+            "ts_code": current_ts,
+            "start_price": round(first_close, 2),
+            "current_price": round(last_close, 2),
+            "lowest_price": round(min_low, 2),
+            "lowest_date": min_low_date,
+            "gain_pct": round((last_close - first_close) / first_close * 100, 2),
+            "max_drawdown_pct": round((min_low - first_close) / first_close * 100, 2),
+            "rebound_pct": round((last_close - min_low) / min_low * 100, 2) if min_low > 0 else 0.0,
+        })
+
+    return results
+
+
+async def _build_stage_gain_rankings(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    metrics = await _scan_stock_period_metrics(start_date, end_date)
+    metrics = [item for item in metrics if item["gain_pct"] >= 20]
+    metrics.sort(key=lambda item: item["gain_pct"], reverse=True)
+    top_metrics = metrics[:30]
+    meta_map = await _get_stock_meta_map([item["ts_code"] for item in top_metrics])
+
+    result = []
+    for index, item in enumerate(top_metrics, start=1):
+        meta = meta_map.get(item["ts_code"], {})
+        result.append({
+            "rank": index,
+            "ts_code": item["ts_code"],
+            "code": meta.get("symbol") or item["ts_code"].split(".")[0],
+            "name": meta.get("name") or item["ts_code"],
+            "theme": _resolve_theme_name(meta),
+            "start_price": item["start_price"],
+            "current_price": item["current_price"],
+            "gain_pct": item["gain_pct"],
+            "max_drawdown_pct": item["max_drawdown_pct"],
+        })
+    return result
+
+
+async def _build_rebound_rankings(start_date: str, end_date: str, period_label: str) -> List[Dict[str, Any]]:
+    metrics = await _scan_stock_period_metrics(start_date, end_date)
+    metrics.sort(key=lambda item: item["rebound_pct"], reverse=True)
+    top_metrics = metrics[:30]
+    meta_map = await _get_stock_meta_map([item["ts_code"] for item in top_metrics])
+
+    result = []
+    for index, item in enumerate(top_metrics, start=1):
+        meta = meta_map.get(item["ts_code"], {})
+        result.append({
+            "rank": index,
+            "ts_code": item["ts_code"],
+            "code": meta.get("symbol") or item["ts_code"].split(".")[0],
+            "name": meta.get("name") or item["ts_code"],
+            "lowest_date": _display_trade_date(item["lowest_date"]),
+            "lowest_price": item["lowest_price"],
+            "current_price": item["current_price"],
+            "rebound_pct": item["rebound_pct"],
+            "period_low_label": f"{_display_trade_date(start_date)} 起始 · {period_label}",
+        })
+    return result
+
+
+async def _build_nextday_win_rate(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    cursor = mongo_manager.db["stock_daily"].find(
+        {"trade_date": {"$gte": start_date, "$lte": end_date}},
+        {"ts_code": 1, "trade_date": 1, "pct_chg": 1, "_id": 0},
+    ).sort([("ts_code", 1), ("trade_date", 1)])
+
+    sample_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
+        "sample_count": 0,
+        "nextday_up_count": 0,
+        "avg_nextday_returns": [],
+    })
+
+    prev_ts: Optional[str] = None
+    prev_doc: Optional[Dict[str, Any]] = None
+
+    async for doc in cursor:
+        ts_code = str(doc.get("ts_code") or "")
+        pct_chg = _safe_float(doc.get("pct_chg"), 0.0)
+
+        if prev_doc and prev_ts == ts_code:
+            prev_pct = _safe_float(prev_doc.get("pct_chg"), 0.0)
+            if prev_pct >= 5.0:
+                stat = sample_stats[ts_code]
+                stat["sample_count"] += 1
+                stat["avg_nextday_returns"].append(pct_chg)
+                if pct_chg > 0:
+                    stat["nextday_up_count"] += 1
+
+        prev_ts = ts_code
+        prev_doc = doc
+
+    meta_map = await _get_stock_meta_map(list(sample_stats.keys()))
+    rows = []
+    for ts_code, stat in sample_stats.items():
+        if stat["sample_count"] <= 0:
+            continue
+        meta = meta_map.get(ts_code, {})
+        avg_return = round(sum(stat["avg_nextday_returns"]) / len(stat["avg_nextday_returns"]), 2) if stat["avg_nextday_returns"] else 0.0
+        rows.append({
+            "ts_code": ts_code,
+            "code": meta.get("symbol") or ts_code.split(".")[0],
+            "name": meta.get("name") or ts_code,
+            "theme": _resolve_theme_name(meta),
+            "sample_count": stat["sample_count"],
+            "nextday_up_count": stat["nextday_up_count"],
+            "win_rate": _safe_percent(stat["nextday_up_count"], stat["sample_count"]),
+            "avg_nextday_return": avg_return,
+            "signal_source": "当日涨幅>=5%",
+        })
+
+    rows.sort(key=lambda item: (item["win_rate"], item["sample_count"]), reverse=True)
+    return [{
+        "rank": index,
+        **item,
+    } for index, item in enumerate(rows[:30], start=1)]
+
+
+async def _build_streak_rankings(start_date: str, end_date: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    cursor = mongo_manager.db["stock_daily"].find(
+        {"trade_date": {"$gte": start_date, "$lte": end_date}},
+        {"ts_code": 1, "trade_date": 1, "pct_chg": 1, "_id": 0},
+    ).sort([("ts_code", 1), ("trade_date", 1)])
+
+    best_up: Dict[str, Dict[str, Any]] = {}
+    best_down: Dict[str, Dict[str, Any]] = {}
+
+    current_ts: Optional[str] = None
+    up_streak = 0
+    up_start = ""
+    down_streak = 0
+    down_start = ""
+
+    def finalize_best(ts_code: str, trade_date: str, pct_chg: float) -> None:
+        nonlocal up_streak, up_start, down_streak, down_start
+        if pct_chg > 0:
+            if up_streak == 0:
+                up_start = trade_date
+            up_streak += 1
+            if up_streak > best_up.get(ts_code, {}).get("days", 0):
+                best_up[ts_code] = {"days": up_streak, "start": up_start, "end": trade_date}
+            down_streak = 0
+            down_start = ""
+        elif pct_chg < 0:
+            if down_streak == 0:
+                down_start = trade_date
+            down_streak += 1
+            if down_streak > best_down.get(ts_code, {}).get("days", 0):
+                best_down[ts_code] = {"days": down_streak, "start": down_start, "end": trade_date}
+            up_streak = 0
+            up_start = ""
+        else:
+            up_streak = 0
+            up_start = ""
+            down_streak = 0
+            down_start = ""
+
+    async for doc in cursor:
+        ts_code = str(doc.get("ts_code") or "")
+        trade_date = str(doc.get("trade_date") or "")
+        pct_chg = _safe_float(doc.get("pct_chg"), 0.0)
+
+        if ts_code != current_ts:
+            current_ts = ts_code
+            up_streak = 0
+            up_start = ""
+            down_streak = 0
+            down_start = ""
+
+        finalize_best(ts_code, trade_date, pct_chg)
+
+    involved_ts_codes = list(set(best_up.keys()) | set(best_down.keys()))
+    meta_map = await _get_stock_meta_map(involved_ts_codes)
+
+    def build_rows(source: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        rows = []
+        for ts_code, info in source.items():
+            meta = meta_map.get(ts_code, {})
+            rows.append({
+                "ts_code": ts_code,
+                "code": meta.get("symbol") or ts_code.split(".")[0],
+                "name": meta.get("name") or ts_code,
+                "theme": _resolve_theme_name(meta),
+                "days": int(info.get("days") or 0),
+                "date_range": f"{_display_trade_date(info.get('start'))} 至 {_display_trade_date(info.get('end'))}",
+            })
+        rows.sort(key=lambda item: item["days"], reverse=True)
+        return [{
+            "rank": index,
+            **item,
+        } for index, item in enumerate(rows[:30], start=1)]
+
+    return build_rows(best_up), build_rows(best_down)
 
 
 def _should_use_realtime_data() -> bool:
@@ -492,6 +841,414 @@ async def get_stats_table(
         })
     
     return {"data": table_data}
+
+
+@router.get("/statistics/calendar")
+async def get_statistics_calendar() -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=260)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No market trade calendar available")
+
+    latest_trade_date = trade_dates[-1]
+    recent_trade_dates = trade_dates[-30:]
+    return {
+        "latest_trade_date": _display_trade_date(latest_trade_date),
+        "trade_dates": [_display_trade_date(item) for item in recent_trade_dates],
+        "source": "daily_stats",
+    }
+
+
+@router.get("/statistics/limit-snapshot")
+async def get_statistics_limit_snapshot(
+    trade_date: Optional[str] = Query(default=None, description="交易日，支持 YYYYMMDD 或 YYYY-MM-DD"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=60)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+
+    normalized_trade_date = _normalize_trade_date_input(trade_date) or trade_dates[-1]
+    if normalized_trade_date not in trade_dates:
+        normalized_trade_date = trade_dates[-1]
+
+    docs = await mongo_manager.find_many(
+        "limit_list",
+        {"trade_date": normalized_trade_date, "limit": "U"},
+        projection={
+            "ts_code": 1,
+            "name": 1,
+            "industry": 1,
+            "close": 1,
+            "amount": 1,
+            "fd_amount": 1,
+            "first_time": 1,
+            "last_time": 1,
+            "open_times": 1,
+            "turnover_ratio": 1,
+            "limit_times": 1,
+            "_id": 0,
+        },
+        sort=[("limit_times", -1), ("first_time", 1)],
+    )
+
+    items = []
+    for doc in docs:
+        ts_code = str(doc.get("ts_code") or "")
+        code = ts_code.split(".")[0] if "." in ts_code else ts_code
+        item = {
+            "ts_code": ts_code,
+            "code": code,
+            "name": doc.get("name") or code,
+            "theme": _resolve_theme_name(doc),
+            "board_count": int(doc.get("limit_times") or 1),
+            "limit_type": _resolve_limit_type(doc),
+            "limit_time": _format_limit_time(doc.get("first_time")),
+            "seal_amount": _safe_float(doc.get("fd_amount"), _safe_float(doc.get("amount"), 0.0)),
+        }
+        items.append(item)
+
+    groups = []
+    for label in ["7板+", "6板", "5板", "4板", "3板", "2板", "首板"]:
+        if label == "7板+":
+            grouped_items = [item for item in items if int(item["board_count"]) >= 7]
+        elif label == "首板":
+            grouped_items = [item for item in items if int(item["board_count"]) <= 1]
+        else:
+            step = int(label[0])
+            grouped_items = [item for item in items if int(item["board_count"]) == step]
+        groups.append({
+            "key": label,
+            "label": label,
+            "count": len(grouped_items),
+            "items": grouped_items,
+        })
+
+    total = max(1, len(items))
+    type_groups = []
+    for limit_type in ["一字板", "T字板", "换手板", "回封板", "尾盘板"]:
+        grouped_items = [item for item in items if item["limit_type"] == limit_type]
+        type_groups.append({
+            "type": limit_type,
+            "count": len(grouped_items),
+            "share": round(len(grouped_items) / total * 100, 1),
+            "items": grouped_items,
+        })
+
+    return {
+        "trade_date": _display_trade_date(normalized_trade_date),
+        "source": "limit_list",
+        "warnings": [] if items else ["limit_list 当前交易日无涨停数据"],
+        "limit_fleet": {
+            "total_count": len(items),
+            "groups": groups,
+            "detail": items,
+        },
+        "limit_types": {
+            "groups": type_groups,
+            "detail": [
+                {
+                    **item,
+                    "type": item["limit_type"],
+                    "board_band_label": _board_group_label(int(item["board_count"])),
+                }
+                for item in items
+            ],
+        },
+    }
+
+
+@router.get("/statistics/leader-cycle")
+async def get_statistics_leader_cycle(
+    period: str = Query(default="1m", description="1w/1m/3m/1y"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=260)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+
+    latest_trade_date = trade_dates[-1]
+    period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    start_trade_date = period_trade_dates[0]
+    end_trade_date = period_trade_dates[-1]
+
+    docs = await mongo_manager.find_many(
+        "limit_list",
+        {"trade_date": {"$gte": start_trade_date, "$lte": end_trade_date}, "limit": "U"},
+        projection={"ts_code": 1, "trade_date": 1, "name": 1, "industry": 1, "market": 1, "limit_times": 1, "_id": 0},
+    )
+
+    stock_summary: Dict[str, Dict[str, Any]] = {}
+    docs_by_date: Dict[str, Dict[str, int]] = defaultdict(dict)
+    for doc in docs:
+        ts_code = str(doc.get("ts_code") or "")
+        if not ts_code:
+            continue
+        board_count = int(doc.get("limit_times") or 1)
+        docs_by_date[str(doc.get("trade_date") or "")][ts_code] = board_count
+        summary = stock_summary.setdefault(ts_code, {
+            "count": 0,
+            "max_board": 0,
+            "name": doc.get("name") or ts_code,
+            "theme": _resolve_theme_name(doc),
+        })
+        summary["count"] += 1
+        summary["max_board"] = max(summary["max_board"], board_count)
+
+    rankings = []
+    for index, (ts_code, info) in enumerate(
+        sorted(stock_summary.items(), key=lambda item: (item[1]["count"], item[1]["max_board"]), reverse=True)[:30],
+        start=1,
+    ):
+        rankings.append({
+            "rank": index,
+            "ts_code": ts_code,
+            "code": ts_code.split(".")[0],
+            "name": info["name"],
+            "theme": info["theme"],
+            "limit_count": info["count"],
+            "max_board": info["max_board"],
+        })
+
+    promotion_trend = []
+    for index, current_date in enumerate(period_trade_dates):
+        current_map = docs_by_date.get(current_date, {})
+        if index == 0:
+            promotion_trend.append({
+                "date": _display_trade_date(current_date),
+                "total": 0.0,
+                "step12": 0.0,
+                "step23": 0.0,
+                "step34": 0.0,
+                "step45": 0.0,
+                "step56": 0.0,
+                "step67": 0.0,
+                "step7Plus": 0.0,
+            })
+            continue
+
+        previous_map = docs_by_date.get(period_trade_dates[index - 1], {})
+        total_promotions = sum(1 for ts_code in previous_map if ts_code in current_map)
+
+        def lane_rate(step: int) -> float:
+            denominator = sum(1 for prev_step in previous_map.values() if prev_step == step)
+            numerator = sum(1 for ts_code, prev_step in previous_map.items() if prev_step == step and current_map.get(ts_code) == step + 1)
+            return _safe_percent(numerator, denominator)
+
+        denom_7_plus = sum(1 for prev_step in previous_map.values() if prev_step >= 7)
+        num_7_plus = sum(
+            1
+            for ts_code, prev_step in previous_map.items()
+            if prev_step >= 7 and current_map.get(ts_code) == prev_step + 1
+        )
+
+        promotion_trend.append({
+            "date": _display_trade_date(current_date),
+            "total": _safe_percent(total_promotions, len(previous_map)),
+            "step12": lane_rate(1),
+            "step23": lane_rate(2),
+            "step34": lane_rate(3),
+            "step45": lane_rate(4),
+            "step56": lane_rate(5),
+            "step67": lane_rate(6),
+            "step7Plus": _safe_percent(num_7_plus, denom_7_plus),
+        })
+
+    return {
+        "period": period,
+        "source": "limit_list",
+        "warnings": [] if docs else ["limit_list 在当前周期内暂无数据"],
+        "rankings": rankings,
+        "promotion_trend": promotion_trend,
+    }
+
+
+@router.get("/statistics/sentiment")
+async def get_statistics_sentiment(
+    period: str = Query(default="1m", description="1w/1m/3m/1y"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=260)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+
+    latest_trade_date = trade_dates[-1]
+    period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    previous_trade_dates = trade_dates[max(0, trade_dates.index(period_trade_dates[0]) - 1):]
+    window_dates = previous_trade_dates[:len(period_trade_dates) + 1] if previous_trade_dates else period_trade_dates
+    needed_dates = sorted(set(window_dates))
+
+    stats_docs = await mongo_manager.find_many(
+        "daily_stats",
+        {"trade_date": {"$in": needed_dates}},
+        sort=[("trade_date", 1)],
+    )
+    analysis_docs = await mongo_manager.find_many(
+        "market_analysis",
+        {"trade_date": {"$in": needed_dates}},
+    )
+    limit_docs = await mongo_manager.find_many(
+        "limit_list",
+        {"trade_date": {"$in": needed_dates}, "limit": "U"},
+        projection={"ts_code": 1, "trade_date": 1, "close": 1, "_id": 0},
+    )
+
+    stats_map = {str(doc.get("trade_date")): doc for doc in stats_docs if doc.get("trade_date")}
+    analysis_map = {str(doc.get("trade_date")): doc for doc in analysis_docs if doc.get("trade_date")}
+    limit_map: Dict[str, Dict[str, float]] = defaultdict(dict)
+    limit_ts_codes: Dict[str, List[str]] = defaultdict(list)
+    for doc in limit_docs:
+        trade_date = str(doc.get("trade_date") or "")
+        ts_code = str(doc.get("ts_code") or "")
+        if not trade_date or not ts_code:
+            continue
+        limit_map[trade_date][ts_code] = _safe_float(doc.get("close"), 0.0)
+        limit_ts_codes[trade_date].append(ts_code)
+
+    current_trade_dates = period_trade_dates
+    current_daily_docs = await mongo_manager.find_many(
+        "stock_daily",
+        {"trade_date": {"$in": current_trade_dates}, "ts_code": {"$in": sorted({code for values in limit_ts_codes.values() for code in values})}},
+        projection={"ts_code": 1, "trade_date": 1, "open": 1, "high": 1, "close": 1, "_id": 0},
+    ) if limit_ts_codes else []
+    daily_map: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
+    for doc in current_daily_docs:
+        daily_map[str(doc.get("trade_date") or "")][str(doc.get("ts_code") or "")] = doc
+
+    trend = []
+    for index, current_date in enumerate(period_trade_dates):
+        prev_date = trade_dates[trade_dates.index(current_date) - 1] if trade_dates.index(current_date) > 0 else None
+        prev_limit_map = limit_map.get(prev_date or "", {})
+        current_limit_map = limit_map.get(current_date, {})
+        current_daily_map = daily_map.get(current_date, {})
+
+        samples = []
+        for ts_code, prev_close in prev_limit_map.items():
+            daily = current_daily_map.get(ts_code)
+            if not daily or prev_close <= 0:
+                continue
+            samples.append({
+                "open_premium": ( _safe_float(daily.get("open"), 0.0) - prev_close ) / prev_close * 100,
+                "high_premium": ( _safe_float(daily.get("high"), 0.0) - prev_close ) / prev_close * 100,
+                "close_return": ( _safe_float(daily.get("close"), 0.0) - prev_close ) / prev_close * 100,
+            })
+
+        stats = stats_map.get(current_date, {})
+        analysis = analysis_map.get(current_date, {})
+        limit_up_count = int(stats.get("limit_up_count") or 0)
+        broken_count = int(stats.get("broken_limit_count") or 0)
+        exploded_denominator = max(1, limit_up_count + broken_count)
+        total_promotions = sum(1 for ts_code in prev_limit_map if ts_code in current_limit_map)
+
+        trend.append({
+            "date": _display_trade_date(current_date),
+            "promotion_rate": round(_safe_float(analysis.get("promotion_rate"), _safe_percent(total_promotions, len(prev_limit_map))), 1),
+            "total_promotion_rate": round(_safe_percent(total_promotions, len(prev_limit_map)), 1),
+            "explosion_rate": round(_safe_percent(broken_count, exploded_denominator), 1),
+            "exploded_count": broken_count,
+            "try_limit_count": limit_up_count + broken_count,
+            "avg_follow_return": round(sum(item["close_return"] for item in samples) / len(samples), 2) if samples else 0.0,
+            "open_premium": round(sum(item["open_premium"] for item in samples) / len(samples), 2) if samples else 0.0,
+            "high_premium": round(sum(item["high_premium"] for item in samples) / len(samples), 2) if samples else 0.0,
+            "limit_count": limit_up_count,
+            "prev_limit_count": int(stats_map.get(prev_date or "", {}).get("limit_up_count") or 0),
+        })
+
+    latest = trend[-1] if trend else {
+        "date": _display_trade_date(latest_trade_date),
+        "promotion_rate": 0.0,
+        "total_promotion_rate": 0.0,
+        "explosion_rate": 0.0,
+        "exploded_count": 0,
+        "try_limit_count": 0,
+        "avg_follow_return": 0.0,
+        "open_premium": 0.0,
+        "high_premium": 0.0,
+        "limit_count": 0,
+        "prev_limit_count": 0,
+    }
+
+    return {
+        "period": period,
+        "latest_trade_date": _display_trade_date(latest_trade_date),
+        "source": "daily_stats+market_analysis+limit_list+stock_daily",
+        "warnings": [] if trend else ["情绪趋势数据不足"],
+        "latest": latest,
+        "trend": trend,
+    }
+
+
+@router.get("/statistics/stage-gainers")
+async def get_statistics_stage_gainers(
+    period: str = Query(default="1m", description="1w/1m/3m/1y"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=260)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+    latest_trade_date = trade_dates[-1]
+    period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    rankings = await _build_stage_gain_rankings(period_trade_dates[0], period_trade_dates[-1])
+    return {
+        "period": period,
+        "source": "stock_daily+stock_basic",
+        "warnings": [] if rankings else ["当前周期内暂无阶段涨幅数据"],
+        "rankings": rankings,
+    }
+
+
+@router.get("/statistics/nextday-win-rate")
+async def get_statistics_nextday_win_rate(
+    period: str = Query(default="1m", description="1w/1m/3m/1y"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=260)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+    latest_trade_date = trade_dates[-1]
+    period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    rankings = await _build_nextday_win_rate(period_trade_dates[0], period_trade_dates[-1])
+    return {
+        "period": period,
+        "sample_definition": "当日涨幅 >= 5%，观察次日是否收涨",
+        "source": "stock_daily+stock_basic",
+        "warnings": [] if rankings else ["当前周期内暂无足够的强势样本"],
+        "rankings": rankings,
+    }
+
+
+@router.get("/statistics/streak-board")
+async def get_statistics_streak_board() -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=260)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+    latest_trade_date = trade_dates[-1]
+    streak_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, "1y")
+    up_rows, down_rows = await _build_streak_rankings(streak_trade_dates[0], streak_trade_dates[-1])
+    return {
+        "source": "stock_daily+stock_basic",
+        "warnings": [] if (up_rows or down_rows) else ["近一年连涨连跌统计为空"],
+        "up": up_rows,
+        "down": down_rows,
+    }
+
+
+@router.get("/statistics/rebound")
+async def get_statistics_rebound(
+    period: str = Query(default="1m", description="1w/1m/3m/1y"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=260)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+    latest_trade_date = trade_dates[-1]
+    period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    period_label = {
+        "1w": "近一周",
+        "1m": "近一个月",
+        "3m": "近三个月",
+        "1y": "近一年",
+    }.get(period, "近一个月")
+    rankings = await _build_rebound_rankings(period_trade_dates[0], period_trade_dates[-1], period_label)
+    return {
+        "period": period,
+        "source": "stock_daily+stock_basic",
+        "warnings": [] if rankings else ["当前周期内暂无高低点反弹数据"],
+        "rankings": rankings,
+    }
 
 
 @router.get("/theme-radar")

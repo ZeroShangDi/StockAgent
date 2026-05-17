@@ -68,7 +68,8 @@ const activeMenu = computed(() => {
   if (path.startsWith('/automation-overview')) return '/automation-overview'
   if (path.startsWith('/stock-picker')) return '/stock-picker'
   if (path.startsWith('/stock-pools')) return '/stock-pools'
-  if (path.startsWith('/positions')) return '/positions'
+  if (path.startsWith('/positions')) return '/trade-review'
+  if (path.startsWith('/stock-statistics')) return '/stock-statistics'
   if (path.startsWith('/trade-review')) return '/trade-review'
   if (path.startsWith('/kline-practice')) return '/kline-practice'
   if (path.startsWith('/stock')) return '/analysis'
@@ -87,11 +88,11 @@ const menuSections = [
     title: '新增与改造',
     items: [
       { path: '/market-weather', icon: Sunny, title: '市场晴雨表' },
+      { path: '/stock-statistics', icon: Histogram, title: '股票统计' },
       { path: '/assistant', icon: ChatDotRound, title: '智能工作台' },
       { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
       { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
       { path: '/watchlist', icon: Star, title: '自选股' },
-      { path: '/positions', icon: Star, title: '持仓股' },
       { path: '/strategies', icon: TrendCharts, title: '市场监听' },
       { path: '/trade-review', icon: Document, title: '交割单复盘' },
       { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
