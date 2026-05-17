@@ -12,6 +12,9 @@ concurrency:
 
 jobs:
   deploy:
+    # If Gitee mirrors to GitHub with a dedicated PAT user, set that GitHub username
+    # in repository variable `GITEE_MIRROR_GITHUB_ACTOR` to skip duplicate deploy runs.
+    if: github.event_name != 'push' || vars.GITEE_MIRROR_GITHUB_ACTOR == '' || github.actor != vars.GITEE_MIRROR_GITHUB_ACTOR
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
