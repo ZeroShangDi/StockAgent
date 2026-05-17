@@ -29,6 +29,13 @@ PERIOD_DAY_MAP = {
     "1y": 250,
 }
 
+PERIOD_LABEL_MAP = {
+    "1w": "近一周",
+    "1m": "近一个月",
+    "3m": "近三个月",
+    "1y": "近一年",
+}
+
 
 def _safe_float(val, default: float = 0.0) -> float:
     """安全转换为浮点数"""
@@ -111,6 +118,18 @@ def _resolve_theme_name(doc: Dict[str, Any]) -> str:
     return str(doc.get("industry") or doc.get("theme") or doc.get("market") or "未分类")
 
 
+def _resolve_merged_theme_name(primary: Dict[str, Any], fallback: Dict[str, Any]) -> str:
+    return str(
+        primary.get("industry")
+        or primary.get("theme")
+        or fallback.get("industry")
+        or fallback.get("theme")
+        or primary.get("market")
+        or fallback.get("market")
+        or "未分类"
+    )
+
+
 def _board_group_label(board_count: int) -> str:
     if board_count >= 7:
         return "7板+"
@@ -130,6 +149,31 @@ async def _get_market_trade_dates(limit: int = 260) -> List[str]:
     dates = [str(item.get("trade_date") or "") for item in docs if item.get("trade_date")]
     unique = sorted(set(filter(None, dates)))
     return unique
+
+
+async def _get_index_trade_dates(limit: int = 260) -> List[str]:
+    docs = await mongo_manager.find_many(
+        "index_daily",
+        {},
+        projection={"trade_date": 1, "_id": 0},
+        sort=[("trade_date", -1)],
+        limit=max(limit * 8, 400),
+    )
+    dates = [str(item.get("trade_date") or "") for item in docs if item.get("trade_date")]
+    unique = sorted(set(filter(None, dates)))
+    return unique[-limit:]
+
+
+def _build_period_coverage_warning(trade_dates: List[str], period: str, source_label: str) -> List[str]:
+    expected_days = _resolve_period_days(period)
+    if len(trade_dates) >= expected_days:
+        return []
+    if period == "1w":
+        return []
+    period_label = PERIOD_LABEL_MAP.get(period, period)
+    return [
+        f"{source_label} 当前仅覆盖 {len(trade_dates)} 个交易日，{period_label} 统计暂按现有数据展示"
+    ]
 
 
 async def _get_stock_meta_map(ts_codes: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -254,51 +298,42 @@ async def _build_nextday_win_rate(start_date: str, end_date: str) -> List[Dict[s
         {"ts_code": 1, "trade_date": 1, "pct_chg": 1, "_id": 0},
     ).sort([("ts_code", 1), ("trade_date", 1)])
 
-    sample_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
-        "sample_count": 0,
-        "nextday_up_count": 0,
-        "avg_nextday_returns": [],
+    period_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
+        "trade_days": 0,
+        "up_days": 0,
+        "returns": [],
     })
-
-    prev_ts: Optional[str] = None
-    prev_doc: Optional[Dict[str, Any]] = None
 
     async for doc in cursor:
         ts_code = str(doc.get("ts_code") or "")
         pct_chg = _safe_float(doc.get("pct_chg"), 0.0)
+        if not ts_code:
+            continue
+        stat = period_stats[ts_code]
+        stat["trade_days"] += 1
+        stat["returns"].append(pct_chg)
+        if pct_chg > 0:
+            stat["up_days"] += 1
 
-        if prev_doc and prev_ts == ts_code:
-            prev_pct = _safe_float(prev_doc.get("pct_chg"), 0.0)
-            if prev_pct >= 5.0:
-                stat = sample_stats[ts_code]
-                stat["sample_count"] += 1
-                stat["avg_nextday_returns"].append(pct_chg)
-                if pct_chg > 0:
-                    stat["nextday_up_count"] += 1
-
-        prev_ts = ts_code
-        prev_doc = doc
-
-    meta_map = await _get_stock_meta_map(list(sample_stats.keys()))
+    meta_map = await _get_stock_meta_map(list(period_stats.keys()))
     rows = []
-    for ts_code, stat in sample_stats.items():
-        if stat["sample_count"] <= 0:
+    for ts_code, stat in period_stats.items():
+        if stat["trade_days"] <= 0:
             continue
         meta = meta_map.get(ts_code, {})
-        avg_return = round(sum(stat["avg_nextday_returns"]) / len(stat["avg_nextday_returns"]), 2) if stat["avg_nextday_returns"] else 0.0
+        avg_return = round(sum(stat["returns"]) / len(stat["returns"]), 2) if stat["returns"] else 0.0
         rows.append({
             "ts_code": ts_code,
             "code": meta.get("symbol") or ts_code.split(".")[0],
             "name": meta.get("name") or ts_code,
             "theme": _resolve_theme_name(meta),
-            "sample_count": stat["sample_count"],
-            "nextday_up_count": stat["nextday_up_count"],
-            "win_rate": _safe_percent(stat["nextday_up_count"], stat["sample_count"]),
-            "avg_nextday_return": avg_return,
-            "signal_source": "当日涨幅>=5%",
+            "trade_days": stat["trade_days"],
+            "up_days": stat["up_days"],
+            "win_rate": _safe_percent(stat["up_days"], stat["trade_days"]),
+            "avg_return": avg_return,
         })
 
-    rows.sort(key=lambda item: (item["win_rate"], item["sample_count"]), reverse=True)
+    rows.sort(key=lambda item: (item["win_rate"], item["avg_return"], item["trade_days"]), reverse=True)
     return [{
         "rank": index,
         **item,
@@ -890,15 +925,22 @@ async def get_statistics_limit_snapshot(
         sort=[("limit_times", -1), ("first_time", 1)],
     )
 
+    meta_map = await _get_stock_meta_map([
+        str(doc.get("ts_code") or "")
+        for doc in docs
+        if doc.get("ts_code")
+    ])
+
     items = []
     for doc in docs:
         ts_code = str(doc.get("ts_code") or "")
         code = ts_code.split(".")[0] if "." in ts_code else ts_code
+        meta = meta_map.get(ts_code, {})
         item = {
             "ts_code": ts_code,
             "code": code,
-            "name": doc.get("name") or code,
-            "theme": _resolve_theme_name(doc),
+            "name": meta.get("name") or doc.get("name") or code,
+            "theme": _resolve_merged_theme_name(meta, doc),
             "board_count": int(doc.get("limit_times") or 1),
             "limit_type": _resolve_limit_type(doc),
             "limit_time": _format_limit_time(doc.get("first_time")),
@@ -966,6 +1008,7 @@ async def get_statistics_leader_cycle(
 
     latest_trade_date = trade_dates[-1]
     period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    warnings = _build_period_coverage_warning(period_trade_dates, period, "涨停梯队数据")
     start_trade_date = period_trade_dates[0]
     end_trade_date = period_trade_dates[-1]
 
@@ -992,17 +1035,20 @@ async def get_statistics_leader_cycle(
         summary["count"] += 1
         summary["max_board"] = max(summary["max_board"], board_count)
 
+    meta_map = await _get_stock_meta_map(list(stock_summary.keys()))
+
     rankings = []
     for index, (ts_code, info) in enumerate(
         sorted(stock_summary.items(), key=lambda item: (item[1]["count"], item[1]["max_board"]), reverse=True)[:30],
         start=1,
     ):
+        meta = meta_map.get(ts_code, {})
         rankings.append({
             "rank": index,
             "ts_code": ts_code,
-            "code": ts_code.split(".")[0],
-            "name": info["name"],
-            "theme": info["theme"],
+            "code": meta.get("symbol") or ts_code.split(".")[0],
+            "name": meta.get("name") or info["name"],
+            "theme": _resolve_merged_theme_name(meta, {"theme": info["theme"]}),
             "limit_count": info["count"],
             "max_board": info["max_board"],
         })
@@ -1054,7 +1100,7 @@ async def get_statistics_leader_cycle(
     return {
         "period": period,
         "source": "limit_list",
-        "warnings": [] if docs else ["limit_list 在当前周期内暂无数据"],
+        "warnings": ([*warnings] if docs else [*warnings, "limit_list 在当前周期内暂无数据"]),
         "rankings": rankings,
         "promotion_trend": promotion_trend,
     }
@@ -1070,6 +1116,7 @@ async def get_statistics_sentiment(
 
     latest_trade_date = trade_dates[-1]
     period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    warnings = _build_period_coverage_warning(period_trade_dates, period, "市场情绪数据")
     previous_trade_dates = trade_dates[max(0, trade_dates.index(period_trade_dates[0]) - 1):]
     window_dates = previous_trade_dates[:len(period_trade_dates) + 1] if previous_trade_dates else period_trade_dates
     needed_dates = sorted(set(window_dates))
@@ -1168,7 +1215,7 @@ async def get_statistics_sentiment(
         "period": period,
         "latest_trade_date": _display_trade_date(latest_trade_date),
         "source": "daily_stats+market_analysis+limit_list+stock_daily",
-        "warnings": [] if trend else ["情绪趋势数据不足"],
+        "warnings": ([*warnings] if trend else [*warnings, "情绪趋势数据不足"]),
         "latest": latest,
         "trend": trend,
     }
@@ -1178,16 +1225,17 @@ async def get_statistics_sentiment(
 async def get_statistics_stage_gainers(
     period: str = Query(default="1m", description="1w/1m/3m/1y"),
 ) -> Dict[str, Any]:
-    trade_dates = await _get_market_trade_dates(limit=260)
+    trade_dates = await _get_index_trade_dates(limit=260)
     if not trade_dates:
         raise HTTPException(status_code=404, detail="No trade dates available")
     latest_trade_date = trade_dates[-1]
     period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    warnings = _build_period_coverage_warning(period_trade_dates, period, "股票日线数据")
     rankings = await _build_stage_gain_rankings(period_trade_dates[0], period_trade_dates[-1])
     return {
         "period": period,
         "source": "stock_daily+stock_basic",
-        "warnings": [] if rankings else ["当前周期内暂无阶段涨幅数据"],
+        "warnings": ([*warnings] if rankings else [*warnings, "当前周期内暂无阶段涨幅数据"]),
         "rankings": rankings,
     }
 
@@ -1196,32 +1244,36 @@ async def get_statistics_stage_gainers(
 async def get_statistics_nextday_win_rate(
     period: str = Query(default="1m", description="1w/1m/3m/1y"),
 ) -> Dict[str, Any]:
-    trade_dates = await _get_market_trade_dates(limit=260)
+    trade_dates = await _get_index_trade_dates(limit=260)
     if not trade_dates:
         raise HTTPException(status_code=404, detail="No trade dates available")
     latest_trade_date = trade_dates[-1]
     period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    warnings = _build_period_coverage_warning(period_trade_dates, period, "股票日线数据")
     rankings = await _build_nextday_win_rate(period_trade_dates[0], period_trade_dates[-1])
     return {
         "period": period,
-        "sample_definition": "当日涨幅 >= 5%，观察次日是否收涨",
         "source": "stock_daily+stock_basic",
-        "warnings": [] if rankings else ["当前周期内暂无足够的强势样本"],
+        "warnings": ([*warnings] if rankings else [*warnings, "当前周期内暂无足够的交易数据"]),
         "rankings": rankings,
     }
 
 
 @router.get("/statistics/streak-board")
-async def get_statistics_streak_board() -> Dict[str, Any]:
-    trade_dates = await _get_market_trade_dates(limit=260)
+async def get_statistics_streak_board(
+    period: str = Query(default="1m", description="1w/1m/3m/1y"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_index_trade_dates(limit=260)
     if not trade_dates:
         raise HTTPException(status_code=404, detail="No trade dates available")
     latest_trade_date = trade_dates[-1]
-    streak_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, "1y")
+    streak_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
+    warnings = _build_period_coverage_warning(streak_trade_dates, period, "股票日线数据")
     up_rows, down_rows = await _build_streak_rankings(streak_trade_dates[0], streak_trade_dates[-1])
     return {
+        "period": period,
         "source": "stock_daily+stock_basic",
-        "warnings": [] if (up_rows or down_rows) else ["近一年连涨连跌统计为空"],
+        "warnings": ([*warnings] if (up_rows or down_rows) else [*warnings, "当前周期内连涨连跌统计为空"]),
         "up": up_rows,
         "down": down_rows,
     }
@@ -1231,22 +1283,18 @@ async def get_statistics_streak_board() -> Dict[str, Any]:
 async def get_statistics_rebound(
     period: str = Query(default="1m", description="1w/1m/3m/1y"),
 ) -> Dict[str, Any]:
-    trade_dates = await _get_market_trade_dates(limit=260)
+    trade_dates = await _get_index_trade_dates(limit=260)
     if not trade_dates:
         raise HTTPException(status_code=404, detail="No trade dates available")
     latest_trade_date = trade_dates[-1]
     period_trade_dates = _resolve_period_trade_dates(trade_dates, latest_trade_date, period)
-    period_label = {
-        "1w": "近一周",
-        "1m": "近一个月",
-        "3m": "近三个月",
-        "1y": "近一年",
-    }.get(period, "近一个月")
+    warnings = _build_period_coverage_warning(period_trade_dates, period, "股票日线数据")
+    period_label = PERIOD_LABEL_MAP.get(period, "近一个月")
     rankings = await _build_rebound_rankings(period_trade_dates[0], period_trade_dates[-1], period_label)
     return {
         "period": period,
         "source": "stock_daily+stock_basic",
-        "warnings": [] if rankings else ["当前周期内暂无高低点反弹数据"],
+        "warnings": ([*warnings] if rankings else [*warnings, "当前周期内暂无高低点反弹数据"]),
         "rankings": rankings,
     }
 

@@ -1,33 +1,5 @@
 <template>
   <div class="stock-statistics-page">
-    <section class="hero-card">
-      <div class="hero-copy">
-        <p class="eyebrow">Post-Market Atlas</p>
-        <h1>股票统计面板</h1>
-        <p class="hero-description">
-          以盘后静态数据为主，左侧切专题，右侧集中看打板结构、情绪温度和趋势统计。当前先把页面交互和展示口径收稳，聚合接口后续再逐步替换。
-        </p>
-      </div>
-
-      <div class="hero-metrics">
-        <article class="hero-metric accent">
-          <span>最新交易日</span>
-          <strong>{{ latestTradeDate }}</strong>
-          <small>{{ tradeCalendarSource === 'backend' ? '来自后端交易日接口' : '本地回退到最近工作日' }}</small>
-        </article>
-        <article class="hero-metric">
-          <span>当前专题</span>
-          <strong>{{ currentPage.title }}</strong>
-          <small>{{ currentPage.groupTitle }}</small>
-        </article>
-        <article class="hero-metric">
-          <span>样本说明</span>
-          <strong>{{ stockUniverse.length }} 只</strong>
-          <small>统计口径待明天再核实接真实聚合</small>
-        </article>
-      </div>
-    </section>
-
     <section class="workspace-shell">
       <aside class="secondary-nav">
         <div class="nav-head">
@@ -69,9 +41,12 @@
 
       <div class="content-shell">
         <header class="content-toolbar">
-          <div>
-            <p class="toolbar-tag">{{ currentPage.groupTitle }}</p>
-            <h2>{{ currentPage.title }}</h2>
+          <div class="toolbar-main">
+            <div class="toolbar-title-row">
+              <p class="toolbar-tag">{{ currentPage.groupTitle }}</p>
+              <h2>{{ currentPage.title }}</h2>
+              <span class="toolbar-meta">{{ currentPage.filterMode === 'date' ? selectedDate : currentPage.filterMode === 'period' ? selectedPeriodLabel : '最近一年' }}</span>
+            </div>
             <p class="toolbar-description">{{ currentPage.description }}</p>
           </div>
 
@@ -113,12 +88,7 @@
           </div>
         </header>
 
-        <div class="context-bar">
-          <span class="context-pill">{{ currentPage.context }}</span>
-          <span class="context-pill">
-            {{ currentPage.filterMode === 'date' ? `当前交易日 ${selectedDate}` : currentPage.filterMode === 'period' ? `当前周期 ${selectedPeriodLabel}` : '最近一年统计' }}
-          </span>
-          <span class="context-pill">交易日列表已优先改为后端接口</span>
+        <div v-if="loadingSection || activeWarnings.length" class="context-bar">
           <span v-if="loadingSection" class="context-pill">后端数据加载中</span>
           <span v-for="warning in activeWarnings" :key="warning" class="context-pill warning">
             {{ warning }}
@@ -127,11 +97,7 @@
 
         <section v-if="selectedPage === 'limit-fleet'" class="panel-stack">
           <div class="table-card">
-            <div class="section-head">
-              <div>
-                <h3>涨停雁阵图</h3>
-                <p>改为更接近打板网站的分层表格视图，按连板高度从高到低铺开，而不是树图。</p>
-              </div>
+            <div class="section-head minimal">
               <span class="section-badge">{{ selectedLimitRecords.length }} 只涨停股</span>
             </div>
 
@@ -164,7 +130,7 @@
                       </div>
                     </article>
                   </div>
-                  <el-empty v-else description="当前层级暂无样本" />
+                  <div v-else class="ladder-empty">当前层级暂无样本</div>
                 </div>
               </div>
             </div>
@@ -172,12 +138,9 @@
 
           <div class="table-card">
             <div class="section-head">
-              <div>
-                <h3>涨停明细</h3>
-                <p>保留明细表，方便按题材、时间和封单额二次观察。</p>
-              </div>
+              <h3>涨停明细</h3>
             </div>
-            <el-table :data="selectedLimitRecords" stripe height="420">
+            <el-table :data="selectedLimitRecords" class="dense-table" stripe size="small" height="420">
               <el-table-column prop="boardCount" label="连板高度" width="90">
                 <template #default="{ row }">{{ formatBoardBand(row.boardCount) }}</template>
               </el-table-column>
@@ -195,13 +158,6 @@
 
         <section v-else-if="selectedPage === 'limit-types'" class="panel-stack">
           <div class="table-card">
-            <div class="section-head">
-              <div>
-                <h3>涨停类型统计</h3>
-                <p>同样改成表格式结构浏览，优先看每类数量、占比和个股分布。</p>
-              </div>
-            </div>
-
             <div class="ladder-table">
               <div
                 v-for="item in limitTypeStats"
@@ -231,7 +187,7 @@
                       </div>
                     </article>
                   </div>
-                  <el-empty v-else description="当前类型暂无样本" />
+                  <div v-else class="ladder-empty">当前类型暂无样本</div>
                 </div>
               </div>
             </div>
@@ -239,12 +195,9 @@
 
           <div class="table-card">
             <div class="section-head">
-              <div>
-                <h3>类型明细列表</h3>
-                <p>把各类涨停样本并排展开，便于核对一字、T 字、换手等分布。</p>
-              </div>
+              <h3>类型明细</h3>
             </div>
-            <el-table :data="limitTypeDetailRows" stripe height="460">
+            <el-table :data="limitTypeDetailRows" class="dense-table" stripe size="small" height="460">
               <el-table-column prop="type" label="类型" width="110" />
               <el-table-column prop="code" label="代码" width="110" />
               <el-table-column prop="name" label="名称" width="120" />
@@ -266,7 +219,7 @@
                 <p>默认扩到前 30 只，便于直接看更长的龙头序列。</p>
               </div>
             </div>
-            <el-table :data="leaderCountRanking" stripe height="420">
+            <el-table :data="leaderCountRanking" class="dense-table" stripe size="small" height="420">
               <el-table-column prop="rank" label="排名" width="80" />
               <el-table-column prop="code" label="代码" width="110" />
               <el-table-column prop="name" label="名称" width="120" />
@@ -285,7 +238,7 @@
                 <p>晋级维度改为 `1-2 / 2-3 / 3-4 / 4-5 / 5-6 / 6-7 / 7+`，并额外增加“昨日涨停今日仍涨停”的总晋级率。</p>
               </div>
             </div>
-            <VChart class="chart-canvas tall-chart" :option="promotionRateOption" autoresize />
+            <VChart class="chart-canvas tall-chart compact-chart" :option="promotionRateOption" autoresize />
           </div>
         </section>
 
@@ -325,10 +278,7 @@
 
           <div class="chart-card">
             <div class="section-head with-inline-tabs">
-              <div>
-                <h3>情绪趋势</h3>
-                <p>右上角只保留周期切换，底部趋势范围跟随周期变化，默认锚定最新交易日。</p>
-              </div>
+              <h3>情绪趋势</h3>
               <div class="inline-tabs">
                 <button
                   v-for="tab in sentimentTrendTabs"
@@ -342,17 +292,13 @@
                 </button>
               </div>
             </div>
-            <VChart class="chart-canvas" :option="sentimentTrendOption" autoresize />
+            <VChart class="chart-canvas compact-chart" :option="sentimentTrendOption" autoresize />
           </div>
         </section>
 
         <section v-else-if="selectedPage === 'stage-gainers'" class="panel-stack">
           <div class="table-card">
-            <div class="section-head">
-              <div>
-                <h3>涨幅雁阵图</h3>
-                <p>不再做单纯榜单，改为分层统计。按 `20-40 / 40-60 / 60-80 / 80-100 / 100+` 分层看周期强势股分布。</p>
-              </div>
+            <div class="section-head minimal">
               <span class="section-badge">默认展示前 30 只</span>
             </div>
 
@@ -385,7 +331,7 @@
                       </div>
                     </article>
                   </div>
-                  <el-empty v-else description="当前层级暂无样本" />
+                  <div v-else class="ladder-empty">当前层级暂无样本</div>
                 </div>
               </div>
             </div>
@@ -393,12 +339,9 @@
 
           <div class="table-card">
             <div class="section-head">
-              <div>
-                <h3>涨幅明细</h3>
-                <p>保留涨幅、题材和最大回撤，方便继续做强弱对比。</p>
-              </div>
+              <h3>涨幅明细</h3>
             </div>
-            <el-table :data="stageGainRanking" stripe height="430">
+            <el-table :data="stageGainRanking" class="dense-table" stripe size="small" height="430">
               <el-table-column prop="rank" label="排名" width="80" />
               <el-table-column prop="code" label="代码" width="110" />
               <el-table-column prop="name" label="名称" width="130" />
@@ -420,39 +363,30 @@
         </section>
 
         <section v-else-if="selectedPage === 'nextday-win-rate'" class="table-card">
-          <div class="section-head">
-            <div>
-              <h3>次日胜率榜</h3>
-              <p>和是否涨停解绑，按自定义样本事件统计“次日收盘为红”的概率，默认展示前 30。</p>
-            </div>
+          <div class="section-head controls-only">
             <label class="toggle-chip">
               <input v-model="nextDayQualifiedOnly" type="checkbox">
-              <span>仅看样本次数 ≥ 3</span>
+              <span>仅看交易日数 ≥ 3</span>
             </label>
           </div>
-          <el-table :data="nextDayWinRanking" stripe height="640">
+          <el-table :data="nextDayWinRanking" class="dense-table" stripe size="small" height="640">
             <el-table-column prop="rank" label="排名" width="80" />
             <el-table-column prop="code" label="代码" width="110" />
             <el-table-column prop="name" label="名称" width="120" />
-            <el-table-column prop="sampleCount" label="样本次数" width="110" sortable />
-            <el-table-column prop="nextDayUpCount" label="次日上涨次数" width="130" sortable />
+            <el-table-column prop="tradeDays" label="交易日数" width="110" sortable />
+            <el-table-column prop="upDays" label="红盘天数" width="110" sortable />
             <el-table-column prop="winRate" label="胜率" width="100" sortable>
               <template #default="{ row }">{{ formatPercent(row.winRate) }}</template>
             </el-table-column>
-            <el-table-column prop="avgNextDayReturn" label="次日均涨幅" width="120" sortable>
-              <template #default="{ row }">{{ formatSignedPercent(row.avgNextDayReturn) }}</template>
+            <el-table-column prop="avgReturn" label="平均涨幅" width="120" sortable>
+              <template #default="{ row }">{{ formatSignedPercent(row.avgReturn) }}</template>
             </el-table-column>
-            <el-table-column prop="signalSource" label="样本口径" width="140" />
             <el-table-column prop="theme" label="题材" min-width="150" />
           </el-table>
         </section>
 
-        <section v-else-if="selectedPage === 'streak-board'" class="panel-stack">
-          <div class="section-head with-inline-tabs">
-            <div>
-              <h3>连涨 / 连跌榜</h3>
-              <p>默认扩到前 30，只保留上涨和下跌两个标签页切换。</p>
-            </div>
+        <section v-else-if="selectedPage === 'streak-board'" class="table-card">
+          <div class="section-head controls-only">
             <div class="inline-tabs">
               <button
                 v-for="tab in streakTabs"
@@ -467,29 +401,23 @@
             </div>
           </div>
 
-          <div class="table-card compact">
-            <el-table :data="streakRanking" stripe>
-              <el-table-column prop="rank" label="排名" width="80" />
-              <el-table-column prop="code" label="代码" width="110" />
-              <el-table-column prop="name" label="名称" width="130" />
-              <el-table-column :label="streakTab === 'up' ? '最长连涨天数' : '最长连跌天数'" width="140">
-                <template #default="{ row }">{{ row.days }}</template>
-              </el-table-column>
-              <el-table-column prop="dateRange" label="发生时间段" min-width="220" />
-              <el-table-column prop="theme" label="题材" min-width="160" />
-            </el-table>
-          </div>
+          <el-table :data="streakRanking" class="dense-table" stripe size="small">
+            <el-table-column prop="rank" label="排名" width="80" />
+            <el-table-column prop="code" label="代码" width="110" />
+            <el-table-column prop="name" label="名称" width="130" />
+            <el-table-column :label="streakTab === 'up' ? '最长连涨天数' : '最长连跌天数'" width="140">
+              <template #default="{ row }">{{ row.days }}</template>
+            </el-table-column>
+            <el-table-column prop="dateRange" label="发生时间段" min-width="220" />
+            <el-table-column prop="theme" label="题材" min-width="160" />
+          </el-table>
         </section>
 
         <section v-else class="table-card">
-          <div class="section-head">
-            <div>
-              <h3>高低点策略榜</h3>
-              <p>默认缩到前 30，保留低点日期、最低价、当前价和反弹涨幅四个核心观察维度。</p>
-            </div>
+          <div class="section-head minimal">
             <span class="section-badge">当前展示 {{ reboundRanking.length }} 只</span>
           </div>
-          <el-table :data="reboundRanking" stripe height="640">
+          <el-table :data="reboundRanking" class="dense-table" stripe size="small" height="640">
             <el-table-column prop="rank" label="排名" width="80" sortable />
             <el-table-column prop="code" label="股票代码" width="110" />
             <el-table-column prop="name" label="股票名称" width="130" />
@@ -551,7 +479,7 @@ type PageKey =
   | 'streak-board'
   | 'rebound-board'
 type FilterMode = 'date' | 'period' | 'none'
-type PeriodValue = '1w' | '1m' | '3m' | '1y'
+type PeriodValue = '1w' | '1m' | '3m'
 type SentimentTrendKey = 'promotion' | 'explosion' | 'closeReturn' | 'openPremium' | 'highPremium'
 type StreakTabKey = 'up' | 'down'
 
@@ -564,26 +492,6 @@ interface PageDefinition {
   context: string
   filterMode: FilterMode
   index: string
-}
-
-interface StockProfile {
-  tsCode: string
-  code: string
-  name: string
-  theme: string
-  basePrice: number
-  momentum: number
-}
-
-interface LimitRecord {
-  tsCode: string
-  code: string
-  name: string
-  theme: string
-  boardCount: number
-  limitType: string
-  limitTime: string
-  sealAmount: number
 }
 
 interface SentimentSnapshot {
@@ -599,29 +507,6 @@ interface SentimentSnapshot {
   limitCount: number
   prevLimitCount: number
 }
-
-const stockUniverse: StockProfile[] = [
-  { tsCode: '000001.SZ', code: '000001', name: '云图科技', theme: 'AI 应用', basePrice: 18.62, momentum: 0.84 },
-  { tsCode: '000002.SZ', code: '000002', name: '海拓能源', theme: '可控核聚变', basePrice: 12.18, momentum: 0.73 },
-  { tsCode: '000004.SZ', code: '000004', name: '星河机器人', theme: '人形机器人', basePrice: 26.35, momentum: 0.92 },
-  { tsCode: '000006.SZ', code: '000006', name: '凌越通信', theme: '6G 通信', basePrice: 15.47, momentum: 0.58 },
-  { tsCode: '000008.SZ', code: '000008', name: '中锐医药', theme: '创新药', basePrice: 22.71, momentum: 0.49 },
-  { tsCode: '000010.SZ', code: '000010', name: '华景算力', theme: '算力租赁', basePrice: 31.24, momentum: 0.95 },
-  { tsCode: '600101.SH', code: '600101', name: '金桥新材', theme: '先进封装', basePrice: 17.53, momentum: 0.66 },
-  { tsCode: '600188.SH', code: '600188', name: '东岭化工', theme: '磷化工', basePrice: 9.86, momentum: 0.37 },
-  { tsCode: '600256.SH', code: '600256', name: '国芯设备', theme: '半导体设备', basePrice: 28.43, momentum: 0.88 },
-  { tsCode: '600318.SH', code: '600318', name: '长空航空', theme: '低空经济', basePrice: 13.68, momentum: 0.69 },
-  { tsCode: '600399.SH', code: '600399', name: '瑞丰消费', theme: '新零售', basePrice: 11.42, momentum: 0.33 },
-  { tsCode: '600512.SH', code: '600512', name: '盛海港航', theme: '航运物流', basePrice: 7.98, momentum: 0.51 },
-  { tsCode: '600666.SH', code: '600666', name: '西岭文旅', theme: '旅游演艺', basePrice: 10.73, momentum: 0.47 },
-  { tsCode: '300001.SZ', code: '300001', name: '逐日电池', theme: '固态电池', basePrice: 34.9, momentum: 0.79 },
-  { tsCode: '300233.SZ', code: '300233', name: '清源软件', theme: '工业软件', basePrice: 25.16, momentum: 0.72 },
-  { tsCode: '300451.SZ', code: '300451', name: '天穹卫星', theme: '商业航天', basePrice: 19.84, momentum: 0.63 },
-  { tsCode: '301188.SZ', code: '301188', name: '嘉禾零碳', theme: '储能电网', basePrice: 21.12, momentum: 0.54 },
-  { tsCode: '688008.SH', code: '688008', name: '芯岳光电', theme: 'CPO 光模块', basePrice: 43.6, momentum: 0.91 },
-  { tsCode: '688111.SH', code: '688111', name: '景曜芯片', theme: 'HBM 存储', basePrice: 39.15, momentum: 0.78 },
-  { tsCode: '002261.SZ', code: '002261', name: '拓界电驱', theme: '智能汽车', basePrice: 24.52, momentum: 0.71 },
-]
 
 const limitTypes = ['一字板', 'T字板', '换手板', '回封板', '尾盘板']
 const boardBands = [
@@ -644,7 +529,6 @@ const periodOptions = [
   { label: '近一周', value: '1w' as PeriodValue, days: 5 },
   { label: '近一个月', value: '1m' as PeriodValue, days: 22 },
   { label: '近三个月', value: '3m' as PeriodValue, days: 66 },
-  { label: '近一年', value: '1y' as PeriodValue, days: 250 },
 ]
 const sentimentTrendTabs = [
   { label: '晋级率', value: 'promotion' as SentimentTrendKey },
@@ -734,10 +618,10 @@ const navGroups: Array<{ key: NavGroupKey; title: string; items: PageDefinition[
         index: '07',
         title: '连涨/连跌榜',
         shortDescription: 'Top 30',
-        description: '展示最近一年最长连涨和最长连跌排行，默认扩到前 30。',
+        description: '展示当前周期内最长连涨和最长连跌排行，默认扩到前 30。',
         groupTitle: '趋势组',
-        context: '无筛选器，直接以标签页切换方向',
-        filterMode: 'none',
+        context: '按周期切换当前统计窗口，并以标签页切换方向',
+        filterMode: 'period',
       },
       {
         key: 'rebound-board',
@@ -760,13 +644,13 @@ const selectedPage = ref<PageKey>('limit-fleet')
 const expandedGroups = ref<NavGroupKey[]>(['limit', 'trend'])
 const latestTradeDate = ref(fallbackLatestTradeDate)
 const availableTradeDates = ref<string[]>(fallbackTradeDates)
-const tradeCalendarSource = ref<'backend' | 'fallback'>('fallback')
 const selectedDate = ref(fallbackLatestTradeDate)
 const selectedPeriod = ref<PeriodValue>('1m')
 const sentimentTrendTab = ref<SentimentTrendKey>('promotion')
 const nextDayQualifiedOnly = ref(true)
 const streakTab = ref<StreakTabKey>('up')
 const loadingSection = ref('')
+const loadFailureMessage = ref('')
 
 const limitSnapshotData = ref<StockStatisticsLimitSnapshot | null>(null)
 const leaderCycleData = ref<StockStatisticsLeaderCycle | null>(null)
@@ -790,41 +674,39 @@ const selectedPeriodLabel = computed(() => {
 
 const availableTradeDateSet = computed(() => new Set(availableTradeDates.value))
 const activeWarnings = computed(() => {
+  const warnings: string[] = []
   if (selectedPage.value === 'limit-fleet' || selectedPage.value === 'limit-types') {
-    return limitSnapshotData.value?.warnings || []
+    warnings.push(...(limitSnapshotData.value?.warnings || []))
   }
   if (selectedPage.value === 'leader-cycle') {
-    return leaderCycleData.value?.warnings || []
+    warnings.push(...(leaderCycleData.value?.warnings || []))
   }
   if (selectedPage.value === 'market-sentiment') {
-    return sentimentData.value?.warnings || []
+    warnings.push(...(sentimentData.value?.warnings || []))
   }
   if (selectedPage.value === 'stage-gainers') {
-    return stageGainersData.value?.warnings || []
+    warnings.push(...(stageGainersData.value?.warnings || []))
   }
   if (selectedPage.value === 'nextday-win-rate') {
-    return nextdayWinRateData.value?.warnings || []
+    warnings.push(...(nextdayWinRateData.value?.warnings || []))
   }
   if (selectedPage.value === 'streak-board') {
-    return streakBoardData.value?.warnings || []
+    warnings.push(...(streakBoardData.value?.warnings || []))
   }
   if (selectedPage.value === 'rebound-board') {
-    return reboundData.value?.warnings || []
+    warnings.push(...(reboundData.value?.warnings || []))
   }
-  return []
-})
-
-const limitRecordsByDate = computed<Record<string, LimitRecord[]>>(() => {
-  return Object.fromEntries(
-    availableTradeDates.value.map((date, index) => [date, buildLimitRecords(index)]),
-  )
+  if (loadFailureMessage.value) {
+    warnings.push(loadFailureMessage.value)
+  }
+  return warnings
 })
 
 const selectedLimitRecords = computed(() => {
   if (limitSnapshotData.value?.limit_fleet.detail?.length) {
     return limitSnapshotData.value.limit_fleet.detail.map(mapLimitItem)
   }
-  return limitRecordsByDate.value[selectedDate.value] || []
+  return []
 })
 
 const limitFleetGroups = computed(() => {
@@ -889,13 +771,13 @@ const leaderCountRanking = computed(() => {
       maxBoard: item.max_board,
     }))
   }
-  return buildLeaderCountRanking(selectedPeriod.value)
+  return []
 })
 const promotionTrendSeries = computed(() => {
   if (leaderCycleData.value?.promotion_trend?.length) {
     return leaderCycleData.value.promotion_trend
   }
-  return buildPromotionTrend(selectedPeriod.value)
+  return []
 })
 
 const promotionRateOption = computed(() => ({
@@ -955,7 +837,7 @@ const sentimentSnapshots = computed(() => {
       prevLimitCount: item.prev_limit_count,
     }))
   }
-  return availableTradeDates.value.map((date, index) => buildSentimentSnapshot(date, index))
+  return []
 })
 
 const latestSentiment = computed(() => {
@@ -974,7 +856,19 @@ const latestSentiment = computed(() => {
       prevLimitCount: sentimentData.value.latest.prev_limit_count,
     }
   }
-  return sentimentSnapshots.value.find((item) => item.date === latestTradeDate.value) || sentimentSnapshots.value[sentimentSnapshots.value.length - 1]
+  return {
+    date: latestTradeDate.value,
+    promotionRate: 0,
+    totalPromotionRate: 0,
+    explosionRate: 0,
+    explodedCount: 0,
+    tryLimitCount: 0,
+    avgFollowReturn: 0,
+    openPremium: 0,
+    highPremium: 0,
+    limitCount: 0,
+    prevLimitCount: 0,
+  }
 })
 
 const sentimentWindow = computed(() => {
@@ -1061,7 +955,7 @@ const stageGainRanking = computed(() => {
       maxDrawdownPct: item.max_drawdown_pct,
     }))
   }
-  return buildStageGainRanking(selectedPeriod.value)
+  return []
 })
 const stageGainGroups = computed(() => {
   return stageGainBands.map((band) => ({
@@ -1073,23 +967,20 @@ const stageGainGroups = computed(() => {
 const nextDayWinRanking = computed(() => {
   if (nextdayWinRateData.value?.rankings?.length) {
     const filtered = nextDayQualifiedOnly.value
-      ? nextdayWinRateData.value.rankings.filter((item) => item.sample_count >= 3)
+      ? nextdayWinRateData.value.rankings.filter((item) => item.trade_days >= 3)
       : nextdayWinRateData.value.rankings
     return filtered.slice(0, 30).map((item, index) => ({
       rank: index + 1,
       code: item.code,
       name: item.name,
       theme: item.theme,
-      sampleCount: item.sample_count,
-      nextDayUpCount: item.nextday_up_count,
+      tradeDays: item.trade_days,
+      upDays: item.up_days,
       winRate: item.win_rate,
-      avgNextDayReturn: item.avg_nextday_return,
-      signalSource: item.signal_source,
+      avgReturn: item.avg_return,
     }))
   }
-  const rows = buildNextDayWinRanking(selectedPeriod.value)
-  const filtered = nextDayQualifiedOnly.value ? rows.filter((item) => item.sampleCount >= 3) : rows
-  return filtered.slice(0, 30).map((item, index) => ({ ...item, rank: index + 1 }))
+  return []
 })
 
 const streakRanking = computed(() => {
@@ -1106,7 +997,7 @@ const streakRanking = computed(() => {
       }))
     }
   }
-  return buildStreakRanking(streakTab.value)
+  return []
 })
 const reboundRanking = computed(() => {
   if (reboundData.value?.rankings?.length) {
@@ -1121,7 +1012,7 @@ const reboundRanking = computed(() => {
       periodLowLabel: item.period_low_label,
     }))
   }
-  return buildReboundRanking(selectedPeriod.value)
+  return []
 })
 
 onMounted(async () => {
@@ -1138,7 +1029,6 @@ async function loadTradeCalendar(): Promise<void> {
     const result = await stockStatisticsApi.getTradeCalendar()
     latestTradeDate.value = result.latestTradeDate
     availableTradeDates.value = result.tradeDates
-    tradeCalendarSource.value = result.source
     if (!availableTradeDates.value.includes(selectedDate.value)) {
       selectedDate.value = result.latestTradeDate
     }
@@ -1149,43 +1039,52 @@ async function loadTradeCalendar(): Promise<void> {
 }
 
 async function loadCurrentViewData(): Promise<void> {
+  loadFailureMessage.value = ''
   try {
     if (selectedPage.value === 'limit-fleet' || selectedPage.value === 'limit-types') {
       loadingSection.value = 'limit'
+      limitSnapshotData.value = null
       limitSnapshotData.value = await stockStatisticsApi.getLimitSnapshot(selectedDate.value)
       return
     }
     if (selectedPage.value === 'leader-cycle') {
       loadingSection.value = 'leader'
+      leaderCycleData.value = null
       leaderCycleData.value = await stockStatisticsApi.getLeaderCycle(selectedPeriod.value)
       return
     }
     if (selectedPage.value === 'market-sentiment') {
       loadingSection.value = 'sentiment'
+      sentimentData.value = null
       sentimentData.value = await stockStatisticsApi.getSentiment(selectedPeriod.value)
       return
     }
     if (selectedPage.value === 'stage-gainers') {
       loadingSection.value = 'stage'
+      stageGainersData.value = null
       stageGainersData.value = await stockStatisticsApi.getStageGainers(selectedPeriod.value)
       return
     }
     if (selectedPage.value === 'nextday-win-rate') {
       loadingSection.value = 'nextday'
+      nextdayWinRateData.value = null
       nextdayWinRateData.value = await stockStatisticsApi.getNextdayWinRate(selectedPeriod.value)
       return
     }
     if (selectedPage.value === 'streak-board') {
       loadingSection.value = 'streak'
-      streakBoardData.value = await stockStatisticsApi.getStreakBoard()
+      streakBoardData.value = null
+      streakBoardData.value = await stockStatisticsApi.getStreakBoard(selectedPeriod.value)
       return
     }
     if (selectedPage.value === 'rebound-board') {
       loadingSection.value = 'rebound'
+      reboundData.value = null
       reboundData.value = await stockStatisticsApi.getRebound(selectedPeriod.value)
     }
   } catch (error) {
-    ElMessage.warning('统计后端数据加载失败，已回退到本地样本')
+    loadFailureMessage.value = '统计后端数据加载失败，当前页未再回退到本地演示样本'
+    ElMessage.warning(loadFailureMessage.value)
   } finally {
     loadingSection.value = ''
   }
@@ -1214,187 +1113,6 @@ function disabledDate(date: Date): boolean {
   return !availableTradeDateSet.value.has(formatDate(date))
 }
 
-function buildLimitRecords(dateIndex: number): LimitRecord[] {
-  const count = 10 + (dateIndex % 7)
-  const records: LimitRecord[] = []
-  const usedCodes = new Set<string>()
-
-  for (let i = 0; i < count; i += 1) {
-    const stock = stockUniverse[(dateIndex * 4 + i * 3) % stockUniverse.length]
-    if (usedCodes.has(stock.code)) continue
-    usedCodes.add(stock.code)
-    records.push({
-      tsCode: stock.tsCode,
-      code: stock.code,
-      name: stock.name,
-      theme: stock.theme,
-      boardCount: buildBoardCount(dateIndex, i, stock.momentum),
-      limitType: limitTypes[(dateIndex + i) % limitTypes.length],
-      limitTime: buildLimitTime(dateIndex + i),
-      sealAmount: Math.round((22000000 + dateIndex * 900000 + i * 2100000) * (1 + stock.momentum * 0.72)),
-    })
-  }
-
-  return records.sort((left, right) => right.boardCount - left.boardCount || right.sealAmount - left.sealAmount)
-}
-
-function buildBoardCount(dateIndex: number, itemIndex: number, momentum: number): number {
-  if (itemIndex === 0 && momentum > 0.9) return 7 + (dateIndex % 2)
-  if (itemIndex <= 1) return 5 + ((dateIndex + itemIndex) % 2)
-  if (itemIndex <= 3) return 4 + ((dateIndex + itemIndex) % 2)
-  if (itemIndex <= 6) return 2 + ((dateIndex + itemIndex) % 2)
-  return 1
-}
-
-function buildLeaderCountRanking(period: PeriodValue) {
-  const factor = periodFactorValue(period)
-  return stockUniverse
-    .map((stock, index) => ({
-      rank: 0,
-      code: stock.code,
-      name: stock.name,
-      theme: stock.theme,
-      limitCount: Math.round(3 + stock.momentum * 9 + factor * 3 + (index % 5)),
-      maxBoard: Math.max(2, Math.round(2 + stock.momentum * 5 + (index % 3))),
-    }))
-    .sort((left, right) => right.limitCount - left.limitCount || right.maxBoard - left.maxBoard)
-    .slice(0, 30)
-    .map((item, index) => ({ ...item, rank: index + 1 }))
-}
-
-function buildPromotionTrend(period: PeriodValue) {
-  const days = Math.min(periodOptions.find((item) => item.value === period)?.days || 22, availableTradeDates.value.length)
-  const dates = availableTradeDates.value.slice(-days)
-  return dates.map((date, index) => {
-    const base = periodFactorValue(period)
-    const total = clamp(44 + Math.sin(index * 0.33 + base) * 14 + base * 5, 20, 86)
-    return {
-      date,
-      total: roundNumber(total, 1),
-      step12: roundNumber(clamp(total + 8, 22, 92), 1),
-      step23: roundNumber(clamp(total - 2 + Math.sin(index * 0.4) * 8, 16, 78), 1),
-      step34: roundNumber(clamp(total - 10 + Math.cos(index * 0.35) * 7, 8, 65), 1),
-      step45: roundNumber(clamp(total - 16 + Math.sin(index * 0.28) * 7, 6, 55), 1),
-      step56: roundNumber(clamp(total - 20 + Math.cos(index * 0.22) * 6, 4, 48), 1),
-      step67: roundNumber(clamp(total - 24 + Math.sin(index * 0.18) * 5, 2, 40), 1),
-      step7Plus: roundNumber(clamp(total - 28 + Math.cos(index * 0.14) * 5, 1, 32), 1),
-    }
-  })
-}
-
-function buildSentimentSnapshot(date: string, index: number): SentimentSnapshot {
-  const currentCount = (limitRecordsByDate.value[date] || []).length
-  const previousDate = availableTradeDates.value[index - 1]
-  const previousCount = previousDate ? (limitRecordsByDate.value[previousDate] || []).length : Math.max(6, currentCount - 2)
-  const tryLimitCount = currentCount + 4 + (index % 3)
-  const explodedCount = Math.max(1, Math.round(tryLimitCount * clamp(0.12 + Math.abs(Math.sin(index * 0.27)) * 0.16, 0.1, 0.32)))
-  const totalPromotionRate = roundNumber(clamp(46 + Math.sin(index * 0.35 + 0.5) * 16 + currentCount * 0.7, 18, 88), 1)
-  const promotionRate = roundNumber(clamp(totalPromotionRate + Math.cos(index * 0.21) * 4, 20, 92), 1)
-
-  return {
-    date,
-    promotionRate,
-    totalPromotionRate,
-    explosionRate: roundNumber((explodedCount / tryLimitCount) * 100, 1),
-    explodedCount,
-    tryLimitCount,
-    avgFollowReturn: roundNumber(Math.sin(index * 0.31 + 0.2) * 3.8 + 1.9, 1),
-    openPremium: roundNumber(Math.cos(index * 0.24 + 0.3) * 2.9 + 2.6, 1),
-    highPremium: roundNumber(Math.sin(index * 0.18 + 0.5) * 3.4 + 5.8, 1),
-    limitCount: currentCount,
-    prevLimitCount: previousCount,
-  }
-}
-
-function buildStageGainRanking(period: PeriodValue) {
-  const factor = periodFactorValue(period)
-  return stockUniverse
-    .map((stock, index) => {
-      const startPrice = roundNumber(stock.basePrice * (0.96 + Math.sin(index + factor) * 0.04), 2)
-      const gainPct = roundNumber(20 + stock.momentum * 72 + factor * 8 + (index % 6) * 4, 1)
-      return {
-        rank: 0,
-        code: stock.code,
-        name: stock.name,
-        theme: stock.theme,
-        startPrice,
-        currentPrice: roundNumber(startPrice * (1 + gainPct / 100), 2),
-        gainPct,
-        maxDrawdownPct: roundNumber(-(4 + (index % 5) * 2.1 + factor * 1.8), 1),
-      }
-    })
-    .sort((left, right) => right.gainPct - left.gainPct)
-    .slice(0, 30)
-    .map((item, index) => ({ ...item, rank: index + 1 }))
-}
-
-function buildNextDayWinRanking(period: PeriodValue) {
-  const factor = periodFactorValue(period)
-  return stockUniverse
-    .map((stock, index) => {
-      const sampleCount = Math.max(2, Math.round(2 + stock.momentum * 4 + factor + (index % 4)))
-      const winRate = clamp(42 + stock.momentum * 31 + factor * 6 - (index % 5) * 2.2, 24, 90)
-      const nextDayUpCount = Math.min(sampleCount, Math.round(sampleCount * winRate / 100))
-      return {
-        rank: 0,
-        code: stock.code,
-        name: stock.name,
-        theme: stock.theme,
-        sampleCount,
-        nextDayUpCount,
-        winRate: roundNumber((nextDayUpCount / sampleCount) * 100, 1),
-        avgNextDayReturn: roundNumber(-0.7 + stock.momentum * 4.8 + factor * 0.7 - (index % 3) * 0.3, 1),
-        signalSource: '触发样本',
-      }
-    })
-    .sort((left, right) => right.winRate - left.winRate || right.sampleCount - left.sampleCount)
-}
-
-function buildStreakRanking(tab: StreakTabKey) {
-  return stockUniverse
-    .map((stock, index) => {
-      const days = tab === 'up'
-        ? Math.round(5 + stock.momentum * 9 + (index % 5))
-        : Math.round(4 + (1 - stock.momentum) * 8 + (index % 4))
-      const endOffset = 12 + index * 3
-      const startOffset = endOffset + days - 1
-      return {
-        rank: 0,
-        code: stock.code,
-        name: stock.name,
-        theme: stock.theme,
-        days,
-        dateRange: `${addDays(latestTradeDate.value, -startOffset)} 至 ${addDays(latestTradeDate.value, -endOffset)}`,
-      }
-    })
-    .sort((left, right) => right.days - left.days)
-    .slice(0, 30)
-    .map((item, index) => ({ ...item, rank: index + 1 }))
-}
-
-function buildReboundRanking(period: PeriodValue) {
-  const info = periodOptions.find((item) => item.value === period) || periodOptions[1]
-  const startDate = addDays(latestTradeDate.value, -info.days * 2)
-  return stockUniverse
-    .map((stock, index) => {
-      const lowestPrice = roundNumber(stock.basePrice * (0.62 + (index % 5) * 0.045), 2)
-      const reboundPct = roundNumber(16 + stock.momentum * 38 + (index % 6) * 3 + periodFactorValue(period) * 6, 1)
-      return {
-        rank: 0,
-        code: stock.code,
-        name: stock.name,
-        lowestDate: addDays(startDate, 2 + (index * 7) % Math.max(8, info.days)),
-        lowestPrice,
-        currentPrice: roundNumber(lowestPrice * (1 + reboundPct / 100), 2),
-        reboundPct,
-        periodLowLabel: `${startDate} 起始 · ${selectedPeriodLabel.value}`,
-      }
-    })
-    .sort((left, right) => right.reboundPct - left.reboundPct)
-    .slice(0, 30)
-    .map((item, index) => ({ ...item, rank: index + 1 }))
-}
-
 function createPromotionSeries(name: string, data: number[]) {
   return {
     name,
@@ -1405,12 +1123,6 @@ function createPromotionSeries(name: string, data: number[]) {
     lineStyle: { width: name === '总晋级率' ? 3 : 2 },
     data,
   }
-}
-
-function buildLimitTime(seed: number): string {
-  const hour = seed % 6 === 0 ? 14 : 9 + Math.floor((seed % 10) / 4)
-  const minute = (16 + seed * 9) % 60
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
 }
 
 function formatBoardBand(count: number): string {
@@ -1437,24 +1149,6 @@ function formatPrice(value: number): string {
   return value.toFixed(2)
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value))
-}
-
-function roundNumber(value: number, digits = 2): number {
-  return Number(value.toFixed(digits))
-}
-
-function periodFactorValue(period: PeriodValue): number {
-  const map: Record<PeriodValue, number> = {
-    '1w': 0.55,
-    '1m': 1,
-    '3m': 1.45,
-    '1y': 2.1,
-  }
-  return map[period]
-}
-
 function getLatestWeekday(): string {
   const now = new Date()
   const cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -1462,12 +1156,6 @@ function getLatestWeekday(): string {
     cursor.setDate(cursor.getDate() - 1)
   }
   return formatDate(cursor)
-}
-
-function addDays(dateString: string, days: number): string {
-  const date = new Date(`${dateString}T12:00:00`)
-  date.setDate(date.getDate() + days)
-  return formatDate(date)
 }
 
 function generateTradeDates(endDate: string, count: number): string[] {
@@ -1493,99 +1181,80 @@ function formatDate(date: Date): string {
 
 <style scoped>
 .stock-statistics-page {
+  --mac-surface-strong: rgba(255, 255, 255, 0.92);
+  --mac-border: rgba(15, 23, 42, 0.08);
+  --mac-text: #142033;
+  --mac-text-soft: #5d6b80;
+  --mac-accent: #2563eb;
+  --mac-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+  --mac-radius-lg: 20px;
+  --mac-radius-md: 14px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 0;
   min-height: 100%;
-  color: #122033;
+  padding: 12px;
+  color: var(--mac-text);
+  font-family: 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', sans-serif;
 }
 
-.hero-card,
+.stock-statistics-page,
+.workspace-shell,
+.secondary-nav,
+.content-shell,
+.panel-stack,
+.table-card,
+.chart-card,
+.ladder-table,
+.ladder-row,
+.ladder-content,
+.stock-strip-grid,
+.stock-strip-card {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
 .content-shell,
 .secondary-nav,
 .chart-card,
 .table-card,
-.metric-card,
-.type-card {
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+.metric-card {
+  border: 1px solid var(--mac-border);
+  box-shadow: var(--mac-shadow);
+  backdrop-filter: blur(18px);
 }
 
-.hero-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(360px, 1fr);
-  gap: 22px;
-  padding: 28px;
-  border-radius: 28px;
-  background:
-    radial-gradient(circle at top right, rgba(37, 99, 235, 0.16), transparent 30%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(239, 246, 255, 0.98));
-}
-
-.eyebrow {
-  margin: 0 0 10px;
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #2563eb;
-}
-
-.hero-copy h1 {
-  margin: 0;
-  font-size: 34px;
-  line-height: 1.05;
-}
-
-.hero-description {
-  margin: 12px 0 0;
-  max-width: 760px;
-  font-size: 14px;
-  line-height: 1.7;
-  color: #55657d;
-}
-
-.hero-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.hero-metric,
 .metric-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 18px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.9);
+  gap: 5px;
+  padding: 14px 15px;
+  border-radius: var(--mac-radius-md);
+  background: rgba(255, 255, 255, 0.72);
 }
 
-.hero-metric span,
 .metric-card span {
-  font-size: 12px;
-  color: #60708c;
+  font-size: 11px;
+  color: #6b778d;
 }
 
-.hero-metric strong,
 .metric-card strong {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
-.hero-metric small,
 .metric-card small {
-  color: #6b7a90;
-  line-height: 1.5;
+  color: #75839a;
+  line-height: 1.4;
+  font-size: 12px;
 }
 
-.hero-metric.accent,
 .metric-card.highlight {
-  background: linear-gradient(135deg, #102a56, #1d4ed8);
+  background: linear-gradient(135deg, #1d365f, #315dca);
   color: #f8fbff;
 }
 
-.hero-metric.accent span,
-.hero-metric.accent small,
 .metric-card.highlight span,
 .metric-card.highlight small {
   color: rgba(248, 251, 255, 0.82);
@@ -1593,41 +1262,44 @@ function formatDate(date: Date): string {
 
 .workspace-shell {
   display: grid;
-  grid-template-columns: 270px minmax(0, 1fr);
-  gap: 20px;
-  min-height: 760px;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 700px;
+  align-items: stretch;
 }
 
 .secondary-nav {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px;
-  border-radius: 24px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 247, 251, 0.98));
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--mac-radius-lg);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(243, 245, 248, 0.88));
+  min-height: 100%;
 }
 
 .nav-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 2px 2px 10px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
 }
 
 .nav-head span {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .nav-head small {
-  color: #66768e;
+  color: #7a889f;
+  font-size: 11px;
 }
 
 .nav-group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .nav-group-toggle {
@@ -1635,161 +1307,194 @@ function formatDate(date: Date): string {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 14px 16px;
-  border: none;
-  border-radius: 18px;
-  background: rgba(241, 245, 249, 0.95);
-  color: #122033;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: rgba(241, 244, 247, 0.9);
+  color: var(--mac-text);
   text-align: left;
   cursor: pointer;
 }
 
 .nav-group-toggle strong {
   display: block;
-  font-size: 15px;
+  font-size: 12px;
 }
 
 .nav-group-toggle span {
-  font-size: 12px;
-  color: #6b7a90;
+  font-size: 11px;
+  color: #738198;
 }
 
 .nav-group-arrow {
-  font-size: 24px;
-  color: #2563eb;
+  font-size: 16px;
+  color: var(--mac-accent);
 }
 
 .nav-group-items {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .nav-item {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  padding: 14px;
+  padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: 18px;
+  border-radius: 14px;
   background: transparent;
   color: #223047;
   text-align: left;
   cursor: pointer;
-  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 
 .nav-item:hover {
-  transform: translateX(2px);
-  border-color: rgba(37, 99, 235, 0.22);
-  background: rgba(239, 246, 255, 0.8);
+  transform: translateX(1px);
+  border-color: rgba(37, 99, 235, 0.16);
+  background: rgba(246, 248, 251, 0.95);
 }
 
 .nav-item.active {
-  border-color: rgba(37, 99, 235, 0.28);
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(59, 130, 246, 0.06));
+  border-color: rgba(37, 99, 235, 0.2);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), rgba(255, 255, 255, 0.86));
 }
 
 .nav-item-index {
-  min-width: 32px;
-  font-size: 12px;
+  min-width: 24px;
+  font-size: 11px;
   font-weight: 700;
-  color: #2563eb;
+  color: var(--mac-accent);
 }
 
 .nav-item-text {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .nav-item-text strong {
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .nav-item-text small {
-  color: #68778c;
+  color: #7a8798;
+  font-size: 10px;
+  line-height: 1.3;
 }
 
 .content-shell {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 22px;
-  border-radius: 28px;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  border-radius: var(--mac-radius-lg);
+  overflow: hidden;
   background:
-    radial-gradient(circle at top right, rgba(16, 185, 129, 0.07), transparent 24%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(248, 250, 252, 0.99));
+    radial-gradient(circle at top right, rgba(16, 185, 129, 0.05), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 250, 252, 0.92));
 }
 
 .content-toolbar {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 20px;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolbar-main {
+  min-width: 0;
+}
+
+.toolbar-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .toolbar-tag {
-  margin: 0 0 6px;
-  font-size: 12px;
+  margin: 0;
+  font-size: 11px;
   font-weight: 700;
   color: #0f766e;
 }
 
 .content-toolbar h2 {
   margin: 0;
-  font-size: 28px;
+  font-size: 22px;
+  letter-spacing: -0.025em;
 }
 
-.toolbar-description {
-  margin: 10px 0 0;
-  max-width: 780px;
-  line-height: 1.7;
-  color: #5d6b80;
+.toolbar-meta {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(236, 240, 245, 0.92);
+  color: #5d6a80;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .toolbar-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 6px;
+}
+
+.toolbar-description {
+  margin: 4px 0 0;
+  max-width: 680px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mac-text-soft);
 }
 
 .filter-block {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 8px;
-  min-width: 180px;
-  padding: 12px 14px;
-  border-radius: 18px;
-  background: rgba(241, 245, 249, 0.92);
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  background: rgba(244, 246, 249, 0.92);
 }
 
 .filter-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: #60708c;
+  color: #6a778e;
+  white-space: nowrap;
 }
 
 .filter-static strong {
-  font-size: 16px;
+  font-size: 13px;
+}
+
+.filter-static small {
+  display: none;
 }
 
 .context-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 6px;
 }
 
 .context-pill,
 .section-badge {
   display: inline-flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(226, 232, 240, 0.82);
-  color: #42526a;
-  font-size: 12px;
+  background: rgba(236, 240, 245, 0.9);
+  color: #4d5c72;
+  font-size: 10px;
   font-weight: 600;
 }
 
@@ -1801,7 +1506,7 @@ function formatDate(date: Date): string {
 .panel-stack,
 .metric-grid {
   display: grid;
-  gap: 16px;
+  gap: 10px;
 }
 
 .metric-grid {
@@ -1812,10 +1517,10 @@ function formatDate(date: Date): string {
 .chart-card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.97);
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--mac-surface-strong);
 }
 
 .table-card.compact {
@@ -1825,19 +1530,33 @@ function formatDate(date: Date): string {
 .section-head {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   align-items: flex-start;
+}
+
+.section-head.minimal,
+.section-head.controls-only,
+.section-head.tabs-only {
+  align-items: center;
+}
+
+.section-head.minimal,
+.section-head.controls-only,
+.section-head.tabs-only {
+  justify-content: flex-end;
 }
 
 .section-head h3 {
   margin: 0;
-  font-size: 20px;
+  font-size: 16px;
+  letter-spacing: -0.02em;
 }
 
 .section-head p {
-  margin: 8px 0 0;
-  line-height: 1.65;
-  color: #5d6b80;
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--mac-text-soft);
 }
 
 .section-head.with-inline-tabs {
@@ -1847,13 +1566,13 @@ function formatDate(date: Date): string {
 .ladder-table {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
 }
 
 .ladder-row {
   display: grid;
-  grid-template-columns: 110px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 6px;
   align-items: stretch;
 }
 
@@ -1861,136 +1580,217 @@ function formatDate(date: Date): string {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 6px;
-  padding: 16px;
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(37, 99, 235, 0.14), rgba(37, 99, 235, 0.04));
+  gap: 4px;
+  padding: 10px 8px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.08), rgba(255, 255, 255, 0.72));
 }
 
 .ladder-level.warm {
-  background: linear-gradient(180deg, rgba(245, 158, 11, 0.16), rgba(245, 158, 11, 0.05));
+  border-color: rgba(245, 158, 11, 0.12);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.1), rgba(255, 255, 255, 0.72));
 }
 
 .ladder-level.neutral {
-  background: linear-gradient(180deg, rgba(15, 118, 110, 0.14), rgba(15, 118, 110, 0.05));
+  border-color: rgba(15, 118, 110, 0.12);
+  background: linear-gradient(180deg, rgba(15, 118, 110, 0.08), rgba(255, 255, 255, 0.72));
 }
 
 .ladder-level strong {
-  font-size: 18px;
+  font-size: 13px;
 }
 
 .ladder-level span {
-  color: #68778c;
+  color: #738198;
+  font-size: 10px;
 }
 
 .ladder-content {
-  padding: 14px;
-  border-radius: 18px;
-  background: rgba(248, 250, 252, 0.92);
+  padding: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 14px;
+  background: rgba(247, 249, 252, 0.92);
+  overflow: hidden;
 }
 
 .stock-strip-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 5px;
 }
 
 .stock-strip-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid rgba(59, 130, 246, 0.12);
+  display: inline-grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 360px;
+  max-width: 100%;
+  padding: 8px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(15, 23, 42, 0.08);
 }
 
 .stock-strip-card.warm {
-  border-color: rgba(245, 158, 11, 0.2);
-  background: rgba(255, 251, 235, 0.96);
+  border-color: rgba(245, 158, 11, 0.14);
+  background: rgba(255, 251, 235, 0.94);
 }
 
 .stock-strip-card.neutral {
-  border-color: rgba(15, 118, 110, 0.16);
+  border-color: rgba(15, 118, 110, 0.12);
   background: rgba(240, 253, 250, 0.96);
 }
 
 .stock-strip-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: baseline;
+  display: contents;
 }
 
 .stock-strip-head strong {
-  font-size: 15px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .stock-strip-head span {
-  color: #475569;
-  font-size: 12px;
+  color: #5c6c82;
+  font-size: 10px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .stock-strip-meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-width: 120px;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .stock-strip-meta span {
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(226, 232, 240, 0.85);
-  color: #52607a;
-  font-size: 12px;
+  color: #5b6980;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.stock-strip-meta span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stock-strip-meta span:not(:first-child) {
+  flex: 0 0 auto;
+}
+
+.stock-strip-meta span:not(:last-child)::after {
+  content: '·';
+  margin: 0 5px;
+  color: #9aa6b6;
+}
+
+.ladder-empty {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  color: #8a97ab;
+  font-size: 11px;
 }
 
 .chart-canvas {
   width: 100%;
-  height: 360px;
+  height: 280px;
 }
 
 .tall-chart {
-  height: 420px;
+  height: 320px;
+}
+
+.compact-chart {
+  margin-top: -4px;
 }
 
 .inline-tabs {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 5px;
 }
 
 .inline-tab {
-  padding: 10px 14px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  padding: 6px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  color: #516177;
+  background: rgba(255, 255, 255, 0.86);
+  color: #56657b;
+  font-size: 11px;
   cursor: pointer;
 }
 
 .inline-tab.active {
-  border-color: rgba(37, 99, 235, 0.36);
-  background: rgba(37, 99, 235, 0.1);
-  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.08);
+  color: #234fb8;
   font-weight: 700;
 }
 
 .toggle-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: 6px;
+  padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(241, 245, 249, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(243, 246, 249, 0.92);
   color: #45556d;
+  font-size: 11px;
   cursor: pointer;
 }
 
 .toggle-chip input {
   accent-color: #2563eb;
+}
+
+.dense-table {
+  --el-table-border-color: rgba(15, 23, 42, 0.08);
+  --el-table-header-bg-color: rgba(245, 247, 250, 0.92);
+  --el-table-row-hover-bg-color: rgba(241, 245, 249, 0.78);
+  --el-table-text-color: #223047;
+  --el-table-header-text-color: #5f6c80;
+  --el-table-bg-color: transparent;
+  --el-fill-color-lighter: rgba(244, 246, 248, 0.72);
+}
+
+.dense-table :deep(.el-table__header th) {
+  padding: 6px 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.dense-table :deep(.el-table__cell) {
+  padding: 5px 0;
+}
+
+.dense-table :deep(.cell) {
+  line-height: 1.25;
+  font-size: 12px;
+}
+
+.filter-block :deep(.el-input__wrapper),
+.filter-block :deep(.el-select__wrapper) {
+  border-radius: 10px;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.filter-block :deep(.el-date-editor.el-input),
+.filter-block :deep(.el-select) {
+  width: 148px !important;
 }
 
 @media (max-width: 1500px) {
@@ -2000,15 +1800,17 @@ function formatDate(date: Date): string {
 }
 
 @media (max-width: 1180px) {
-  .hero-card,
   .workspace-shell,
   .ladder-row {
     grid-template-columns: 1fr;
   }
+
+  .metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
-  .hero-metrics,
   .metric-grid,
   .type-grid {
     grid-template-columns: 1fr;
@@ -2018,11 +1820,17 @@ function formatDate(date: Date): string {
   .section-head,
   .section-head.with-inline-tabs {
     flex-direction: column;
+    align-items: flex-start;
   }
 
   .toolbar-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .filter-block {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 </style>

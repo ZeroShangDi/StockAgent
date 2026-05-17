@@ -517,6 +517,73 @@ cd /Users/shangjunhao/Project/StockAgent/AgentServer
 - 只描述策略本身的判断逻辑和参数
 - 不直接绑定提醒方式、监听池或回测任务
 
+## 7. 补齐股票统计打板情绪页历史数据
+
+- 状态：待处理
+- 记录时间：2026-05-17
+- 优先级：中高
+
+### 背景
+
+当前 `股票统计` 页面里的以下模块依赖“打板情绪链路”数据：
+
+- `龙头周期榜`
+- `市场情绪概览`
+
+这两页目前只能稳定展示近 `28` 个交易日，不是前端周期切换本身有硬限制，而是底层依赖表的历史覆盖还不够。
+
+当前本地检查结果：
+
+- `limit_list`：`20260407` 到 `20260515`
+- `daily_stats`：`20260407` 到 `20260515`
+- `market_analysis`：`20260407` 到 `20260515`
+
+与此同时，作为长周期基础数据的以下表已经具备较长历史：
+
+- `stock_daily`：`19901219` 到 `20260515`
+- `index_daily`：`19901219` 到 `20260515`
+- `daily_basic`：`20001225` 到 `20260515`
+
+### 当前判断
+
+- 数据不是“没存库”，而是“打板情绪链路历史没补全”
+- 根因大概率是全量同步脚本中的 `limit_list` 默认只补最近 `30` 天
+- `daily_stats` 与 `market_analysis` 又依赖 `limit_list`，所以一起被截短
+
+### 影响范围
+
+- `龙头周期榜` 的长周期切换不完整
+- `市场情绪概览` 的长周期趋势不完整
+- 相关后端接口当前只能对超出覆盖范围的周期返回 warning，不能给出完整历史
+
+### 后续处理顺序
+
+建议按下面顺序补数：
+
+1. 先补 `limit_list` 历史
+2. 再重算 `daily_stats`
+3. 最后重算 `market_analysis`
+
+建议优先目标：
+
+- 先补最近 `3` 个月
+- `1` 年视耗时、积分和接口稳定性再决定是否继续扩展
+
+### 建议命令
+
+```bash
+cd /Users/shangjunhao/Project/StockAgent/AgentServer
+
+venv/bin/python scripts/sync_limit_list.py --start 20260201 --end 20260515
+venv/bin/python scripts/recalc_daily_stats.py --start 20260201 --end 20260515
+venv/bin/python scripts/recalc_market_analysis.py --start 20260201 --end 20260515
+```
+
+### 备注
+
+- 后续如果继续使用 `sync_a_share_full.py`，需要显式传入 `--limit-list-start`，否则仍会默认只补最近 `30` 天
+- 在历史补数完成前，股票统计页里这两类模块继续保留覆盖范围 warning 是合理的
+
 2. 策略实例
 
 - 某个具体策略在某个场景下的一次参数化配置

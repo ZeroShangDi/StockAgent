@@ -1,10 +1,14 @@
 import { api } from '../client'
-import { marketApi } from './market'
 
 export interface StockStatisticsTradeCalendar {
   latestTradeDate: string
   tradeDates: string[]
   source: 'backend' | 'fallback'
+}
+
+interface StockStatisticsCalendarResponse {
+  latest_trade_date: string
+  trade_dates: string[]
 }
 
 export interface StockStatisticsLimitItem {
@@ -124,7 +128,6 @@ export interface StockStatisticsStageGainers {
 
 export interface StockStatisticsNextdayWinRate {
   period: string
-  sample_definition: string
   source: string
   warnings: string[]
   rankings: Array<{
@@ -133,15 +136,15 @@ export interface StockStatisticsNextdayWinRate {
     code: string
     name: string
     theme: string
-    sample_count: number
-    nextday_up_count: number
+    trade_days: number
+    up_days: number
     win_rate: number
-    avg_nextday_return: number
-    signal_source: string
+    avg_return: number
   }>
 }
 
 export interface StockStatisticsStreakBoard {
+  period: string
   source: string
   warnings: string[]
   up: Array<{
@@ -184,26 +187,12 @@ export interface StockStatisticsRebound {
 export const stockStatisticsApi = {
   async getTradeCalendar(): Promise<StockStatisticsTradeCalendar> {
     try {
-      const [latest, statsTable] = await Promise.all([
-        marketApi.getLatest(),
-        marketApi.getStatsTable(30),
-      ])
-
-      const latestTradeDate = normalizeTradeDate(latest.trade_date)
-      const tradeDates = Array.from(new Set([
-        latestTradeDate,
-        ...statsTable.data.map((item) => normalizeTradeDate(item.trade_date)),
-      ]))
-        .filter(Boolean)
-        .sort()
-
-      if (!latestTradeDate || !tradeDates.length) {
-        throw new Error('trade calendar unavailable')
-      }
-
+      const result = await api.get<StockStatisticsCalendarResponse>('/market/statistics/calendar')
       return {
-        latestTradeDate,
-        tradeDates,
+        latestTradeDate: normalizeTradeDate(result.latest_trade_date),
+        tradeDates: Array.isArray(result.trade_dates)
+          ? result.trade_dates.map((item) => normalizeTradeDate(item)).filter(Boolean)
+          : [],
         source: 'backend',
       }
     } catch {
@@ -236,8 +225,8 @@ export const stockStatisticsApi = {
     return api.get('/market/statistics/nextday-win-rate', { params: { period } })
   },
 
-  getStreakBoard(): Promise<StockStatisticsStreakBoard> {
-    return api.get('/market/statistics/streak-board')
+  getStreakBoard(period: string): Promise<StockStatisticsStreakBoard> {
+    return api.get('/market/statistics/streak-board', { params: { period } })
   },
 
   getRebound(period: string): Promise<StockStatisticsRebound> {
