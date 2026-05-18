@@ -143,7 +143,7 @@ class ThsSectorCollector(BaseCollector):
         # 获取所有板块
         sectors = await db["ths_sectors"].find(
             {}, {"ts_code": 1, "name": 1}
-        ).to_list(None)
+        ).to_list(800)
         
         self.logger.info(f"Processing {len(sectors)} sectors...")
         

@@ -7,9 +7,11 @@ LLM 缓存层
 - Embedding 缓存
 """
 
+import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,6 +19,9 @@ from dataclasses import dataclass, field
 
 
 logger = logging.getLogger(__name__)
+
+# 可自定义内存缓存上限
+_MEMORY_CACHE_MAX_SIZE = int(os.environ.get("LLM_CACHE_MAX_SIZE", "200"))
 
 
 @dataclass
@@ -68,49 +73,79 @@ class CacheBackend(ABC):
 
 class MemoryCache(CacheBackend):
     """内存缓存"""
-    
-    def __init__(self, max_size: int = 1000):
+
+    def __init__(self, max_size: int | None = None):
         self._cache: Dict[str, CacheEntry] = {}
-        self._max_size = max_size
+        self._max_size = max_size if max_size is not None else _MEMORY_CACHE_MAX_SIZE
         self._hits = 0
         self._misses = 0
-    
+        self._cleanup_task: Optional[asyncio.Task] = None
+
+    def start_cleanup(self, interval: int = 300) -> None:
+        """启动定期清理过期条目的后台任务"""
+        if self._cleanup_task is not None:
+            return
+
+        async def _cleanup_loop():
+            while True:
+                await asyncio.sleep(interval)
+                self._evict_expired()
+                logger.debug(
+                    "MemoryCache cleanup: size=%d/%d, hits=%d, misses=%d",
+                    len(self._cache), self._max_size, self._hits, self._misses,
+                )
+
+        self._cleanup_task = asyncio.create_task(_cleanup_loop())
+
+    def stop_cleanup(self) -> None:
+        if self._cleanup_task is not None:
+            self._cleanup_task.cancel()
+            self._cleanup_task = None
+
+    def _evict_expired(self) -> int:
+        now = time.time()
+        expired = [k for k, v in self._cache.items() if v.is_expired]
+        for key in expired:
+            del self._cache[key]
+        if expired:
+            logger.debug("MemoryCache: evicted %d expired entries", len(expired))
+        return len(expired)
+
     async def get(self, key: str) -> Optional[Any]:
         entry = self._cache.get(key)
-        
+
         if entry is None:
             self._misses += 1
             return None
-        
+
         if entry.is_expired:
             del self._cache[key]
             self._misses += 1
             return None
-        
+
         entry.hit_count += 1
         self._hits += 1
         return entry.value
-    
+
     async def set(self, key: str, value: Any, ttl: int) -> None:
-        # 清理过期条目
         if len(self._cache) >= self._max_size:
             self._evict()
-        
+
         self._cache[key] = CacheEntry(
             key=key,
             value=value,
             created_at=time.time(),
             ttl=ttl,
         )
-    
+
     async def delete(self, key: str) -> None:
         self._cache.pop(key, None)
-    
+
     async def clear(self) -> None:
         self._cache.clear()
         self._hits = 0
         self._misses = 0
-    
+
     async def stats(self) -> Dict[str, Any]:
         total = self._hits + self._misses
         return {
@@ -121,19 +156,13 @@ class MemoryCache(CacheBackend):
             "misses": self._misses,
             "hit_rate": self._hits / total if total > 0 else 0,
         }
-    
+
     def _evict(self) -> None:
         """驱逐过期和最少使用的条目"""
-        now = time.time()
-        
-        # 先删除过期的
-        expired = [k for k, v in self._cache.items() if v.is_expired]
-        for key in expired:
-            del self._cache[key]
-        
+        self._evict_expired()
+
         # 如果还是满了，删除最少使用的
         if len(self._cache) >= self._max_size:
-            # 按 hit_count 排序，删除最少使用的 10%
             items = sorted(self._cache.items(), key=lambda x: x[1].hit_count)
             to_remove = max(1, len(items) // 10)
             for key, _ in items[:to_remove]:
@@ -255,10 +284,17 @@ class LLMCache:
     ):
         self._chat_cache: CacheBackend = RedisCache("llm:chat:") if use_redis else MemoryCache()
         self._embedding_cache: CacheBackend = RedisCache("llm:emb:") if use_redis else MemoryCache()
-        
+
+        # 启动内存缓存的定期清理
+        if not use_redis:
+            if isinstance(self._chat_cache, MemoryCache):
+                self._chat_cache.start_cleanup(interval=300)
+            if isinstance(self._embedding_cache, MemoryCache):
+                self._embedding_cache.start_cleanup(interval=300)
+
         self._chat_ttl = chat_ttl
         self._embedding_ttl = embedding_ttl
-        
+
         self._enabled = True
     
     def enable(self) -> None:

@@ -48,6 +48,7 @@ class NotificationManager(BaseManager):
 
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(10.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=20),
             headers={"Content-Type": "application/json"},
         )
 

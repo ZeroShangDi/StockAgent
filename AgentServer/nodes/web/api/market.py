@@ -188,51 +188,58 @@ async def _get_stock_meta_map(ts_codes: List[str]) -> Dict[str, Dict[str, Any]]:
 
 
 async def _scan_stock_period_metrics(start_date: str, end_date: str) -> List[Dict[str, Any]]:
-    cursor = mongo_manager.db["stock_daily"].find(
-        {"trade_date": {"$gte": start_date, "$lte": end_date}},
-        {"ts_code": 1, "trade_date": 1, "open": 1, "high": 1, "low": 1, "close": 1, "pct_chg": 1, "_id": 0},
-    ).sort([("ts_code", 1), ("trade_date", 1)])
+    pipeline = [
+        {"$match": {"trade_date": {"$gte": start_date, "$lte": end_date}}},
+        {"$sort": {"ts_code": 1, "trade_date": 1}},
+        {"$project": {"ts_code": 1, "trade_date": 1, "open": 1, "close": 1, "low": 1}},
+        {"$group": {
+            "_id": "$ts_code",
+            "first_close": {"$first": "$close"},
+            "first_open": {"$first": "$open"},
+            "last_close": {"$last": "$close"},
+            "items": {"$push": {"low": "$low", "trade_date": "$trade_date"}},
+        }},
+        {"$addFields": {
+            "min_low_item": {
+                "$reduce": {
+                    "input": "$items",
+                    "initialValue": {"low": 999999, "trade_date": ""},
+                    "in": {
+                        "$cond": [
+                            {"$lt": ["$$this.low", "$$value.low"]},
+                            "$$this",
+                            "$$value"
+                        ]
+                    }
+                }
+            }
+        }},
+        {"$project": {
+            "_id": 0,
+            "ts_code": "$_id",
+            "first_close": 1,
+            "first_open": 1,
+            "last_close": 1,
+            "min_low": "$min_low_item.low",
+            "min_low_date": "$min_low_item.trade_date",
+        }},
+    ]
+
+    raw = await mongo_manager.aggregate("stock_daily", pipeline)
 
     results: List[Dict[str, Any]] = []
-    current_ts: Optional[str] = None
-    first_close = 0.0
-    last_close = 0.0
-    min_low = float("inf")
-    min_low_date = ""
-
-    async for doc in cursor:
+    for doc in raw:
         ts_code = str(doc.get("ts_code") or "")
-        close = _safe_float(doc.get("close"), 0.0)
-        low = _safe_float(doc.get("low"), close)
-        trade_date = str(doc.get("trade_date") or "")
+        first_close = _safe_float(doc.get("first_close"), 0.0)
+        last_close = _safe_float(doc.get("last_close"), 0.0)
+        min_low = _safe_float(doc.get("min_low"), float("inf"))
+        min_low_date = str(doc.get("min_low_date") or "")
 
-        if ts_code != current_ts:
-            if current_ts and first_close > 0 and last_close > 0 and min_low < float("inf"):
-                results.append({
-                    "ts_code": current_ts,
-                    "start_price": round(first_close, 2),
-                    "current_price": round(last_close, 2),
-                    "lowest_price": round(min_low, 2),
-                    "lowest_date": min_low_date,
-                    "gain_pct": round((last_close - first_close) / first_close * 100, 2),
-                    "max_drawdown_pct": round((min_low - first_close) / first_close * 100, 2),
-                    "rebound_pct": round((last_close - min_low) / min_low * 100, 2) if min_low > 0 else 0.0,
-                })
-            current_ts = ts_code
-            first_close = close
-            last_close = close
-            min_low = low
-            min_low_date = trade_date
+        if not ts_code or first_close <= 0 or last_close <= 0 or min_low >= 999998:
             continue
 
-        last_close = close
-        if low < min_low:
-            min_low = low
-            min_low_date = trade_date
-
-    if current_ts and first_close > 0 and last_close > 0 and min_low < float("inf"):
         results.append({
-            "ts_code": current_ts,
+            "ts_code": ts_code,
             "start_price": round(first_close, 2),
             "current_price": round(last_close, 2),
             "lowest_price": round(min_low, 2),
@@ -293,27 +300,30 @@ async def _build_rebound_rankings(start_date: str, end_date: str, period_label: 
 
 
 async def _build_nextday_win_rate(start_date: str, end_date: str) -> List[Dict[str, Any]]:
-    cursor = mongo_manager.db["stock_daily"].find(
-        {"trade_date": {"$gte": start_date, "$lte": end_date}},
-        {"ts_code": 1, "trade_date": 1, "pct_chg": 1, "_id": 0},
-    ).sort([("ts_code", 1), ("trade_date", 1)])
+    pipeline = [
+        {"$match": {"trade_date": {"$gte": start_date, "$lte": end_date}}},
+        {"$sort": {"ts_code": 1, "trade_date": 1}},
+        {"$group": {
+            "_id": "$ts_code",
+            "trade_days": {"$sum": 1},
+            "up_days": {"$sum": {"$cond": [{"$gt": ["$pct_chg", 0]}, 1, 0]}},
+            "returns": {"$push": "$pct_chg"},
+        }},
+    ]
 
-    period_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
-        "trade_days": 0,
-        "up_days": 0,
-        "returns": [],
-    })
+    raw = await mongo_manager.aggregate("stock_daily", pipeline)
 
-    async for doc in cursor:
-        ts_code = str(doc.get("ts_code") or "")
-        pct_chg = _safe_float(doc.get("pct_chg"), 0.0)
+    period_stats: Dict[str, Dict[str, Any]] = {}
+    for doc in raw:
+        ts_code = str(doc.get("_id") or "")
         if not ts_code:
             continue
-        stat = period_stats[ts_code]
-        stat["trade_days"] += 1
-        stat["returns"].append(pct_chg)
-        if pct_chg > 0:
-            stat["up_days"] += 1
+        returns = doc.get("returns", []) or []
+        period_stats[ts_code] = {
+            "trade_days": int(doc.get("trade_days") or 0),
+            "up_days": int(doc.get("up_days") or 0),
+            "returns": returns,
+        }
 
     meta_map = await _get_stock_meta_map(list(period_stats.keys()))
     rows = []
@@ -341,57 +351,56 @@ async def _build_nextday_win_rate(start_date: str, end_date: str) -> List[Dict[s
 
 
 async def _build_streak_rankings(start_date: str, end_date: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    cursor = mongo_manager.db["stock_daily"].find(
-        {"trade_date": {"$gte": start_date, "$lte": end_date}},
-        {"ts_code": 1, "trade_date": 1, "pct_chg": 1, "_id": 0},
-    ).sort([("ts_code", 1), ("trade_date", 1)])
+    pipeline = [
+        {"$match": {"trade_date": {"$gte": start_date, "$lte": end_date}}},
+        {"$sort": {"ts_code": 1, "trade_date": 1}},
+        {"$group": {
+            "_id": "$ts_code",
+            "points": {"$push": {"trade_date": "$trade_date", "pct_chg": "$pct_chg"}},
+        }},
+    ]
+
+    raw = await mongo_manager.aggregate("stock_daily", pipeline)
 
     best_up: Dict[str, Dict[str, Any]] = {}
     best_down: Dict[str, Dict[str, Any]] = {}
 
-    current_ts: Optional[str] = None
-    up_streak = 0
-    up_start = ""
-    down_streak = 0
-    down_start = ""
+    for doc in raw:
+        ts_code = str(doc.get("_id") or "")
+        if not ts_code:
+            continue
+        points = doc.get("points", []) or []
 
-    def finalize_best(ts_code: str, trade_date: str, pct_chg: float) -> None:
-        nonlocal up_streak, up_start, down_streak, down_start
-        if pct_chg > 0:
-            if up_streak == 0:
-                up_start = trade_date
-            up_streak += 1
-            if up_streak > best_up.get(ts_code, {}).get("days", 0):
-                best_up[ts_code] = {"days": up_streak, "start": up_start, "end": trade_date}
-            down_streak = 0
-            down_start = ""
-        elif pct_chg < 0:
-            if down_streak == 0:
-                down_start = trade_date
-            down_streak += 1
-            if down_streak > best_down.get(ts_code, {}).get("days", 0):
-                best_down[ts_code] = {"days": down_streak, "start": down_start, "end": trade_date}
-            up_streak = 0
-            up_start = ""
-        else:
-            up_streak = 0
-            up_start = ""
-            down_streak = 0
-            down_start = ""
+        up_streak = 0
+        up_start = ""
+        down_streak = 0
+        down_start = ""
 
-    async for doc in cursor:
-        ts_code = str(doc.get("ts_code") or "")
-        trade_date = str(doc.get("trade_date") or "")
-        pct_chg = _safe_float(doc.get("pct_chg"), 0.0)
+        for point in points:
+            trade_date = str(point.get("trade_date") or "")
+            pct_chg = _safe_float(point.get("pct_chg"), 0.0)
 
-        if ts_code != current_ts:
-            current_ts = ts_code
-            up_streak = 0
-            up_start = ""
-            down_streak = 0
-            down_start = ""
-
-        finalize_best(ts_code, trade_date, pct_chg)
+            if pct_chg > 0:
+                if up_streak == 0:
+                    up_start = trade_date
+                up_streak += 1
+                if up_streak > best_up.get(ts_code, {}).get("days", 0):
+                    best_up[ts_code] = {"days": up_streak, "start": up_start, "end": trade_date}
+                down_streak = 0
+                down_start = ""
+            elif pct_chg < 0:
+                if down_streak == 0:
+                    down_start = trade_date
+                down_streak += 1
+                if down_streak > best_down.get(ts_code, {}).get("days", 0):
+                    best_down[ts_code] = {"days": down_streak, "start": down_start, "end": trade_date}
+                up_streak = 0
+                up_start = ""
+            else:
+                up_streak = 0
+                up_start = ""
+                down_streak = 0
+                down_start = ""
 
     involved_ts_codes = list(set(best_up.keys()) | set(best_down.keys()))
     meta_map = await _get_stock_meta_map(involved_ts_codes)

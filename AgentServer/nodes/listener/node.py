@@ -48,37 +48,42 @@ from .strategies import (
 class ListenerNode(BaseNode):
     """
     Listener 节点
-    
+
     职责:
     1. 每 60 秒轮询实时行情
     2. 每日 9:15 获取涨跌停价格
     3. 遍历活跃策略，检测触发条件
     4. 推送企业微信预警
-    
+
     非交易时间自动静默，节省 API 消耗。
+    全市场模式采用分批拉取策略，降低单次内存和 API 压力。
     """
-    
+
     node_type = NodeType.LISTENER
     DEFAULT_RPC_PORT = 50053  # ListenerNode 默认 RPC 端口
-    
+
+    # 全市场分批拉取配置
+    LARGE_WATCH_BATCH = 800       # 单批最大股票数
+    LARGE_WATCH_THRESHOLD = 1000  # 超过此阈值启用分批模式
+
     def __init__(self, node_id: Optional[str] = None, rpc_port: int = 0):
         super().__init__(node_id, rpc_port or settings.rpc.listener_port)
         self.logger = logging.getLogger(f"node.listener.{self.node_id}")
-        
+
         # 配置
         self._config = settings.listener
         self._poll_interval = self._config.poll_interval
-        
+
         # 状态
         self._current_snapshot: Optional[MarketSnapshot] = None
         self._previous_snapshot: Optional[MarketSnapshot] = None
         self._limit_stocks: Dict[str, Dict[str, Any]] = {}  # 今日涨跌停价格
         self._last_limit_fetch_date: Optional[str] = None
-        
+
         # 策略执行器
         self._strategies: Dict[str, BaseStrategy] = {}
         self._subscriptions: List[StrategySubscription] = []
-        
+
         # 任务
         self._poll_task: Optional[asyncio.Task] = None
     
@@ -248,23 +253,23 @@ class ListenerNode(BaseNode):
     async def _poll_cycle(self, trace_id: str) -> None:
         """
         单次轮询循环
-        
+
         1. 检查是否需要获取涨跌停价格
         2. 获取三大指数实时行情
-        3. 获取个股实时行情
+        3. 获取个股实时行情 (大量股票时分批拉取)
         4. 构建市场快照
         5. 统计并存储实时市场数据到 Redis
         6. 执行策略检测
         7. 发送预警
         """
         self.logger.info(f"[poll] trace_id={trace_id} | Starting poll cycle")
-        
+
         # 1. 每日获取涨跌停价格 (9:15)
         await self._fetch_limit_prices_if_needed()
-        
+
         # 2. 获取三大指数实时行情
         index_quotes, index_source = await data_source_manager.get_realtime_index_quotes()
-        
+
         # 3. 获取需要监听的股票列表
         watch_codes = await self._get_all_watch_codes()
         if not watch_codes:
@@ -273,49 +278,89 @@ class ListenerNode(BaseNode):
                 f"subscriptions={len(self._subscriptions)}, limit_stocks={len(self._limit_stocks)}"
             )
             return
-        
-        self.logger.info(f"[poll] Watching {len(watch_codes)} stocks")
-        
-        # 4. 获取实时行情 (分批获取，每批50只)
-        self.logger.info(f"[poll] Fetching realtime quotes for {len(watch_codes)} stocks...")
-        quotes, quote_source = await data_source_manager.get_realtime_quotes(
-            watch_codes,
-            batch_size=50,
-        )
+
+        # 4. 分批拉取实时行情 (全市场模式下降级为分批，减轻 API 和内存压力)
+        total_codes = len(watch_codes)
+        if total_codes > self.LARGE_WATCH_THRESHOLD:
+            self.logger.info(
+                f"[poll] Large watch list ({total_codes} stocks), "
+                f"using batch mode (batch={self.LARGE_WATCH_BATCH})"
+            )
+            all_quotes: Dict[str, Dict[str, Any]] = {}
+            quote_source = None
+
+            for batch_start in range(0, total_codes, self.LARGE_WATCH_BATCH):
+                batch_codes = watch_codes[batch_start:batch_start + self.LARGE_WATCH_BATCH]
+                batch_quotes, batch_source = await data_source_manager.get_realtime_quotes(
+                    batch_codes,
+                    batch_size=50,
+                )
+                quote_source = quote_source or batch_source
+                if batch_quotes:
+                    all_quotes.update(batch_quotes)
+                self.logger.debug(
+                    f"[poll] Batch {batch_start // self.LARGE_WATCH_BATCH + 1}: "
+                    f"{len(batch_codes)} codes → {len(batch_quotes or {})} quotes"
+                )
+
+            quotes = all_quotes
+        else:
+            self.logger.info(f"[poll] Fetching realtime quotes for {total_codes} stocks...")
+            quotes, quote_source = await data_source_manager.get_realtime_quotes(
+                watch_codes,
+                batch_size=50,
+            )
+
         if not quotes:
             self.logger.warning("Failed to get realtime quotes")
             return
-        
+
         self.logger.info(
             f"[poll] Quote sources: stocks={quote_source or '-'}, indexes={index_source or '-'}"
         )
-        
-        # 5. 构建市场快照
+
+        # 5. 构建市场快照 (仅保留策略评估需要的字段，减少内存)
         self._previous_snapshot = self._current_snapshot
         self._current_snapshot = self._build_snapshot(quotes)
-        
+
         self.logger.info(
             f"[poll] Snapshot: total={self._current_snapshot.total_stocks}, "
             f"up={self._current_snapshot.up_count}, down={self._current_snapshot.down_count}"
         )
-        
-        # 6. 存储实时市场数据到 Redis (供 Web 节点使用)
+
+        # 6. 存储实时市场数据到 Redis
         await self._store_realtime_market_data(index_quotes)
-        
-        # 7. 统计封板情况（调试用）
+
+        # 7. 统计封板情况
+        await self._log_limit_stats()
+
+        # 8. 执行策略检测
+        alerts = await self._evaluate_strategies()
+
+        self.logger.info(f"[poll] Strategy evaluation done, alerts={len(alerts)}")
+
+        if alerts:
+            for alert in alerts:
+                self.logger.info(
+                    f"[poll] Sending alert: {alert.ts_code} - {alert.trigger_reason}"
+                )
+                await self._process_alert(alert)
+
+    async def _log_limit_stats(self) -> None:
+        """记录封板统计 (从 poll_cycle 拆出以减少方法体量)"""
         limit_up_stocks = []
         limit_down_stocks = []
-        for ts_code, quote in self._current_snapshot.quotes.items():
+        for ts_code, quote in self._current_snapshot.quotes.items() if self._current_snapshot else []:
             limit_info = self._limit_stocks.get(ts_code, {})
             current_price = quote.get("price", 0)
             up_limit = limit_info.get("up_limit", 0)
             down_limit = limit_info.get("down_limit", 0)
-            
+
             if up_limit and current_price and abs(current_price - up_limit) < 0.01:
                 limit_up_stocks.append(f"{ts_code}({quote.get('name', '')})")
             elif down_limit and current_price and abs(current_price - down_limit) < 0.01:
                 limit_down_stocks.append(f"{ts_code}({quote.get('name', '')})")
-        
+
         if limit_up_stocks or limit_down_stocks:
             self.logger.info(
                 f"[poll] 封板统计: 涨停={len(limit_up_stocks)}, 跌停={len(limit_down_stocks)}"
@@ -324,19 +369,6 @@ class ListenerNode(BaseNode):
                 self.logger.info(f"[poll] 涨停股(前5): {', '.join(limit_up_stocks[:5])}")
             if limit_down_stocks[:5]:
                 self.logger.info(f"[poll] 跌停股(前5): {', '.join(limit_down_stocks[:5])}")
-        
-        # 8. 执行策略检测
-        alerts = await self._evaluate_strategies()
-        
-        self.logger.info(f"[poll] Strategy evaluation done, alerts={len(alerts)}")
-        
-        if alerts:
-            # 9. 发送预警
-            for alert in alerts:
-                self.logger.info(
-                    f"[poll] Sending alert: {alert.ts_code} - {alert.trigger_reason}"
-                )
-                await self._process_alert(alert)
     
     async def _fetch_limit_prices_if_needed(self) -> None:
         """
@@ -500,70 +532,70 @@ class ListenerNode(BaseNode):
                     codes.add(ts_code)
         return list(codes)
     
+    # 快照保留的最小字段集合 (策略评估只需这些字段)
+    _SNAPSHOT_KEEP_FIELDS = frozenset({
+        "ts_code", "name", "price", "pct_chg", "open", "high", "low",
+        "close", "volume", "amount", "pre_close", "change",
+    })
+
     def _build_snapshot(
         self,
         quotes: Dict[str, Dict[str, Any]] | List[Dict[str, Any]],
     ) -> MarketSnapshot:
         """
-        构建市场快照
-        
+        构建市场快照 (仅保留策略评估必要字段)
+
         Args:
             quotes: 实时行情列表
-            
+
         Returns:
             市场快照对象
         """
         snapshot = MarketSnapshot()
-        
+
         quote_items: Iterable[Dict[str, Any]]
         if isinstance(quotes, dict):
             quote_items = quotes.values()
         else:
             quote_items = quotes
-        
+
         quote_list = list(quote_items)
-        
-        # 调试日志：查看输入数据
-        self.logger.info(f"[build_snapshot] Input quotes count: {len(quote_list)}")
-        if quote_list:
-            sample = quote_list[0]
-            self.logger.info(f"[build_snapshot] Sample quote keys: {list(sample.keys())[:10]}")
-        
+        self.logger.debug(f"[build_snapshot] Input quotes count: {len(quote_list)}")
+
         up_count = 0
         down_count = 0
         no_ts_code_count = 0
-        
+
         for quote in quote_list:
-            # ts_code 可能是大写或小写
             ts_code = quote.get("ts_code") or quote.get("TS_CODE", "")
             if not ts_code:
                 no_ts_code_count += 1
                 continue
-            
-            # 统一转换为大写
+
             ts_code = ts_code.upper()
-            
-            # 确保字段名小写
-            normalized_quote = {k.lower(): v for k, v in quote.items()}
-            normalized_quote["ts_code"] = ts_code
-            
-            snapshot.quotes[ts_code] = normalized_quote
-            
-            pct_chg = normalized_quote.get("pct_chg", 0) or 0
+
+            # 仅保留策略评估需要的字段，丢弃无用字段
+            slim_quote = {
+                k.lower(): v
+                for k, v in quote.items()
+                if k.lower() in self._SNAPSHOT_KEEP_FIELDS
+            }
+            slim_quote["ts_code"] = ts_code
+            snapshot.quotes[ts_code] = slim_quote
+
+            pct_chg = slim_quote.get("pct_chg", 0) or 0
             if pct_chg > 0:
                 up_count += 1
             elif pct_chg < 0:
                 down_count += 1
-        
+
         if no_ts_code_count > 0:
             self.logger.warning(f"[build_snapshot] Skipped {no_ts_code_count} quotes without ts_code")
-        
-        self.logger.info(f"[build_snapshot] Built snapshot with {len(snapshot.quotes)} stocks")
-        
+
         snapshot.total_stocks = len(snapshot.quotes)
         snapshot.up_count = up_count
         snapshot.down_count = down_count
-        
+
         # 添加涨跌停信息
         snapshot.limit_stocks = self._limit_stocks.copy()
         snapshot.limit_up_count = sum(
@@ -574,7 +606,8 @@ class ListenerNode(BaseNode):
             1 for item in self._limit_stocks.values()
             if item.get("limit_type") == "D"
         )
-        
+
+        self.logger.debug(f"[build_snapshot] Built snapshot with {len(snapshot.quotes)} stocks")
         return snapshot
     
     async def _evaluate_strategies(self) -> List[StrategyAlert]:

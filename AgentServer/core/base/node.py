@@ -14,6 +14,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, Callable
 import asyncio
+import gc
 import logging
 import signal
 import uuid
@@ -335,6 +336,31 @@ class BaseNode(ABC):
             return "busy"
         return "online"
     
+    # ==================== GC 监控 ====================
+
+    async def _gc_monitor(self) -> None:
+        """定期触发 GC 并记录内存使用"""
+        gc_interval = int(os.environ.get("GC_INTERVAL_SECONDS", "300"))
+
+        while self._running:
+            await asyncio.sleep(gc_interval)
+
+            # 触发 GC
+            collected = gc.collect()
+            if collected > 0:
+                self.logger.info(f"GC collected {collected} objects")
+
+            # 记录内存使用
+            try:
+                import resource
+                usage = resource.getrusage(resource.RUSAGE_SELF)
+                max_rss_mb = usage.ru_maxrss / 1024  # macOS 返回 bytes, Linux 返回 KB
+                if max_rss_mb > 1000:  # Linux 返回 KB，需要额外转换
+                    max_rss_mb = max_rss_mb / 1024
+                self.logger.debug(f"Memory: max_rss={max_rss_mb:.1f}MB, gc_count={gc.get_count()}")
+            except Exception:
+                pass
+
     # ==================== 健康检查 ====================
     
     async def health_check(self) -> dict:
@@ -363,28 +389,40 @@ class BaseNode(ABC):
         except NotImplementedError:
             # Windows 不支持 add_signal_handler
             pass
-        
+
+        # 启动 GC 监控任务
+        gc_task: Optional[asyncio.Task] = None
+
         try:
             self._running = True
             self._start_time = datetime.utcnow()
-            
+
             self.logger.info(f"Starting node: {self.node_id} ({self.node_type.value})")
-            
+
             # 启动节点
             await self.start()
-            
+
             self.logger.info(f"Node started: {self.node_id}")
-            
+
             # 启动心跳
             self._heartbeat_task = asyncio.create_task(self._start_heartbeat())
-            
+
+            # 启动 GC 监控 (每 5 分钟触发一次 GC 并记录内存)
+            gc_task = asyncio.create_task(self._gc_monitor())
+
             # 运行主循环
             await self.run()
-            
+
         except Exception as e:
             self.logger.exception(f"Node error: {e}")
             raise
         finally:
+            if gc_task:
+                gc_task.cancel()
+                try:
+                    await gc_task
+                except asyncio.CancelledError:
+                    pass
             await self._graceful_shutdown()
     
     async def _shutdown_signal(self) -> None:
