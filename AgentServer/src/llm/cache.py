@@ -80,11 +80,18 @@ class MemoryCache(CacheBackend):
         self._hits = 0
         self._misses = 0
         self._cleanup_task: Optional[asyncio.Task] = None
+        self._cleanup_interval = 300
 
-    def start_cleanup(self, interval: int = 300) -> None:
-        """启动定期清理过期条目的后台任务"""
+    def start_cleanup(self, interval: int = 300) -> bool:
+        """启动定期清理过期条目的后台任务。"""
+        self._cleanup_interval = interval
         if self._cleanup_task is not None:
-            return
+            return True
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
 
         async def _cleanup_loop():
             while True:
@@ -95,12 +102,18 @@ class MemoryCache(CacheBackend):
                     len(self._cache), self._max_size, self._hits, self._misses,
                 )
 
-        self._cleanup_task = asyncio.create_task(_cleanup_loop())
+        self._cleanup_task = loop.create_task(_cleanup_loop())
+        return True
 
     def stop_cleanup(self) -> None:
         if self._cleanup_task is not None:
             self._cleanup_task.cancel()
             self._cleanup_task = None
+
+    def ensure_cleanup_started(self) -> None:
+        """在已有 event loop 时补启动后台清理任务。"""
+        if self._cleanup_task is None:
+            self.start_cleanup(interval=self._cleanup_interval)
 
     def _evict_expired(self) -> int:
         now = time.time()
@@ -112,6 +125,7 @@ class MemoryCache(CacheBackend):
         return len(expired)
 
     async def get(self, key: str) -> Optional[Any]:
+        self.ensure_cleanup_started()
         entry = self._cache.get(key)
 
         if entry is None:
@@ -128,6 +142,7 @@ class MemoryCache(CacheBackend):
         return entry.value
 
     async def set(self, key: str, value: Any, ttl: int) -> None:
+        self.ensure_cleanup_started()
         if len(self._cache) >= self._max_size:
             self._evict()
 
@@ -139,14 +154,17 @@ class MemoryCache(CacheBackend):
         )
 
     async def delete(self, key: str) -> None:
+        self.ensure_cleanup_started()
         self._cache.pop(key, None)
 
     async def clear(self) -> None:
+        self.ensure_cleanup_started()
         self._cache.clear()
         self._hits = 0
         self._misses = 0
 
     async def stats(self) -> Dict[str, Any]:
+        self.ensure_cleanup_started()
         total = self._hits + self._misses
         return {
             "type": "memory",
