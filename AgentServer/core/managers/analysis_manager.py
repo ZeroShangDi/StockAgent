@@ -1323,6 +1323,13 @@ class AnalysisManager(BaseManager):
         position = self.get_position_advice(cycle)
         
         # 11. 构建分析结果
+        total_amount = stats.get("total_amount")
+        baseline_avg_amount = baseline.get("avg_amount")
+        try:
+            total_amount_value = float(total_amount) if total_amount is not None else 0.0
+        except (TypeError, ValueError):
+            total_amount_value = 0.0
+
         analysis = {
             "trade_date": trade_date,
             "created_at": datetime.utcnow(),
@@ -1378,12 +1385,12 @@ class AnalysisManager(BaseManager):
             "up_ratio": stats.get("up_ratio", 0),
             "pct_chg_median": stats.get("pct_chg_median"),
             "index_pct_chg": stats.get("index_pct_chg"),
-            "total_amount": stats.get("total_amount", 0),
+            "total_amount": total_amount_value,
             "north_money": stats.get("north_money", 0),
             
             # === 兼容旧字段 ===
             "sentiment_score_ema": round(sentiment_ema5, 2),
-            "v_ratio": (stats.get("total_amount", 0) / baseline.get("avg_amount", 1)) if baseline.get("avg_amount") else 1.0,
+            "v_ratio": (total_amount_value / baseline_avg_amount) if baseline_avg_amount else 1.0,
         }
         
         # 趋势符号

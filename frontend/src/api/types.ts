@@ -515,6 +515,21 @@ export interface SystemCozePluginStatusResponse {
   plugins: SystemCozePluginStatus[]
 }
 
+export interface SystemManualSyncTask {
+  task_id: string
+  task_type: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | string
+  progress: number
+  current_step: string
+  message?: string | null
+  params: Record<string, unknown>
+  created_at: string
+  started_at?: string | null
+  completed_at?: string | null
+  result?: Record<string, unknown> | null
+  error_message?: string | null
+}
+
 export interface SystemDataSourceMatrixAdapter {
   key: string
   name: string

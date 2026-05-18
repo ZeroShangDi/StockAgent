@@ -6,6 +6,7 @@ import { api } from '../client'
 import type {
   AutomationOverviewResponse,
   SystemCozePluginStatusResponse,
+  SystemManualSyncTask,
   SystemStatusOverview,
   SystemStatusReport,
   SystemStatusSectionResponse,
@@ -39,6 +40,24 @@ export const systemApi = {
 
   getAutomationOverview(): Promise<AutomationOverviewResponse> {
     return api.get('/system/automations')
+  },
+
+  startManualGapFillSync(lookbackDays = 3): Promise<SystemManualSyncTask> {
+    return api.post('/system/manual-sync/gap-fill', {
+      lookback_days: lookbackDays,
+    })
+  },
+
+  getLatestManualGapFillSync(): Promise<SystemManualSyncTask> {
+    return api.get('/system/manual-sync/latest', {
+      skipErrorToast: true,
+    })
+  },
+
+  getManualGapFillSyncTask(taskId: string): Promise<SystemManualSyncTask> {
+    return api.get(`/system/manual-sync/tasks/${taskId}`, {
+      skipErrorToast: true,
+    })
   },
 }
 

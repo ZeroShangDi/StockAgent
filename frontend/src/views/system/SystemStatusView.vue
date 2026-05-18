@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { systemApi } from '@/api'
@@ -8,6 +8,7 @@ import type {
   SystemDataSourceMatrix,
   SystemDataSourceMatrixRow,
   SystemDatasetStatus,
+  SystemManualSyncTask,
   SystemStatusItem,
   SystemStatusLevel,
   SystemStatusOverview,
@@ -18,8 +19,11 @@ type SectionKey = 'services' | 'data_sources' | 'datasets' | 'features'
 const overviewLoading = ref(true)
 const refreshing = ref(false)
 const cozeRefreshing = ref(false)
+const manualSyncLoading = ref(false)
+const manualSyncTask = ref<SystemManualSyncTask | null>(null)
 const overview = ref<SystemStatusOverview | null>(null)
 const cozePlugins = ref<SystemCozePluginStatusResponse | null>(null)
+let manualSyncPollTimer: number | null = null
 const sectionItems = ref<Record<SectionKey, (SystemStatusItem | SystemDatasetStatus)[]>>({
   services: [],
   data_sources: [],
@@ -56,6 +60,15 @@ const combinedSummary = computed(() => {
     degraded: items.filter((item) => item.status === 'degraded').length,
     unavailable: items.filter((item) => item.status === 'unavailable').length,
   }
+})
+
+const isManualSyncRunning = computed(() =>
+  manualSyncTask.value?.status === 'queued' || manualSyncTask.value?.status === 'running'
+)
+
+const manualSyncLookbackDays = computed(() => {
+  const value = manualSyncTask.value?.params?.lookback_days
+  return typeof value === 'number' ? value : 3
 })
 
 async function loadOverview(forceRefresh = false) {
@@ -104,6 +117,92 @@ async function loadStatus(forceRefresh = false) {
     ...sections.value.map((section) => loadSection(section.key, forceRefresh)),
   ])
   refreshing.value = false
+}
+
+function getTaskStatusLabel(status?: string | null): string {
+  switch (status) {
+    case 'queued':
+      return '排队中'
+    case 'running':
+      return '执行中'
+    case 'completed':
+      return '已完成'
+    case 'failed':
+      return '失败'
+    default:
+      return status || '未知'
+  }
+}
+
+function getTaskStatusType(status?: string | null): 'info' | 'warning' | 'success' | 'danger' {
+  switch (status) {
+    case 'queued':
+      return 'info'
+    case 'running':
+      return 'warning'
+    case 'completed':
+      return 'success'
+    case 'failed':
+    default:
+      return 'danger'
+  }
+}
+
+function stopManualSyncPolling() {
+  if (manualSyncPollTimer !== null) {
+    window.clearInterval(manualSyncPollTimer)
+    manualSyncPollTimer = null
+  }
+}
+
+function startManualSyncPolling(taskId: string) {
+  stopManualSyncPolling()
+  manualSyncPollTimer = window.setInterval(() => {
+    loadManualSyncTask(taskId)
+  }, 4000)
+}
+
+async function loadManualSyncTask(taskId?: string) {
+  try {
+    manualSyncTask.value = taskId
+      ? await systemApi.getManualGapFillSyncTask(taskId)
+      : await systemApi.getLatestManualGapFillSync()
+
+    if (isManualSyncRunning.value) {
+      startManualSyncPolling(manualSyncTask.value.task_id)
+      return
+    }
+
+    if (manualSyncPollTimer !== null) {
+      stopManualSyncPolling()
+      await loadStatus(true)
+    }
+  } catch (error) {
+    if (taskId) {
+      console.error('加载补漏同步任务失败', error)
+    }
+    if (manualSyncPollTimer !== null) {
+      stopManualSyncPolling()
+    }
+  }
+}
+
+async function startManualSync() {
+  manualSyncLoading.value = true
+  try {
+    const task = await systemApi.startManualGapFillSync(3)
+    manualSyncTask.value = task
+    ElMessage.success(task.message || `已开始补最近 ${manualSyncLookbackDays.value} 个交易日数据`)
+    if (task.task_id) {
+      startManualSyncPolling(task.task_id)
+      await loadManualSyncTask(task.task_id)
+    }
+  } catch (error) {
+    console.error('启动补漏同步失败', error)
+    ElMessage.error('启动补漏同步失败')
+  } finally {
+    manualSyncLoading.value = false
+  }
 }
 
 function getStatusLabel(status: SystemStatusLevel): string {
@@ -171,6 +270,11 @@ function formatCozeParams(params: Record<string, unknown>): string {
 
 onMounted(() => {
   loadStatus()
+  loadManualSyncTask()
+})
+
+onBeforeUnmount(() => {
+  stopManualSyncPolling()
 })
 </script>
 
@@ -188,10 +292,56 @@ onMounted(() => {
         </p>
       </div>
 
-      <button class="refresh-btn" @click="loadStatus(true)">
-        <el-icon><Refresh /></el-icon>
-        {{ refreshing ? '刷新中...' : '重新检测' }}
-      </button>
+      <div class="hero-actions">
+        <button class="sync-btn" @click="startManualSync" :disabled="manualSyncLoading || isManualSyncRunning">
+          {{ manualSyncLoading ? '启动中...' : isManualSyncRunning ? '补漏任务进行中' : '补最近 3 个交易日核心数据' }}
+        </button>
+        <button class="refresh-btn" @click="loadStatus(true)">
+          <el-icon><Refresh /></el-icon>
+          {{ refreshing ? '刷新中...' : '重新检测' }}
+        </button>
+      </div>
+    </section>
+
+    <section v-if="manualSyncTask" class="manual-sync-card card">
+      <div class="manual-sync-top">
+        <div>
+          <p class="eyebrow">补漏同步</p>
+          <h2>最近 {{ manualSyncLookbackDays }} 个交易日核心数据</h2>
+          <p class="manual-sync-copy">
+            轻量补齐 `stock_daily / daily_basic / index_daily / limit_list / daily_stats / market_analysis / stock_relations`，
+            适合服务器断档后的快速修复。
+          </p>
+        </div>
+        <el-tag :type="getTaskStatusType(manualSyncTask.status)" effect="dark" round>
+          {{ getTaskStatusLabel(manualSyncTask.status) }}
+        </el-tag>
+      </div>
+
+      <div class="manual-sync-progress">
+        <el-progress
+          :percentage="manualSyncTask.progress"
+          :status="manualSyncTask.status === 'failed' ? 'exception' : undefined"
+          :indeterminate="manualSyncTask.status === 'queued'"
+          :duration="3"
+          :stroke-width="10"
+        />
+      </div>
+
+      <div class="manual-sync-meta">
+        <span>当前步骤：{{ manualSyncTask.current_step || '等待中' }}</span>
+        <span>创建时间：{{ new Date(manualSyncTask.created_at).toLocaleString('zh-CN') }}</span>
+        <span v-if="manualSyncTask.completed_at">
+          完成时间：{{ new Date(manualSyncTask.completed_at).toLocaleString('zh-CN') }}
+        </span>
+      </div>
+
+      <p v-if="manualSyncTask.message" class="manual-sync-message">
+        {{ manualSyncTask.message }}
+      </p>
+      <p v-if="manualSyncTask.error_message" class="manual-sync-error">
+        {{ manualSyncTask.error_message }}
+      </p>
     </section>
 
     <section v-if="overview" class="summary-grid">
@@ -469,10 +619,83 @@ onMounted(() => {
   font-weight: 600;
 }
 
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sync-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  border-radius: 999px;
+  padding: 12px 18px;
+  background: rgba(15, 118, 110, 0.08);
+  color: #0f766e;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.sync-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .refresh-btn.ghost {
   background: rgba(15, 118, 110, 0.08);
   color: #0f766e;
   border: 1px solid rgba(15, 118, 110, 0.16);
+}
+
+.manual-sync-card {
+  padding: 20px 22px;
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.05), rgba(14, 165, 164, 0.03));
+}
+
+.manual-sync-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.manual-sync-top h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+}
+
+.manual-sync-copy,
+.manual-sync-message,
+.manual-sync-error {
+  margin: 10px 0 0;
+  line-height: 1.7;
+}
+
+.manual-sync-copy,
+.manual-sync-message {
+  color: var(--el-text-color-secondary);
+}
+
+.manual-sync-error {
+  color: var(--el-color-danger);
+}
+
+.manual-sync-progress {
+  margin-top: 18px;
+}
+
+.manual-sync-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 14px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
 .summary-grid {
@@ -799,6 +1022,10 @@ onMounted(() => {
   .hero {
     flex-direction: column;
     padding: 22px;
+  }
+
+  .manual-sync-top {
+    flex-direction: column;
   }
 
   .hero-copy h1 {
