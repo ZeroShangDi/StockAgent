@@ -15,6 +15,7 @@ from .moneyflow_concept import MoneyflowConceptCollector
 from .moneyflow_industry import MoneyflowIndustryCollector
 from .ths_sector import ThsSectorCollector
 from .review_data import ReviewDataCollector
+from .stock_relations import StockRelationsCollector
 
 __all__ = [
     "StockBasicCollector",
@@ -26,6 +27,7 @@ __all__ = [
     "LimitListCollector",
     "MoneyflowConceptCollector",
     "MoneyflowIndustryCollector",
+    "StockRelationsCollector",
     # 复盘相关
     "ThsSectorCollector",
     "ReviewDataCollector",

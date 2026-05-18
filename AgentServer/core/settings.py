@@ -378,6 +378,9 @@ class DataSyncSettings(BaseSettings):
     
     # 同花顺板块数据采集时间 (默认: 每周六凌晨 2:00)
     ths_sector_schedule: Optional[str] = None
+
+    # 股票关联关系构建时间 (默认: 每个交易日 16:20)
+    stock_relations_schedule: Optional[str] = None
     
     # 新闻采集时间 (默认: 每 2 小时)
     news_schedule: Optional[str] = None

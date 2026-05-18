@@ -147,6 +147,8 @@ class BaoStockAdapter(AsyncDataSourceAdapter):
             parts = code.split('.')
             pure_code = parts[0]
             exchange = parts[1].lower()
+            if exchange not in {"sh", "sz"}:
+                return ""
             return f"{exchange}.{pure_code}"
         
         # 纯数字代码
@@ -286,6 +288,9 @@ class BaoStockAdapter(AsyncDataSourceAdapter):
         
         try:
             bs_code = self._convert_code(ts_code)
+            if not bs_code:
+                self.logger.debug("BaoStock does not support ts_code=%s, skipping", ts_code)
+                return []
             
             # 日期格式转换
             if start_date:
@@ -372,6 +377,9 @@ class BaoStockAdapter(AsyncDataSourceAdapter):
         
         # 如果指定了单只股票
         if ts_code:
+            if not self._convert_code(ts_code):
+                self.logger.debug("BaoStock does not support ts_code=%s for daily_basic, skipping", ts_code)
+                return []
             return await self._get_single_stock_valuation(ts_code, trade_date)
         
         # 批量获取太慢，返回空

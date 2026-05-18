@@ -20,6 +20,7 @@ from .stock import (
     LimitListCollector,
     MoneyflowConceptCollector,
     MoneyflowIndustryCollector,
+    StockRelationsCollector,
     # 复盘相关
     ThsSectorCollector,
     ReviewDataCollector,
@@ -43,6 +44,7 @@ __all__ = [
     "LimitListCollector",
     "MoneyflowConceptCollector",
     "MoneyflowIndustryCollector",
+    "StockRelationsCollector",
     # 复盘相关
     "ThsSectorCollector",
     "ReviewDataCollector",

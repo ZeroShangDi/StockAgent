@@ -26,6 +26,7 @@ from .theme_manager import ThemeManager, theme_manager, ThemeStatus
 from .prompt_manager import PromptManager, prompt_manager
 from .notification_manager import NotificationManager, notification_manager
 from .data_source_manager import DataSourceManager, data_source_manager
+from .stock_relation_manager import StockRelationManager, stock_relation_manager
 
 __all__ = [
     # 基类
@@ -42,6 +43,7 @@ __all__ = [
     "PromptManager",
     "NotificationManager",
     "DataSourceManager",
+    "StockRelationManager",
     # 全局单例 (推荐使用)
     "redis_manager",
     "mongo_manager",
@@ -52,6 +54,7 @@ __all__ = [
     "prompt_manager",
     "notification_manager",
     "data_source_manager",
+    "stock_relation_manager",
 ]
 
 
@@ -75,6 +78,7 @@ async def initialize_all_managers() -> None:
     await milvus_manager.initialize()
     await prompt_manager.initialize()
     await notification_manager.initialize()
+    await stock_relation_manager.initialize()
 
 
 async def shutdown_all_managers() -> None:
@@ -84,6 +88,7 @@ async def shutdown_all_managers() -> None:
     await milvus_manager.shutdown()
     await llm_manager.shutdown()
     await data_source_manager.shutdown()
+    await stock_relation_manager.shutdown()
     await mongo_manager.shutdown()
     await redis_manager.shutdown()
 
@@ -97,4 +102,5 @@ async def health_check_all() -> dict[str, bool]:
         "llm": await llm_manager.health_check(),
         "milvus": await milvus_manager.health_check(),
         "notification": await notification_manager.health_check(),
+        "stock_relations": await stock_relation_manager.health_check(),
     }

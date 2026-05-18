@@ -298,7 +298,24 @@ class MongoManager(BaseManager):
         await self._safe_create_indexes("daily_stats", [
             IndexModel([("trade_date", DESCENDING)], unique=True),
         ])
-        
+
+        # 股票关联关系表
+        await self._safe_create_indexes("stock_relations", [
+            IndexModel(
+                [
+                    ("ts_code", ASCENDING),
+                    ("source", ASCENDING),
+                    ("relation_type", ASCENDING),
+                    ("relation_key", ASCENDING),
+                    ("source_trade_date", DESCENDING),
+                ],
+                unique=True,
+            ),
+            IndexModel([("ts_code", ASCENDING), ("relation_type", ASCENDING)]),
+            IndexModel([("relation_type", ASCENDING), ("relation_name", ASCENDING)]),
+            IndexModel([("source", ASCENDING), ("source_trade_date", DESCENDING)]),
+        ])
+
         # 每日指标表 (PE/PB/换手率/市值等)
         await self._safe_create_indexes("daily_basic", [
             IndexModel(

@@ -49,6 +49,16 @@ db.limit_list.createIndex({ "ts_code": 1, "trade_date": -1 });
 db.limit_list.createIndex({ "trade_date": -1 });
 db.limit_list.createIndex({ "limit": 1 });
 
+// ==================== 股票关联关系 ====================
+
+db.stock_relations.createIndex(
+  { "ts_code": 1, "source": 1, "relation_type": 1, "relation_key": 1, "source_trade_date": -1 },
+  { unique: true }
+);
+db.stock_relations.createIndex({ "ts_code": 1, "relation_type": 1 });
+db.stock_relations.createIndex({ "relation_type": 1, "relation_name": 1 });
+db.stock_relations.createIndex({ "source": 1, "source_trade_date": -1 });
+
 // ==================== 财务数据 ====================
 
 db.fina_indicator.createIndex({ "ts_code": 1, "end_date": -1 });
