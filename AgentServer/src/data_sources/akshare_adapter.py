@@ -169,7 +169,7 @@ class AKShareAdapter(AsyncDataSourceAdapter):
             return '主板'
         elif code.startswith('688'):
             return '科创板'
-        elif code.startswith('8'):
+        elif code.startswith(('8', '92')):
             return '北交所'
         return '未知'
     

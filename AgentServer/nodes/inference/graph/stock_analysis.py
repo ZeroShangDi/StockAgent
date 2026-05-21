@@ -148,7 +148,7 @@ def _normalize_ts_code(code: str) -> str:
         return f"{code}.SH"  # 上海
     elif code.startswith(("0", "3", "2")):
         return f"{code}.SZ"  # 深圳
-    elif code.startswith(("4", "8")):
+    elif code.startswith(("4", "8", "92")):
         return f"{code}.BJ"  # 北京
     else:
         return f"{code}.SZ"  # 默认深圳

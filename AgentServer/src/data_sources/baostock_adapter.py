@@ -155,6 +155,8 @@ class BaoStockAdapter(AsyncDataSourceAdapter):
         pure_code = code.zfill(6)
         if pure_code.startswith(('60', '68', '90')):
             return f"sh.{pure_code}"
+        if pure_code.startswith(('8', '4', '92')):
+            return ""
         else:
             return f"sz.{pure_code}"
     

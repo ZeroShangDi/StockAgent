@@ -108,7 +108,7 @@ class TradeReviewService:
             return ""
         if code.startswith(("6", "5", "9")):
             return f"{code}.SH"
-        if code.startswith(("8", "4")):
+        if code.startswith(("8", "4", "92")):
             return f"{code}.BJ"
         return f"{code}.SZ"
 

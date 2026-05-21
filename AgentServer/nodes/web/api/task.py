@@ -52,6 +52,8 @@ def _normalize_ts_code(code: str) -> str:
     # 根据代码前缀判断市场
     if code.startswith("6"):
         return f"{code}.SH"
+    elif code.startswith(("8", "4", "92")):
+        return f"{code}.BJ"
     elif code.startswith(("0", "3")):
         return f"{code}.SZ"
     else:

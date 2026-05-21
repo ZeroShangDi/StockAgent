@@ -114,6 +114,8 @@ def _normalize_ts_code(code: str) -> str:
         return normalized
     if normalized.startswith("6"):
         return f"{normalized}.SH"
+    if normalized.startswith(("8", "4", "92")):
+        return f"{normalized}.BJ"
     if normalized.startswith(("0", "3")):
         return f"{normalized}.SZ"
     return normalized
