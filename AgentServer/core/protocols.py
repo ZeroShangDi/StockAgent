@@ -442,9 +442,17 @@ class MarketSnapshot(BaseModel):
         default_factory=dict,
         description="实时行情数据，key 为 ts_code"
     )
+    changed_quotes: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="相较上一帧发生变化的实时行情数据，key 为 ts_code"
+    )
     limit_stocks: Dict[str, Dict[str, Any]] = Field(
         default_factory=dict,
         description="今日涨跌停股票，key 为 ts_code"
+    )
+    removed_ts_codes: List[str] = Field(
+        default_factory=list,
+        description="相较上一帧消失的股票代码列表"
     )
     
     # 统计
@@ -453,6 +461,7 @@ class MarketSnapshot(BaseModel):
     down_count: int = Field(default=0, description="下跌家数")
     limit_up_count: int = Field(default=0, description="涨停家数")
     limit_down_count: int = Field(default=0, description="跌停家数")
+    changed_count: int = Field(default=0, description="本帧变化股票数")
 
 
 # ==================== 工具调用 (MCP) ====================

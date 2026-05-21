@@ -325,10 +325,15 @@ class ListenerNode(BaseNode):
         # 6. 构建市场快照 (仅保留策略评估需要的字段，减少内存)
         self._previous_snapshot = self._current_snapshot
         self._current_snapshot = self._build_snapshot(quotes)
+        self._apply_snapshot_delta(
+            current_snapshot=self._current_snapshot,
+            previous_snapshot=self._previous_snapshot,
+        )
 
         self.logger.info(
             f"[poll] Snapshot: total={self._current_snapshot.total_stocks}, "
-            f"up={self._current_snapshot.up_count}, down={self._current_snapshot.down_count}"
+            f"up={self._current_snapshot.up_count}, down={self._current_snapshot.down_count}, "
+            f"changed={self._current_snapshot.changed_count}"
         )
 
         # 7. 存储实时市场数据到 Redis
@@ -593,6 +598,10 @@ class ListenerNode(BaseNode):
         "ts_code", "name", "price", "pct_chg", "open", "high", "low",
         "close", "volume", "amount", "pre_close", "change",
     })
+    _DELTA_COMPARE_FIELDS = frozenset({
+        "price", "pct_chg", "open", "high", "low",
+        "close", "volume", "amount", "pre_close", "change",
+    })
 
     def _build_snapshot(
         self,
@@ -665,6 +674,130 @@ class ListenerNode(BaseNode):
 
         self.logger.debug(f"[build_snapshot] Built snapshot with {len(snapshot.quotes)} stocks")
         return snapshot
+
+    def _apply_snapshot_delta(
+        self,
+        current_snapshot: MarketSnapshot,
+        previous_snapshot: Optional[MarketSnapshot],
+    ) -> None:
+        """构建当前快照相对上一帧的增量视图。"""
+        if previous_snapshot is None or not previous_snapshot.quotes:
+            current_snapshot.changed_quotes = dict(current_snapshot.quotes)
+            current_snapshot.removed_ts_codes = []
+            current_snapshot.changed_count = len(current_snapshot.changed_quotes)
+            return
+
+        previous_quotes = previous_snapshot.quotes
+        changed_quotes: Dict[str, Dict[str, Any]] = {}
+
+        for ts_code, quote in current_snapshot.quotes.items():
+            prev_quote = previous_quotes.get(ts_code)
+            if prev_quote is None:
+                changed_quotes[ts_code] = quote
+                continue
+
+            if any(quote.get(field) != prev_quote.get(field) for field in self._DELTA_COMPARE_FIELDS):
+                changed_quotes[ts_code] = quote
+
+        current_snapshot.changed_quotes = changed_quotes
+        current_snapshot.removed_ts_codes = [
+            ts_code
+            for ts_code in previous_quotes.keys()
+            if ts_code not in current_snapshot.quotes
+        ]
+        current_snapshot.changed_count = len(changed_quotes)
+
+    def _build_layered_market_snapshot_payload(
+        self,
+        index_quotes: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """生成供 Redis 热读的分层实时快照。"""
+        snapshot = self._current_snapshot
+        if not snapshot:
+            return {}
+
+        sh_data = index_quotes.get("000001.SH", {})
+        sz_data = index_quotes.get("399001.SZ", {})
+        cyb_data = index_quotes.get("399006.SZ", {})
+        sample_changed_codes = list(snapshot.changed_quotes.keys())[:50]
+
+        return {
+            "snapshot_id": snapshot.snapshot_id,
+            "snapshot_time": snapshot.snapshot_time.isoformat(),
+            "trade_date": market_today_str(),
+            "summary": {
+                "total_stocks": snapshot.total_stocks,
+                "up_count": snapshot.up_count,
+                "down_count": snapshot.down_count,
+                "flat_count": snapshot.total_stocks - snapshot.up_count - snapshot.down_count,
+                "limit_up_count": snapshot.limit_up_count,
+                "limit_down_count": snapshot.limit_down_count,
+                "changed_count": snapshot.changed_count,
+                "removed_count": len(snapshot.removed_ts_codes),
+            },
+            "indexes": {
+                "000001.SH": {
+                    "name": "上证指数",
+                    "price": sh_data.get("close") or sh_data.get("price", 0),
+                    "pct_chg": sh_data.get("pct_chg") or sh_data.get("pct_change", 0),
+                },
+                "399001.SZ": {
+                    "name": "深证成指",
+                    "price": sz_data.get("close") or sz_data.get("price", 0),
+                    "pct_chg": sz_data.get("pct_chg") or sz_data.get("pct_change", 0),
+                },
+                "399006.SZ": {
+                    "name": "创业板指",
+                    "price": cyb_data.get("close") or cyb_data.get("price", 0),
+                    "pct_chg": cyb_data.get("pct_chg") or cyb_data.get("pct_change", 0),
+                },
+            },
+            "delta": {
+                "changed_codes": sample_changed_codes,
+                "removed_codes": snapshot.removed_ts_codes[:50],
+                "sample_quotes": [
+                    {
+                        "ts_code": ts_code,
+                        "name": snapshot.changed_quotes.get(ts_code, {}).get("name", ""),
+                        "price": snapshot.changed_quotes.get(ts_code, {}).get("price", 0),
+                        "pct_chg": snapshot.changed_quotes.get(ts_code, {}).get("pct_chg", 0),
+                    }
+                    for ts_code in sample_changed_codes
+                ],
+            },
+            "update_time": market_now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+    def _build_market_delta_event_payload(self) -> Dict[str, Any]:
+        """生成适合事件流消费的增量行情事件。"""
+        snapshot = self._current_snapshot
+        previous_snapshot = self._previous_snapshot
+        if not snapshot:
+            return {}
+
+        changed_codes = list(snapshot.changed_quotes.keys())
+        sample_changed_codes = changed_codes[:100]
+        return {
+            "event_type": "market_delta",
+            "snapshot_id": snapshot.snapshot_id,
+            "previous_snapshot_id": previous_snapshot.snapshot_id if previous_snapshot else None,
+            "snapshot_time": snapshot.snapshot_time.isoformat(),
+            "trade_date": market_today_str(),
+            "changed_count": snapshot.changed_count,
+            "removed_count": len(snapshot.removed_ts_codes),
+            "changed_codes": sample_changed_codes,
+            "removed_codes": snapshot.removed_ts_codes[:100],
+            "quotes": {
+                ts_code: snapshot.changed_quotes.get(ts_code, {})
+                for ts_code in sample_changed_codes
+            },
+            "summary": {
+                "up_count": snapshot.up_count,
+                "down_count": snapshot.down_count,
+                "limit_up_count": snapshot.limit_up_count,
+                "limit_down_count": snapshot.limit_down_count,
+            },
+        }
     
     async def _evaluate_strategies(
         self,
@@ -1123,11 +1256,20 @@ class ListenerNode(BaseNode):
         # 存入 Redis
         try:
             await redis_manager.set_realtime_market_data(market_data)
+            layered_snapshot = self._build_layered_market_snapshot_payload(index_quotes)
+            if layered_snapshot:
+                await redis_manager.set_realtime_market_layered_snapshot(layered_snapshot)
+            delta_event = self._build_market_delta_event_payload()
+            if delta_event:
+                await redis_manager.set_realtime_market_delta(delta_event)
+                await redis_manager.publish_realtime_market_delta(delta_event)
+                await redis_manager.append_realtime_market_delta(delta_event)
             self.logger.debug(
                 f"[poll] Stored realtime market data: "
                 f"SH={market_data['sh_index']:.2f}({market_data['sh_change']:+.2f}%), "
                 f"up={market_data['up_count']}, down={market_data['down_count']}, "
-                f"limit_up={limit_up_count}, limit_down={limit_down_count}"
+                f"limit_up={limit_up_count}, limit_down={limit_down_count}, "
+                f"changed={self._current_snapshot.changed_count if self._current_snapshot else 0}"
             )
         except Exception as e:
             self.logger.error(f"Failed to store realtime market data: {e}")

@@ -532,6 +532,29 @@ async def get_market_overview(
     return await _get_market_overview_from_mongodb(trade_date)
 
 
+@router.get("/realtime/snapshot")
+async def get_realtime_market_snapshot() -> Dict[str, Any]:
+    """获取 Listener 生成的分层实时快照。"""
+    snapshot = await redis_manager.get_realtime_market_layered_snapshot()
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="No realtime layered snapshot available")
+    return snapshot
+
+
+@router.get("/realtime/deltas")
+async def get_realtime_market_deltas(
+    limit: int = Query(default=20, ge=1, le=100, description="最近增量事件数量"),
+) -> Dict[str, Any]:
+    """获取最近的实时市场增量事件流。"""
+    latest = await redis_manager.get_realtime_market_delta()
+    events = await redis_manager.get_recent_realtime_market_deltas(limit=limit)
+    return {
+        "latest": latest,
+        "events": events,
+        "count": len(events),
+    }
+
+
 async def _get_hot_sectors(trade_date: str) -> List[str]:
     """获取热门板块"""
     hot_sectors_data = await mongo_manager.find_many(

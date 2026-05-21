@@ -469,7 +469,12 @@ class RedisManager(BaseManager):
     
     # Redis Key 前缀
     REALTIME_MARKET_KEY = "realtime:market"
+    REALTIME_MARKET_LAYERED_KEY = "realtime:market:layered"
+    REALTIME_MARKET_LAST_DELTA_KEY = "realtime:market:last_delta"
+    REALTIME_MARKET_DELTA_STREAM = "stream:market:deltas"
+    REALTIME_MARKET_DELTA_CHANNEL = "channel:market:deltas"
     REALTIME_MARKET_TTL = 3600  # 1小时过期（交易时间会持续更新）
+    REALTIME_MARKET_STREAM_MAXLEN = 512
     
     async def set_realtime_market_data(self, data: dict) -> None:
         """
@@ -516,6 +521,76 @@ class RedisManager(BaseManager):
         """删除实时市场数据（用于收盘后清理）"""
         self._ensure_initialized()
         await self._client.delete(self.REALTIME_MARKET_KEY)
+
+    async def set_realtime_market_layered_snapshot(self, data: dict) -> None:
+        """存储分层实时快照，供 API 和下游增量消费。"""
+        self._ensure_initialized()
+        await self._client.setex(
+            self.REALTIME_MARKET_LAYERED_KEY,
+            self.REALTIME_MARKET_TTL,
+            json.dumps(data, default=str),
+        )
+
+    async def get_realtime_market_layered_snapshot(self) -> Optional[dict]:
+        self._ensure_initialized()
+        data = await self._client.get(self.REALTIME_MARKET_LAYERED_KEY)
+        if data:
+            return json.loads(data)
+        return None
+
+    async def set_realtime_market_delta(self, data: dict) -> None:
+        """存储最近一次增量快照。"""
+        self._ensure_initialized()
+        await self._client.setex(
+            self.REALTIME_MARKET_LAST_DELTA_KEY,
+            self.REALTIME_MARKET_TTL,
+            json.dumps(data, default=str),
+        )
+
+    async def get_realtime_market_delta(self) -> Optional[dict]:
+        self._ensure_initialized()
+        data = await self._client.get(self.REALTIME_MARKET_LAST_DELTA_KEY)
+        if data:
+            return json.loads(data)
+        return None
+
+    async def publish_realtime_market_delta(self, data: dict) -> None:
+        """发布实时市场增量事件。"""
+        self._ensure_initialized()
+        await self._client.publish(
+            self.REALTIME_MARKET_DELTA_CHANNEL,
+            json.dumps(data, default=str),
+        )
+
+    async def append_realtime_market_delta(self, data: dict) -> str:
+        """将实时市场增量事件写入 Redis Stream。"""
+        self._ensure_initialized()
+        event_id = await self._client.xadd(
+            self.REALTIME_MARKET_DELTA_STREAM,
+            {"payload": json.dumps(data, default=str)},
+            maxlen=self.REALTIME_MARKET_STREAM_MAXLEN,
+            approximate=True,
+        )
+        return str(event_id)
+
+    async def get_recent_realtime_market_deltas(self, limit: int = 20) -> list[dict]:
+        self._ensure_initialized()
+        rows = await self._client.xrevrange(
+            self.REALTIME_MARKET_DELTA_STREAM,
+            count=max(1, min(int(limit or 20), 100)),
+        )
+        results: list[dict] = []
+        for event_id, payload in reversed(rows):
+            raw = payload.get("payload")
+            if not raw:
+                continue
+            try:
+                item = json.loads(raw)
+            except Exception:
+                continue
+            item["event_id"] = event_id
+            results.append(item)
+        return results
 
     # ==================== 热点新闻 ====================
     

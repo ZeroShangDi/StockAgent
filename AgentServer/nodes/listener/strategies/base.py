@@ -25,6 +25,11 @@ class BaseStrategy(ABC):
         ALERT_FREQUENCY_ONCE_THEN_DISABLE,
         ALERT_FREQUENCY_UNLIMITED,
     }
+
+    @property
+    def use_incremental_snapshot(self) -> bool:
+        """是否优先只评估本轮变化过的股票。"""
+        return True
     """
     策略基类
     
@@ -88,12 +93,14 @@ class BaseStrategy(ABC):
         Returns:
             符合 watch_list 的股票数据
         """
+        source_quotes = snapshot.changed_quotes if self.use_incremental_snapshot and snapshot.changed_quotes else snapshot.quotes
+
         if subscription.is_all_market():
-            stocks = snapshot.quotes
+            stocks = source_quotes
         else:
             stocks = {
                 ts_code: quote
-                for ts_code, quote in snapshot.quotes.items()
+                for ts_code, quote in source_quotes.items()
                 if ts_code in subscription.watch_list
             }
         
