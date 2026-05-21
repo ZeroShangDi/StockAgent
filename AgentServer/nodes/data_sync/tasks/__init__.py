@@ -7,10 +7,12 @@
 from .event_clustering import EventClusteringTask
 from .news_lifecycle import NewsLifecycleTask
 from .daily_stats import DailyStatsTask
+from .market_statistics_cache import MarketStatisticsCacheTask
 
 
 __all__ = [
     "EventClusteringTask",
     "NewsLifecycleTask",
     "DailyStatsTask",
+    "MarketStatisticsCacheTask",
 ]

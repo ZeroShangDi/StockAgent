@@ -39,6 +39,7 @@ from .collectors import (
 from .tasks import (
     DailyStatsTask,
     EventClusteringTask,
+    MarketStatisticsCacheTask,
     NewsLifecycleTask,
 )
 
@@ -142,6 +143,7 @@ class DataSyncNode(BaseNode):
             
             # 处理任务 (Tasks)
             DailyStatsTask,         # 统计，确保依赖数据已同步
+            MarketStatisticsCacheTask,  # 统计缓存预聚合
             # EventClusteringTask,    # 事件聚类 (LLM 深度去重)
             # NewsLifecycleTask,      # 数据生命周期管理
             

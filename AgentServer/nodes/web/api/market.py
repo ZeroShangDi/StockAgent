@@ -16,6 +16,10 @@ from datetime import datetime, timedelta, date
 from collections import defaultdict
 
 from core.managers import mongo_manager, theme_manager, redis_manager
+from src.analysis.market_statistics_cache import (
+    get_cached_market_statistics,
+    set_cached_market_statistics,
+)
 from .auth import require_admin, CurrentUser
 
 router = APIRouter(prefix="/market", tags=["Market Analysis"])
@@ -925,18 +929,7 @@ async def get_statistics_calendar() -> Dict[str, Any]:
     }
 
 
-@router.get("/statistics/limit-snapshot")
-async def get_statistics_limit_snapshot(
-    trade_date: Optional[str] = Query(default=None, description="交易日，支持 YYYYMMDD 或 YYYY-MM-DD"),
-) -> Dict[str, Any]:
-    trade_dates = await _get_market_trade_dates(limit=60)
-    if not trade_dates:
-        raise HTTPException(status_code=404, detail="No trade dates available")
-
-    normalized_trade_date = _normalize_trade_date_input(trade_date) or trade_dates[-1]
-    if normalized_trade_date not in trade_dates:
-        normalized_trade_date = trade_dates[-1]
-
+async def _build_statistics_limit_snapshot_payload(normalized_trade_date: str) -> Dict[str, Any]:
     docs = await mongo_manager.find_many(
         "limit_list",
         {"trade_date": normalized_trade_date, "limit": "U"},
@@ -1030,10 +1023,7 @@ async def get_statistics_limit_snapshot(
     }
 
 
-@router.get("/statistics/leader-cycle")
-async def get_statistics_leader_cycle(
-    period: str = Query(default="1m", description="1w/1m/3m/1y"),
-) -> Dict[str, Any]:
+async def _build_statistics_leader_cycle_payload(period: str) -> Dict[str, Any]:
     trade_dates = await _get_market_trade_dates(limit=260)
     if not trade_dates:
         raise HTTPException(status_code=404, detail="No trade dates available")
@@ -1131,6 +1121,7 @@ async def get_statistics_leader_cycle(
 
     return {
         "period": period,
+        "trade_date": latest_trade_date,
         "source": "limit_list",
         "warnings": ([*warnings] if docs else [*warnings, "limit_list 在当前周期内暂无数据"]),
         "rankings": rankings,
@@ -1138,10 +1129,7 @@ async def get_statistics_leader_cycle(
     }
 
 
-@router.get("/statistics/sentiment")
-async def get_statistics_sentiment(
-    period: str = Query(default="1m", description="1w/1m/3m/1y"),
-) -> Dict[str, Any]:
+async def _build_statistics_sentiment_payload(period: str) -> Dict[str, Any]:
     trade_dates = await _get_market_trade_dates(limit=260)
     if not trade_dates:
         raise HTTPException(status_code=404, detail="No trade dates available")
@@ -1191,8 +1179,9 @@ async def get_statistics_sentiment(
         daily_map[str(doc.get("trade_date") or "")][str(doc.get("ts_code") or "")] = doc
 
     trend = []
-    for index, current_date in enumerate(period_trade_dates):
-        prev_date = trade_dates[trade_dates.index(current_date) - 1] if trade_dates.index(current_date) > 0 else None
+    for current_date in period_trade_dates:
+        current_index = trade_dates.index(current_date)
+        prev_date = trade_dates[current_index - 1] if current_index > 0 else None
         prev_limit_map = limit_map.get(prev_date or "", {})
         current_limit_map = limit_map.get(current_date, {})
         current_daily_map = daily_map.get(current_date, {})
@@ -1203,9 +1192,9 @@ async def get_statistics_sentiment(
             if not daily or prev_close <= 0:
                 continue
             samples.append({
-                "open_premium": ( _safe_float(daily.get("open"), 0.0) - prev_close ) / prev_close * 100,
-                "high_premium": ( _safe_float(daily.get("high"), 0.0) - prev_close ) / prev_close * 100,
-                "close_return": ( _safe_float(daily.get("close"), 0.0) - prev_close ) / prev_close * 100,
+                "open_premium": (_safe_float(daily.get("open"), 0.0) - prev_close) / prev_close * 100,
+                "high_premium": (_safe_float(daily.get("high"), 0.0) - prev_close) / prev_close * 100,
+                "close_return": (_safe_float(daily.get("close"), 0.0) - prev_close) / prev_close * 100,
             })
 
         stats = stats_map.get(current_date, {})
@@ -1245,12 +1234,83 @@ async def get_statistics_sentiment(
 
     return {
         "period": period,
-        "latest_trade_date": _display_trade_date(latest_trade_date),
-        "source": "daily_stats+market_analysis+limit_list+stock_daily",
-        "warnings": ([*warnings] if trend else [*warnings, "情绪趋势数据不足"]),
+        "trade_date": latest_trade_date,
+        "source": "daily_stats+market_analysis+limit_list",
+        "warnings": warnings,
         "latest": latest,
         "trend": trend,
     }
+
+
+@router.get("/statistics/limit-snapshot")
+async def get_statistics_limit_snapshot(
+    trade_date: Optional[str] = Query(default=None, description="交易日，支持 YYYYMMDD 或 YYYY-MM-DD"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=60)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+
+    normalized_trade_date = _normalize_trade_date_input(trade_date) or trade_dates[-1]
+    if normalized_trade_date not in trade_dates:
+        normalized_trade_date = trade_dates[-1]
+    cached = await get_cached_market_statistics("limit_snapshot", normalized_trade_date)
+    if cached:
+        return cached
+
+    payload = await _build_statistics_limit_snapshot_payload(normalized_trade_date)
+    await set_cached_market_statistics(
+        "limit_snapshot",
+        normalized_trade_date,
+        payload,
+        trade_date=normalized_trade_date,
+    )
+    return payload
+
+
+@router.get("/statistics/leader-cycle")
+async def get_statistics_leader_cycle(
+    period: str = Query(default="1m", description="1w/1m/3m/1y"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=260)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+    latest_trade_date = trade_dates[-1]
+    cache_key = f"{period}:{latest_trade_date}"
+    cached = await get_cached_market_statistics("leader_cycle", cache_key)
+    if cached:
+        return cached
+
+    payload = await _build_statistics_leader_cycle_payload(period)
+    await set_cached_market_statistics(
+        "leader_cycle",
+        cache_key,
+        payload,
+        trade_date=latest_trade_date,
+    )
+    return payload
+
+
+@router.get("/statistics/sentiment")
+async def get_statistics_sentiment(
+    period: str = Query(default="1m", description="1w/1m/3m/1y"),
+) -> Dict[str, Any]:
+    trade_dates = await _get_market_trade_dates(limit=260)
+    if not trade_dates:
+        raise HTTPException(status_code=404, detail="No trade dates available")
+    latest_trade_date = trade_dates[-1]
+    cache_key = f"{period}:{latest_trade_date}"
+    cached = await get_cached_market_statistics("sentiment", cache_key)
+    if cached:
+        return cached
+
+    payload = await _build_statistics_sentiment_payload(period)
+    await set_cached_market_statistics(
+        "sentiment",
+        cache_key,
+        payload,
+        trade_date=latest_trade_date,
+    )
+    return payload
 
 
 @router.get("/statistics/stage-gainers")
