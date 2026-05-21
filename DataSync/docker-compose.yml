@@ -1,0 +1,66 @@
+services:
+  data-sync:
+    build:
+      context: ..
+      dockerfile: DataSync/Dockerfile
+    container_name: stock-agent-standalone-data-sync
+    command: ["python", "main.py"]
+    env_file:
+      - ../.env.docker
+    environment:
+      NODE_TYPE: data_sync
+      DATASYNC_RUNTIME_DIR: /app/DataSync
+      DATASYNC_DATA_DIR: /app/DataSync/data
+      OBS_LOG_DIR: /app/DataSync/logs
+      MILVUS_URI: "${MILVUS_URI:-/app/DataSync/data/milvus_lite.db}"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - datasync_logs:/app/DataSync/logs
+      - datasync_data:/app/DataSync/data
+    restart: unless-stopped
+
+  mongodb:
+    image: "docker.m.daocloud.io/mongo:7.0"
+    container_name: stock-agent-standalone-mongo
+    command: ["mongod", "--auth", "--bind_ip_all", "--wiredTigerCacheSizeGB", "1.0"]
+    env_file:
+      - ../.env.docker
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "${MONGO_INITDB_ROOT_USERNAME:-admin}"
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD:-change-me}"
+      MONGO_INITDB_DATABASE: "${MONGO_INITDB_DATABASE:-stock_agent}"
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - datasync_mongo:/data/db
+      - ../AgentServer/deploy/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--host", "localhost", "--username", "${MONGO_INITDB_ROOT_USERNAME:-admin}", "--password", "${MONGO_INITDB_ROOT_PASSWORD:-change-me}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 20s
+
+  redis:
+    image: "docker.m.daocloud.io/redis:7.2-alpine"
+    container_name: stock-agent-standalone-redis
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - datasync_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  datasync_mongo:
+  datasync_redis:
+  datasync_logs:
+  datasync_data:
