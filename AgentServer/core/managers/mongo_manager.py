@@ -460,10 +460,11 @@ class MongoManager(BaseManager):
         collection: str,
         filter: dict,
         projection: Optional[dict] = None,
+        sort: Optional[List[tuple]] = None,
     ) -> Optional[dict]:
         """查询单条文档"""
         self._ensure_initialized()
-        return await self._db[collection].find_one(filter, projection)
+        return await self._db[collection].find_one(filter, projection, sort=sort)
     
     async def find_many(
         self,

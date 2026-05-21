@@ -10,6 +10,7 @@
 
 from typing import Optional, List, Dict
 from datetime import datetime
+from collections import OrderedDict
 import uuid
 import logging
 
@@ -31,7 +32,23 @@ logger = logging.getLogger(__name__)
 
 # ==================== 股票名称缓存 ====================
 
-_stock_names_cache: Dict[str, str] = {}
+_STOCK_NAMES_CACHE_MAX_SIZE = 2048
+_stock_names_cache: "OrderedDict[str, str]" = OrderedDict()
+
+
+def _get_cached_stock_name(ts_code: str) -> Optional[str]:
+    name = _stock_names_cache.get(ts_code)
+    if name is None:
+        return None
+    _stock_names_cache.move_to_end(ts_code)
+    return name
+
+
+def _cache_stock_name(ts_code: str, name: str) -> None:
+    _stock_names_cache[ts_code] = name
+    _stock_names_cache.move_to_end(ts_code)
+    while len(_stock_names_cache) > _STOCK_NAMES_CACHE_MAX_SIZE:
+        _stock_names_cache.popitem(last=False)
 
 
 def _normalize_ts_code(code: str) -> str:
@@ -84,8 +101,9 @@ async def _get_stock_names(ts_codes: List[str]) -> Dict[str, str]:
         code_mapping[code] = normalized
         
         # 先从缓存获取（使用标准化代码）
-        if normalized in _stock_names_cache:
-            result[code] = _stock_names_cache[normalized]
+        cached_name = _get_cached_stock_name(normalized)
+        if cached_name is not None:
+            result[code] = cached_name
         else:
             codes_to_fetch.append(normalized)
     
@@ -103,7 +121,7 @@ async def _get_stock_names(ts_codes: List[str]) -> Dict[str, str]:
             ts_code = stock.get("ts_code", "")
             name = stock.get("name", ts_code)
             db_results[ts_code] = name
-            _stock_names_cache[ts_code] = name
+            _cache_stock_name(ts_code, name)
         
         # 将结果映射回原始代码
         for original, normalized in code_mapping.items():

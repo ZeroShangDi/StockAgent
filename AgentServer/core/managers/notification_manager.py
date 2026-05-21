@@ -38,6 +38,20 @@ class NotificationManager(BaseManager):
         self._last_send_time: Dict[str, datetime] = {}  # 按策略ID记录最后发送时间
         self._send_queue: List[Dict[str, Any]] = []
         self._lock = asyncio.Lock()
+
+    def _prune_last_send_time(self) -> None:
+        """清理长期未使用的频控状态，避免常驻进程无限增长。"""
+        if not self._last_send_time:
+            return
+        keep_seconds = max(int(self._config.min_interval) * 6, 24 * 3600)
+        cutoff = datetime.utcnow().timestamp() - keep_seconds
+        stale_keys = [
+            strategy_id
+            for strategy_id, last_time in self._last_send_time.items()
+            if last_time.timestamp() < cutoff
+        ]
+        for strategy_id in stale_keys:
+            self._last_send_time.pop(strategy_id, None)
     
     async def initialize(self) -> None:
         """初始化 HTTP 客户端"""
@@ -63,6 +77,7 @@ class NotificationManager(BaseManager):
         if self._client:
             await self._client.aclose()
             self._client = None
+        self._last_send_time.clear()
         self._initialized = False
         self.logger.info("NotificationManager shutdown")
     
@@ -170,6 +185,7 @@ class NotificationManager(BaseManager):
         
         # 频率控制
         async with self._lock:
+            self._prune_last_send_time()
             last_time = self._last_send_time.get(alert.strategy_id)
             if last_time:
                 elapsed = (datetime.utcnow() - last_time).total_seconds()

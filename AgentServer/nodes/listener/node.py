@@ -8,7 +8,7 @@ Listener 节点
 """
 
 import asyncio
-from typing import Optional, List, Dict, Any, Iterable
+from typing import Optional, List, Dict, Any, Iterable, Tuple
 from datetime import datetime, date, time
 import uuid
 import logging
@@ -270,8 +270,11 @@ class ListenerNode(BaseNode):
         # 2. 获取三大指数实时行情
         index_quotes, index_source = await data_source_manager.get_realtime_index_quotes()
 
-        # 3. 获取需要监听的股票列表
-        watch_codes = await self._get_all_watch_codes()
+        # 3. 预计算订阅运行时上下文，避免每轮重复查库
+        runtime_contexts = await self._build_subscription_runtime_contexts()
+
+        # 4. 获取需要监听的股票列表
+        watch_codes = self._get_all_watch_codes(runtime_contexts)
         if not watch_codes:
             self.logger.warning(
                 f"No stocks to watch, skipping. "
@@ -279,7 +282,7 @@ class ListenerNode(BaseNode):
             )
             return
 
-        # 4. 分批拉取实时行情 (全市场模式下降级为分批，减轻 API 和内存压力)
+        # 5. 分批拉取实时行情 (全市场模式下降级为分批，减轻 API 和内存压力)
         total_codes = len(watch_codes)
         if total_codes > self.LARGE_WATCH_THRESHOLD:
             self.logger.info(
@@ -319,7 +322,7 @@ class ListenerNode(BaseNode):
             f"[poll] Quote sources: stocks={quote_source or '-'}, indexes={index_source or '-'}"
         )
 
-        # 5. 构建市场快照 (仅保留策略评估需要的字段，减少内存)
+        # 6. 构建市场快照 (仅保留策略评估需要的字段，减少内存)
         self._previous_snapshot = self._current_snapshot
         self._current_snapshot = self._build_snapshot(quotes)
 
@@ -328,14 +331,19 @@ class ListenerNode(BaseNode):
             f"up={self._current_snapshot.up_count}, down={self._current_snapshot.down_count}"
         )
 
-        # 6. 存储实时市场数据到 Redis
+        # 7. 存储实时市场数据到 Redis
         await self._store_realtime_market_data(index_quotes)
 
-        # 7. 统计封板情况
+        # 8. 统计封板情况
         await self._log_limit_stats()
 
-        # 8. 执行策略检测
-        alerts = await self._evaluate_strategies()
+        # 9. 执行策略检测
+        alerts = await self._evaluate_strategies(runtime_contexts)
+        subscription_lookup = {
+            sub.subscription_id: sub
+            for sub in self._subscriptions
+            if sub.is_active
+        }
 
         self.logger.info(f"[poll] Strategy evaluation done, alerts={len(alerts)}")
 
@@ -344,7 +352,7 @@ class ListenerNode(BaseNode):
                 self.logger.info(
                     f"[poll] Sending alert: {alert.ts_code} - {alert.trigger_reason}"
                 )
-                await self._process_alert(alert)
+                await self._process_alert(alert, subscription_lookup=subscription_lookup)
 
     async def _log_limit_stats(self) -> None:
         """记录封板统计 (从 poll_cycle 拆出以减少方法体量)"""
@@ -433,7 +441,42 @@ class ListenerNode(BaseNode):
         except Exception as e:
             self.logger.error(f"Failed to fetch limit prices: {e}")
     
-    async def _get_all_watch_codes(self) -> List[str]:
+    async def _build_subscription_runtime_contexts(self) -> Dict[str, Dict[str, Any]]:
+        """按轮询周期预计算订阅上下文，减少重复查库。"""
+        contexts: Dict[str, Dict[str, Any]] = {}
+        position_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        source_pool_cache: Dict[Tuple[str, ...], List[str]] = {}
+
+        for subscription in self._subscriptions:
+            if not subscription.is_active:
+                continue
+
+            watch_set = {
+                str(code).upper()
+                for code in subscription.watch_list
+                if str(code).strip() and str(code).upper() != "ALL"
+            }
+
+            runtime_position_map = await self._get_position_map_for_subscription(
+                subscription,
+                position_cache=position_cache,
+            )
+            watch_set.update(runtime_position_map.keys())
+
+            transition_source_codes = await self._get_transition_source_watch_codes(
+                subscription,
+                source_pool_cache=source_pool_cache,
+            )
+            watch_set.update(transition_source_codes)
+
+            contexts[subscription.subscription_id] = {
+                "watch_codes": list(watch_set),
+                "position_map": runtime_position_map,
+            }
+
+        return contexts
+
+    def _get_all_watch_codes(self, runtime_contexts: Optional[Dict[str, Dict[str, Any]]] = None) -> List[str]:
         """
         获取所有需要监听的股票代码
         
@@ -443,7 +486,8 @@ class ListenerNode(BaseNode):
         """
         watch_set = set()
         has_all_market = False
-        
+        contexts = runtime_contexts or {}
+
         for sub in self._subscriptions:
             if not sub.is_active:
                 continue
@@ -452,7 +496,7 @@ class ListenerNode(BaseNode):
                 has_all_market = True
                 # 继续遍历，收集其他策略的个股
 
-            effective_watch_codes = await self._get_effective_watch_codes(sub)
+            effective_watch_codes = contexts.get(sub.subscription_id, {}).get("watch_codes", [])
             watch_set.update(effective_watch_codes)
         
         if has_all_market:
@@ -463,25 +507,17 @@ class ListenerNode(BaseNode):
         
         return list(watch_set)
 
-    async def _get_effective_watch_codes(self, subscription: StrategySubscription) -> List[str]:
-        watch_set = {
-            str(code).upper()
-            for code in subscription.watch_list
-            if str(code).strip() and str(code).upper() != "ALL"
-        }
-
-        position_codes = await self._get_position_watch_codes(subscription)
-        watch_set.update(position_codes)
-
-        transition_source_codes = await self._get_transition_source_watch_codes(subscription)
-        watch_set.update(transition_source_codes)
-
-        return list(watch_set)
-
-    async def _get_position_watch_codes(self, subscription: StrategySubscription) -> List[str]:
+    async def _get_position_map_for_subscription(
+        self,
+        subscription: StrategySubscription,
+        position_cache: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
         group_id = str(subscription.params.get("position_group_id") or "").strip()
         if not group_id:
-            return []
+            return {}
+
+        if position_cache is not None and group_id in position_cache:
+            return position_cache[group_id]
 
         docs = await mongo_manager.find_many(
             "trade_review_positions",
@@ -493,15 +529,28 @@ class ListenerNode(BaseNode):
                     {"security_type": "stock"},
                 ],
             },
-            projection={"ts_code": 1},
+            projection={
+                "ts_code": 1,
+                "name": 1,
+                "quantity": 1,
+                "total_cost": 1,
+                "_id": 0,
+            },
         )
-        return [
-            str(doc.get("ts_code")).upper()
+        position_map = {
+            str(doc.get("ts_code")).upper(): doc
             for doc in docs
             if doc.get("ts_code")
-        ]
+        }
+        if position_cache is not None:
+            position_cache[group_id] = position_map
+        return position_map
 
-    async def _get_transition_source_watch_codes(self, subscription: StrategySubscription) -> List[str]:
+    async def _get_transition_source_watch_codes(
+        self,
+        subscription: StrategySubscription,
+        source_pool_cache: Optional[Dict[Tuple[str, ...], List[str]]] = None,
+    ) -> List[str]:
         rules = subscription.params.get("transition_rules") or []
         if not isinstance(rules, list) or not rules:
             return []
@@ -518,6 +567,10 @@ class ListenerNode(BaseNode):
         if not source_pool_ids:
             return []
 
+        cache_key = tuple(sorted(source_pool_ids))
+        if source_pool_cache is not None and cache_key in source_pool_cache:
+            return source_pool_cache[cache_key]
+
         source_pools = await mongo_manager.find_many(
             "stock_pools",
             {"pool_id": {"$in": list(source_pool_ids)}},
@@ -530,7 +583,10 @@ class ListenerNode(BaseNode):
                 ts_code = str(item.get("ts_code") or "").strip().upper()
                 if ts_code:
                     codes.add(ts_code)
-        return list(codes)
+        result = list(codes)
+        if source_pool_cache is not None:
+            source_pool_cache[cache_key] = result
+        return result
     
     # 快照保留的最小字段集合 (策略评估只需这些字段)
     _SNAPSHOT_KEEP_FIELDS = frozenset({
@@ -610,7 +666,10 @@ class ListenerNode(BaseNode):
         self.logger.debug(f"[build_snapshot] Built snapshot with {len(snapshot.quotes)} stocks")
         return snapshot
     
-    async def _evaluate_strategies(self) -> List[StrategyAlert]:
+    async def _evaluate_strategies(
+        self,
+        runtime_contexts: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> List[StrategyAlert]:
         """
         执行所有策略评估
         
@@ -621,7 +680,8 @@ class ListenerNode(BaseNode):
             return []
         
         all_alerts = []
-        
+        contexts = runtime_contexts or {}
+
         for subscription in self._subscriptions:
             if not subscription.is_active:
                 continue
@@ -636,14 +696,20 @@ class ListenerNode(BaseNode):
                 continue
             
             try:
-                effective_watch_codes = await self._get_effective_watch_codes(subscription)
+                runtime_context = contexts.get(subscription.subscription_id, {})
+                effective_watch_codes = runtime_context.get("watch_codes", [])
+                runtime_params = {
+                    **subscription.params,
+                    "_runtime_position_map": runtime_context.get("position_map", {}),
+                }
                 effective_subscription = subscription.copy(
                     update={
                         "watch_list": (
                             ["ALL", *effective_watch_codes]
                             if subscription.is_all_market()
                             else effective_watch_codes
-                        )
+                        ),
+                        "params": runtime_params,
                     }
                 )
                 alerts = await strategy.evaluate(
@@ -654,7 +720,11 @@ class ListenerNode(BaseNode):
                 # 策略评估过程中可能会更新运行时参数（如 last_triggered_date、
                 # highest_price 等）。评估时使用的是复制后的订阅对象，这里
                 # 需要把 params 同步回原始订阅，避免下一轮轮询仍读取旧状态。
-                subscription.params = effective_subscription.params
+                subscription.params = {
+                    key: value
+                    for key, value in effective_subscription.params.items()
+                    if not str(key).startswith("_runtime_")
+                }
                 all_alerts.extend(alerts)
                 
             except Exception as e:
@@ -665,11 +735,17 @@ class ListenerNode(BaseNode):
         
         return all_alerts
 
-    async def _process_alert(self, alert: StrategyAlert) -> None:
-        subscription = next(
-            (sub for sub in self._subscriptions if sub.subscription_id == alert.subscription_id),
-            None,
-        )
+    async def _process_alert(
+        self,
+        alert: StrategyAlert,
+        subscription_lookup: Optional[Dict[str, StrategySubscription]] = None,
+    ) -> None:
+        subscription = (subscription_lookup or {}).get(alert.subscription_id)
+        if subscription is None:
+            subscription = next(
+                (sub for sub in self._subscriptions if sub.subscription_id == alert.subscription_id),
+                None,
+            )
         if not subscription:
             self.logger.warning(
                 f"[poll] Unable to find subscription for alert {alert.alert_id} ({alert.subscription_id})"

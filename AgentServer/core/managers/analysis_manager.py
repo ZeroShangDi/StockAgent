@@ -18,6 +18,7 @@ import logging
 import math
 from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
+from collections import OrderedDict
 
 from core.base import BaseManager
 from common.enums import MarketCycle
@@ -94,6 +95,7 @@ class AnalysisManager(BaseManager):
     
     # MA 周期配置
     MA_PERIOD = 10  # 10日 EMA 基准
+    MA_CACHE_MAX_SIZE = 256
     
     # 默认基准值 (当历史数据不足时使用)
     DEFAULT_AVG_AMOUNT = 10000 * 1e8  # 1万亿（千元单位）
@@ -101,7 +103,20 @@ class AnalysisManager(BaseManager):
     
     def __init__(self):
         super().__init__()
-        self._ma_cache = {}  # 缓存 MA 数据，key 为 trade_date
+        self._ma_cache: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+
+    def _get_cached_baseline(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        baseline = self._ma_cache.get(cache_key)
+        if baseline is None:
+            return None
+        self._ma_cache.move_to_end(cache_key)
+        return baseline
+
+    def _cache_baseline(self, cache_key: str, baseline: Dict[str, Any]) -> None:
+        self._ma_cache[cache_key] = baseline
+        self._ma_cache.move_to_end(cache_key)
+        while len(self._ma_cache) > self.MA_CACHE_MAX_SIZE:
+            self._ma_cache.popitem(last=False)
     
     @staticmethod
     def _safe_float(val, default: float = 0.0) -> float:
@@ -146,8 +161,9 @@ class AnalysisManager(BaseManager):
             包含 MA10 基准值的字典 (情绪评分因子 + 强度评分因子)
         """
         cache_key = f"ma10_{trade_date}"
-        if cache_key in self._ma_cache:
-            return self._ma_cache[cache_key]
+        cached = self._get_cached_baseline(cache_key)
+        if cached is not None:
+            return cached
         
         # 从 MongoDB 加载最近 MA_PERIOD 个交易日的数据
         history_data = await mongo_manager.find_many(
@@ -223,7 +239,7 @@ class AnalysisManager(BaseManager):
         else:
             self.logger.info(f"MA{self.MA_PERIOD} baseline: only {data_count} days available")
         
-        self._ma_cache[cache_key] = baseline
+        self._cache_baseline(cache_key, baseline)
         return baseline
     
     async def load_ma30_baseline(

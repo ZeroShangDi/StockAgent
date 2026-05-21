@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date
 import logging
@@ -35,9 +36,11 @@ class LineDefinition:
 class SupportResistanceStrategy(BaseStrategy):
     """撑压线监听策略"""
 
+    MAX_TRADE_DATE_CACHE_SIZE = 256
+
     def __init__(self) -> None:
         self.logger = logging.getLogger("strategy.support_resistance")
-        self._trade_date_cache: Dict[str, List[str]] = {}
+        self._trade_date_cache: "OrderedDict[str, List[str]]" = OrderedDict()
         self._cache_date: Optional[str] = None
 
     @property
@@ -113,10 +116,6 @@ class SupportResistanceStrategy(BaseStrategy):
         current_high = self._safe_float(quote.get("high")) or current_price
         current_low = self._safe_float(quote.get("low")) or current_price
 
-        trade_dates = await self._get_trade_dates_for_stock(ts_code, today_key)
-        if not trade_dates:
-            return []
-
         line_defs: List[LineDefinition] = []
         if config.get("support_enabled"):
             support_mode = str(config.get("support_mode") or "trend").strip().lower()
@@ -138,6 +137,11 @@ class SupportResistanceStrategy(BaseStrategy):
                 resistance_points = config.get("resistance_points") or []
                 if len(resistance_points) == 2:
                     line_defs.append(LineDefinition("resistance", "trend", resistance_points))
+
+        min_required_trade_date = self._resolve_min_required_trade_date(line_defs)
+        trade_dates = await self._get_trade_dates_for_stock(ts_code, today_key, min_required_trade_date)
+        if not trade_dates:
+            return []
 
         alerts: List[StrategyAlert] = []
         frequency = self._get_alert_frequency(subscription.params)
@@ -193,21 +197,49 @@ class SupportResistanceStrategy(BaseStrategy):
 
         return alerts
 
-    async def _get_trade_dates_for_stock(self, ts_code: str, today_key: str) -> List[str]:
-        if ts_code not in self._trade_date_cache:
+    async def _get_trade_dates_for_stock(
+        self,
+        ts_code: str,
+        today_key: str,
+        min_required_trade_date: Optional[str],
+    ) -> List[str]:
+        cache_key = f"{ts_code}:{min_required_trade_date or 'ALL'}"
+        cached_dates = self._trade_date_cache.get(cache_key)
+        if cached_dates is None:
+            query: Dict[str, Any] = {"ts_code": ts_code}
+            if min_required_trade_date:
+                query["trade_date"] = {"$gte": min_required_trade_date}
             records = await mongo_manager.find_many(
                 "stock_daily",
-                {"ts_code": ts_code},
-                projection={"trade_date": 1},
+                query,
+                projection={"trade_date": 1, "_id": 0},
                 sort=[("trade_date", 1)],
             )
             dates = [record.get("trade_date") for record in records if record.get("trade_date")]
-            self._trade_date_cache[ts_code] = dates
+            self._trade_date_cache[cache_key] = dates
+            self._trade_date_cache.move_to_end(cache_key)
+            while len(self._trade_date_cache) > self.MAX_TRADE_DATE_CACHE_SIZE:
+                self._trade_date_cache.popitem(last=False)
+            cached_dates = dates
+        else:
+            self._trade_date_cache.move_to_end(cache_key)
 
-        dates = list(self._trade_date_cache.get(ts_code, []))
+        dates = list(cached_dates)
         if dates and today_key > dates[-1]:
             dates.append(today_key)
         return dates
+
+    def _resolve_min_required_trade_date(self, line_defs: List[LineDefinition]) -> Optional[str]:
+        dates = [
+            str(point.get("date") or "").strip()
+            for line_def in line_defs
+            if line_def.mode == "trend"
+            for point in line_def.points
+            if str(point.get("date") or "").strip()
+        ]
+        if not dates:
+            return None
+        return min(dates)
 
     def _project_line_price(
         self,

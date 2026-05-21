@@ -48,6 +48,7 @@ class BaseSource(ABC):
         self.logger = logging.getLogger(f"src.collector.sources.{self.name.value}")
         self.client = httpx.AsyncClient(
             timeout=30.0,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "application/json, text/plain, */*",
