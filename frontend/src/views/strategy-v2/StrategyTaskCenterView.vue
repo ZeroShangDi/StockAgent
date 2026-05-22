@@ -174,6 +174,26 @@
             </div>
           </div>
           <p class="inspector-notes">{{ selectedTask.notes || '当前没有额外说明。' }}</p>
+          <div v-if="selectedTaskLatestRun" class="selected-run-card">
+            <div class="selected-run-head">
+              <strong>{{ selectedTaskLatestRun.title }}</strong>
+              <el-tag :type="runStatusTagType(selectedTaskLatestRun.run_status)" effect="plain" round>
+                {{ runStatusLabel(selectedTaskLatestRun.run_status) }}
+              </el-tag>
+            </div>
+            <p>{{ selectedTaskLatestRun.summary }}</p>
+            <div class="selected-run-metrics">
+              <article
+                v-for="metric in selectedTaskLatestRun.summary_metrics.slice(0, 3)"
+                :key="metric.label"
+                class="selected-run-metric"
+                :class="metric.tone || 'default'"
+              >
+                <span>{{ metric.label }}</span>
+                <strong>{{ metric.value }}</strong>
+              </article>
+            </div>
+          </div>
           <div class="quick-actions">
             <el-button type="primary" @click="goDetail(selectedTask.task_id)">查看详情</el-button>
             <el-button v-if="selectedTask.last_run_id" @click="openLatestTaskRun(selectedTask)">最近运行</el-button>
@@ -366,6 +386,7 @@ import {
   getStrategyV2Overview,
   listStrategyDefinitions,
   listStrategySceneTasks,
+  listTaskRuns,
   runStrategySceneTask,
   STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
@@ -380,6 +401,7 @@ import type {
   StrategyRunStatus,
   StrategySceneTask,
   StrategySceneType,
+  StrategyTaskRun,
   StrategyTaskStatus,
 } from '@/types/strategy-v2'
 
@@ -387,6 +409,7 @@ const route = useRoute()
 const router = useRouter()
 
 const tasks = ref<StrategySceneTask[]>([])
+const allRuns = ref<StrategyTaskRun[]>([])
 const strategyOptions = ref<StrategyDefinition[]>([])
 const keyword = ref('')
 const activeScene = ref<StrategySceneType>('listen')
@@ -458,6 +481,11 @@ const selectedTask = computed(() => {
     || filteredTasks.value[0]
     || null
 })
+const latestRunByTask = computed(() => new Map(allRuns.value.map((item) => [item.task_id, item])))
+const selectedTaskLatestRun = computed(() => {
+  if (!selectedTask.value) return null
+  return latestRunByTask.value.get(selectedTask.value.task_id) || null
+})
 
 const activeTaskCount = computed(() => tasks.value.filter((item) => item.status === 'active').length)
 const recentRunCount = computed(() => tasks.value.filter((item) => !!item.last_run_id).length)
@@ -507,6 +535,7 @@ watch(filteredTasks, (value) => {
 
 async function refreshPage(): Promise<void> {
   tasks.value = await listStrategySceneTasks()
+  allRuns.value = await listTaskRuns()
   strategyOptions.value = await listStrategyDefinitions()
   overview.value = await getStrategyV2Overview()
 }
@@ -733,6 +762,13 @@ function runStatusLabel(status: StrategyRunStatus): string {
   if (status === 'partial_success') return '部分成功'
   if (status === 'failed') return '失败'
   return '运行中'
+}
+
+function runStatusTagType(status: StrategyRunStatus): 'success' | 'warning' | 'danger' | 'info' {
+  if (status === 'success') return 'success'
+  if (status === 'partial_success') return 'warning'
+  if (status === 'failed') return 'danger'
+  return 'info'
 }
 
 function taskCountByScene(scene: StrategySceneType): number {
@@ -1070,6 +1106,67 @@ function sceneDetail(scene: StrategySceneType): string {
 .principle-list {
   display: grid;
   gap: 10px;
+}
+
+.selected-run-card {
+  margin: 14px 0;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.selected-run-head,
+.selected-run-metrics {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.selected-run-head {
+  align-items: center;
+}
+
+.selected-run-head strong {
+  display: block;
+}
+
+.selected-run-card p,
+.selected-run-metric span {
+  color: var(--ink-soft);
+}
+
+.selected-run-card p {
+  margin: 8px 0 12px;
+  line-height: 1.7;
+}
+
+.selected-run-metrics {
+  flex-wrap: wrap;
+}
+
+.selected-run-metric {
+  min-width: 86px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(47, 95, 208, 0.08);
+}
+
+.selected-run-metric strong {
+  display: block;
+  margin-top: 6px;
+}
+
+.selected-run-metric.positive strong {
+  color: #16a34a;
+}
+
+.selected-run-metric.warning strong {
+  color: #d97706;
+}
+
+.selected-run-metric.negative strong {
+  color: #dc2626;
 }
 
 .principle-card {
