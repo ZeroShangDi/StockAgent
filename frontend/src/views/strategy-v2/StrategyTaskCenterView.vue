@@ -201,65 +201,152 @@
       </aside>
     </section>
 
-    <el-dialog v-model="createDialogVisible" title="新建 V2 场景任务" width="760px" :close-on-click-modal="false">
+    <el-dialog v-model="createDialogVisible" title="新建 V2 场景任务" width="860px" :close-on-click-modal="false">
       <div class="dialog-shell">
         <section class="form-panel">
+          <div class="wizard-steps">
+            <button
+              v-for="(step, index) in createStepItems"
+              :key="step.title"
+              type="button"
+              :class="['wizard-step', { active: createStepIndex === index, done: index < createStepIndex }]"
+              @click="jumpToCreateStep(index)"
+            >
+              <span>{{ index + 1 }}</span>
+              <div>
+                <strong>{{ step.title }}</strong>
+                <small>{{ step.description }}</small>
+              </div>
+            </button>
+          </div>
+
           <el-form label-position="top">
-            <el-form-item label="任务名称">
-              <el-input v-model="taskForm.name" placeholder="例如：主线盘口监听 / MA5 候选入池" />
-            </el-form-item>
-            <el-form-item label="场景类型">
-              <el-select v-model="taskForm.scene_type" style="width: 100%">
-                <el-option v-for="scene in sceneTabs" :key="scene.value" :label="scene.label" :value="scene.value" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="策略">
-              <el-select v-model="taskForm.strategy_key" style="width: 100%">
-                <el-option
-                  v-for="strategy in strategyOptions"
-                  :key="strategy.strategy_key"
-                  :label="strategy.name"
-                  :value="strategy.strategy_key"
-                >
-                  <div class="strategy-option">
-                    <span>{{ strategy.name }}</span>
-                    <small>{{ strategy.description }}</small>
+            <template v-if="createStepIndex === 0">
+              <el-form-item label="任务名称">
+                <el-input v-model="taskForm.name" placeholder="例如：主线盘口监听 / MA5 候选入池" />
+              </el-form-item>
+              <el-form-item label="场景类型">
+                <el-select v-model="taskForm.scene_type" style="width: 100%">
+                  <el-option v-for="scene in sceneTabs" :key="scene.value" :label="scene.label" :value="scene.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="策略">
+                <el-select v-model="taskForm.strategy_key" style="width: 100%">
+                  <el-option
+                    v-for="strategy in strategyOptions"
+                    :key="strategy.strategy_key"
+                    :label="strategy.name"
+                    :value="strategy.strategy_key"
+                  >
+                    <div class="strategy-option">
+                      <span>{{ strategy.name }}</span>
+                      <small>{{ strategy.description }}</small>
+                    </div>
+                  </el-option>
+                </el-select>
+              </el-form-item>
+            </template>
+
+            <template v-else-if="createStepIndex === 1">
+              <el-form-item label="目标范围">
+                <el-input v-model="taskForm.target_scope_summary" placeholder="例如：观察池 + 自选股 / 全市场 · 排除 ST" />
+              </el-form-item>
+              <el-form-item label="任务说明">
+                <el-input
+                  v-model="taskForm.notes"
+                  type="textarea"
+                  :rows="4"
+                  placeholder="说明这个任务在链路中的角色，例如入池前筛选、盘中确认、历史回放。"
+                />
+              </el-form-item>
+            </template>
+
+            <template v-else-if="createStepIndex === 2">
+              <el-form-item label="调度方式">
+                <el-input v-model="taskForm.schedule_label" placeholder="例如：交易时段每 1 分钟轮询" />
+              </el-form-item>
+              <div class="schedule-hints">
+                <article class="hint-card">
+                  <span>建议节奏</span>
+                  <strong>{{ defaultSchedule(taskForm.scene_type) }}</strong>
+                </article>
+                <article class="hint-card">
+                  <span>目标范围模板</span>
+                  <strong>{{ defaultScope(taskForm.scene_type) }}</strong>
+                </article>
+              </div>
+            </template>
+
+            <template v-else-if="createStepIndex === 3">
+              <el-checkbox-group v-model="taskForm.actions" class="action-grid">
+                <el-checkbox v-for="item in actionOptions" :key="item.value" :label="item.value">
+                  <div class="action-option">
+                    <strong>{{ item.label }}</strong>
+                    <small>{{ item.description }}</small>
                   </div>
-                </el-option>
-              </el-select>
-            </el-form-item>
-            <el-form-item label="目标范围">
-              <el-input v-model="taskForm.target_scope_summary" placeholder="例如：观察池 + 自选股 / 全市场 · 排除 ST" />
-            </el-form-item>
-            <el-form-item label="调度方式">
-              <el-input v-model="taskForm.schedule_label" placeholder="例如：交易时段每 1 分钟轮询" />
-            </el-form-item>
-            <el-form-item label="任务说明">
-              <el-input v-model="taskForm.notes" type="textarea" :rows="3" placeholder="说明这个任务在链路中的角色，例如入池前筛选、盘中确认、历史回放。" />
-            </el-form-item>
+                </el-checkbox>
+              </el-checkbox-group>
+            </template>
+
+            <template v-else>
+              <div class="review-sheet">
+                <article class="review-row">
+                  <span>任务名称</span>
+                  <strong>{{ taskForm.name || '未填写' }}</strong>
+                </article>
+                <article class="review-row">
+                  <span>场景 / 策略</span>
+                  <strong>{{ sceneLabels[taskForm.scene_type] }} · {{ selectedFormStrategy?.name || '未选择策略' }}</strong>
+                </article>
+                <article class="review-row">
+                  <span>目标范围</span>
+                  <strong>{{ taskForm.target_scope_summary || '未填写目标范围' }}</strong>
+                </article>
+                <article class="review-row">
+                  <span>调度方式</span>
+                  <strong>{{ taskForm.schedule_label || '未填写调度方式' }}</strong>
+                </article>
+                <article class="review-row">
+                  <span>动作链</span>
+                  <strong>{{ reviewActionSummary }}</strong>
+                </article>
+              </div>
+            </template>
           </el-form>
         </section>
 
         <section class="action-panel">
           <div class="panel-block compact">
-            <span class="panel-kicker">任务动作</span>
-            <h3>信号触发后做什么</h3>
-            <p>动作不属于策略，而属于场景任务。</p>
+            <span class="panel-kicker">创建向导</span>
+            <h3>{{ currentCreateStep.title }}</h3>
+            <p>{{ currentCreateStep.description }}</p>
           </div>
-          <el-checkbox-group v-model="taskForm.actions" class="action-grid">
-            <el-checkbox v-for="item in actionOptions" :key="item.value" :label="item.value">
-              <div class="action-option">
-                <strong>{{ item.label }}</strong>
-                <small>{{ item.description }}</small>
-              </div>
-            </el-checkbox>
-          </el-checkbox-group>
+
+          <div class="wizard-side-list">
+            <article class="wizard-side-card">
+              <span>当前场景</span>
+              <strong>{{ sceneLabels[taskForm.scene_type] }}</strong>
+              <p>{{ sceneDetail(taskForm.scene_type) }}</p>
+            </article>
+            <article class="wizard-side-card">
+              <span>当前策略</span>
+              <strong>{{ selectedFormStrategy?.name || '未选择策略' }}</strong>
+              <p>{{ selectedFormStrategy?.description || '先选择策略，再决定怎么挂到任务里。' }}</p>
+            </article>
+            <article class="wizard-side-card">
+              <span>当前动作</span>
+              <strong>{{ reviewActionSummary }}</strong>
+              <p>动作不属于策略，而属于场景任务，后续真实接口也会沿用这层拆分。</p>
+            </article>
+          </div>
         </section>
       </div>
 
       <template #footer>
         <el-button @click="createDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitCreateTask">创建任务</el-button>
+        <el-button v-if="createStepIndex > 0" @click="prevCreateStep">上一步</el-button>
+        <el-button v-if="createStepIndex < createStepItems.length - 1" type="primary" @click="nextCreateStep">下一步</el-button>
+        <el-button v-else type="primary" :loading="submitting" @click="submitCreateTask">创建任务</el-button>
       </template>
     </el-dialog>
   </div>
@@ -300,6 +387,7 @@ const keyword = ref('')
 const activeScene = ref<StrategySceneType>('listen')
 const selectedTaskId = ref('')
 const createDialogVisible = ref(false)
+const createStepIndex = ref(0)
 const submitting = ref(false)
 const overview = ref({
   strategyCount: 0,
@@ -317,6 +405,14 @@ const sceneTabs = [
   { label: STRATEGY_SCENE_LABELS.scan, value: 'scan' as const },
   { label: STRATEGY_SCENE_LABELS.backtest, value: 'backtest' as const },
   { label: STRATEGY_SCENE_LABELS.sim_trade, value: 'sim_trade' as const },
+]
+
+const createStepItems = [
+  { title: '选择策略', description: '先定任务名、场景和策略。' },
+  { title: '定义范围', description: '明确扫描或监听的目标范围。' },
+  { title: '配置调度', description: '决定这个任务以什么节奏运行。' },
+  { title: '配置动作', description: '信号触发后到底做什么。' },
+  { title: '确认摘要', description: '最后检查整条任务链路。' },
 ]
 
 const actionOptions: Array<{ value: StrategyActionType; label: string; description: string }> = [
@@ -362,6 +458,14 @@ const priorityActionCount = computed(() => tasks.value.reduce((sum, item) => sum
 const avgActionCount = computed(() => {
   if (filteredTasks.value.length === 0) return '0'
   return (filteredTasks.value.reduce((sum, item) => sum + item.actions.length, 0) / filteredTasks.value.length).toFixed(1)
+})
+const currentCreateStep = computed(() => createStepItems[createStepIndex.value])
+const selectedFormStrategy = computed(() => {
+  return strategyOptions.value.find((item) => item.strategy_key === taskForm.strategy_key) || null
+})
+const reviewActionSummary = computed(() => {
+  if (taskForm.actions.length === 0) return '未选择动作'
+  return taskForm.actions.map((item) => STRATEGY_ACTION_LABELS[item]).join(' / ')
 })
 const sceneSuggestion = computed(() => {
   if (activeScene.value === 'listen') return '优先整理异常触发和冷却逻辑'
@@ -424,6 +528,7 @@ function openCreateDialog(preset?: { scene?: string; strategy?: string }): void 
   taskForm.schedule_label = defaultSchedule(taskForm.scene_type)
   taskForm.notes = ''
   taskForm.actions = defaultActions(taskForm.scene_type)
+  createStepIndex.value = 0
   createDialogVisible.value = true
 }
 
@@ -447,7 +552,56 @@ function defaultActions(scene: StrategySceneType): StrategyActionType[] {
   return ['paper_trade']
 }
 
+function validateCreateStep(stepIndex = createStepIndex.value): boolean {
+  if (stepIndex === 0) {
+    if (!taskForm.name.trim()) {
+      ElMessage.warning('请先填写任务名称')
+      return false
+    }
+    if (!taskForm.strategy_key) {
+      ElMessage.warning('请先选择策略')
+      return false
+    }
+  }
+  if (stepIndex === 1 && !taskForm.target_scope_summary.trim()) {
+    ElMessage.warning('请填写目标范围')
+    return false
+  }
+  if (stepIndex === 2 && !taskForm.schedule_label.trim()) {
+    ElMessage.warning('请填写调度方式')
+    return false
+  }
+  if (stepIndex === 3 && taskForm.actions.length === 0) {
+    ElMessage.warning('请至少选择一个动作')
+    return false
+  }
+  return true
+}
+
+function nextCreateStep(): void {
+  if (!validateCreateStep()) return
+  createStepIndex.value = Math.min(createStepIndex.value + 1, createStepItems.length - 1)
+}
+
+function prevCreateStep(): void {
+  createStepIndex.value = Math.max(createStepIndex.value - 1, 0)
+}
+
+function jumpToCreateStep(index: number): void {
+  if (index <= createStepIndex.value) {
+    createStepIndex.value = index
+    return
+  }
+  for (let step = createStepIndex.value; step < index; step += 1) {
+    if (!validateCreateStep(step)) return
+  }
+  createStepIndex.value = index
+}
+
 async function submitCreateTask(): Promise<void> {
+  if (!validateCreateStep(0) || !validateCreateStep(1) || !validateCreateStep(2) || !validateCreateStep(3)) {
+    return
+  }
   if (!taskForm.name.trim()) {
     ElMessage.warning('请填写任务名称')
     return
@@ -883,11 +1037,95 @@ function sceneDetail(scene: StrategySceneType): string {
   gap: 20px;
 }
 
+.wizard-steps {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.wizard-step {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.74);
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  text-align: left;
+}
+
+.wizard-step.active {
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, rgba(47, 95, 208, 0.08), rgba(255, 255, 255, 0.86));
+}
+
+.wizard-step.done span {
+  background: rgba(22, 163, 74, 0.14);
+  color: #18884b;
+}
+
+.wizard-step span {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(47, 95, 208, 0.12);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.wizard-step strong {
+  display: block;
+}
+
+.wizard-step small,
+.wizard-side-card p,
+.review-row span {
+  color: var(--ink-soft);
+}
+
 .action-panel {
   border-radius: 22px;
   border: 1px solid var(--line-soft);
   background: rgba(255, 255, 255, 0.72);
   padding: 18px;
+}
+
+.schedule-hints,
+.wizard-side-list,
+.review-sheet {
+  display: grid;
+  gap: 12px;
+}
+
+.hint-card,
+.wizard-side-card,
+.review-row {
+  border-radius: 18px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.76);
+  padding: 14px;
+}
+
+.hint-card span,
+.wizard-side-card span,
+.review-row span {
+  display: block;
+  font-size: 12px;
+}
+
+.hint-card strong,
+.wizard-side-card strong,
+.review-row strong {
+  display: block;
+  margin-top: 6px;
+}
+
+.wizard-side-card p {
+  margin: 8px 0 0;
+  line-height: 1.7;
 }
 
 .action-grid {
