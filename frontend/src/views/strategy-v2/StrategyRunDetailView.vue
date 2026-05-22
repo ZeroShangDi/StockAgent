@@ -49,6 +49,14 @@
             </article>
           </div>
 
+          <div class="landing-strip">
+            <article v-for="card in resultDestinationCards" :key="card.label" class="landing-card" :class="card.tone || 'default'">
+              <span>{{ card.label }}</span>
+              <strong>{{ card.value }}</strong>
+              <p>{{ card.description }}</p>
+            </article>
+          </div>
+
           <div class="table-filters">
             <button type="button" :class="['filter-pill', { active: itemFilter === 'all' }]" @click="itemFilter = 'all'">全部</button>
             <button type="button" :class="['filter-pill', { active: itemFilter === 'positive' }]" @click="itemFilter = 'positive'">正向</button>
@@ -208,6 +216,13 @@ const sceneLabels = STRATEGY_SCENE_LABELS
 const stateWritebackCount = computed(() => items.value.filter((item) => item.state_writeback).length)
 const reviewNeededCount = computed(() => items.value.filter((item) => item.action_result.includes('待') || item.action_result.includes('建议')).length)
 const skippedCount = computed(() => items.value.filter((item) => item.action_result.includes('无动作') || item.action_result.includes('跳过')).length)
+const notifiedCount = computed(() => items.value.filter((item) => item.action_result.includes('通知')).length)
+const poolLandingCount = computed(() => items.value.filter((item) => item.action_result.includes('池') && !item.action_result.includes('未入池')).length)
+const tempListCount = computed(() => items.value.filter((item) => item.action_result.includes('临时列表')).length)
+const cooledDownCount = computed(() => items.value.filter((item) => item.action_result.includes('冷却')).length)
+const tradeReviewLandingCount = computed(() => items.value.filter((item) => item.action_result.includes('交割单')).length)
+const simulatedTradeCount = computed(() => items.value.filter((item) => item.action_result.includes('模拟卖出') || item.action_result.includes('模拟成交')).length)
+const holdCount = computed(() => items.value.filter((item) => item.action_result.includes('保持持仓')).length)
 const filteredItems = computed(() => {
   if (itemFilter.value === 'positive') return items.value.filter((item) => item.signal === 1)
   if (itemFilter.value === 'review') return items.value.filter((item) => item.action_result.includes('待') || item.action_result.includes('建议'))
@@ -299,6 +314,92 @@ const followupCards = computed(() => {
     },
   ]
 })
+const resultDestinationCards = computed(() => {
+  if (!run.value) return []
+  if (run.value.scene_type === 'scan') {
+    return [
+      {
+        label: '加入股池',
+        value: `${poolLandingCount.value}`,
+        description: '命中后已经明确落入候选池或确认池的对象。',
+        tone: 'positive',
+      },
+      {
+        label: '临时列表',
+        value: `${tempListCount.value}`,
+        description: '暂时不直接流转，等人工复核后再决定去向。',
+        tone: 'warning',
+      },
+      {
+        label: '未入池',
+        value: `${items.value.filter((item) => item.action_result.includes('未入池')).length}`,
+        description: '本轮被淘汰或明确不承接的对象。',
+        tone: 'negative',
+      },
+    ]
+  }
+  if (run.value.scene_type === 'listen') {
+    return [
+      {
+        label: '已通知',
+        value: `${notifiedCount.value}`,
+        description: '已经推送到通知链路的监听结果。',
+        tone: 'positive',
+      },
+      {
+        label: '已流转',
+        value: `${items.value.filter((item) => item.action_result.includes('流转')).length}`,
+        description: '触发后已经推动股池或分组状态变化的对象。',
+        tone: 'positive',
+      },
+      {
+        label: '冷却拦下',
+        value: `${cooledDownCount.value}`,
+        description: '避免重复提醒或频繁流转而被本轮跳过的对象。',
+        tone: 'warning',
+      },
+    ]
+  }
+  if (run.value.scene_type === 'backtest') {
+    return [
+      {
+        label: '交割单落地',
+        value: `${tradeReviewLandingCount.value}`,
+        description: '已经写入当前交割单分组，后续直接去分析页复盘。',
+        tone: 'positive',
+      },
+      {
+        label: '保持持仓',
+        value: `${holdCount.value}`,
+        description: '区间内未触发交易动作，作为对照样本保留。',
+      },
+      {
+        label: '中性样本',
+        value: `${items.value.filter((item) => item.signal === 0).length}`,
+        description: '帮助判断当前止损阈值是偏宽还是偏严。',
+      },
+    ]
+  }
+  return [
+    {
+      label: '模拟卖出',
+      value: `${simulatedTradeCount.value}`,
+      description: '已落成模拟成交，用于后续交割单分析和持仓复盘。',
+      tone: 'negative',
+    },
+    {
+      label: '风险提醒',
+      value: `${notifiedCount.value}`,
+      description: '优先处理需要人工确认的风险对象和异常持仓。',
+      tone: 'warning',
+    },
+    {
+      label: '维持持仓',
+      value: `${items.value.filter((item) => item.action_result.includes('无动作') || item.action_result.includes('保持持仓')).length}`,
+      description: '没有触发处理动作的对象，继续纳入下一轮监控。',
+    },
+  ]
+})
 
 onMounted(async () => {
   const runId = String(route.params.runId || '')
@@ -370,7 +471,8 @@ function signalClass(value: StrategySignalValue): string {
 .signal-card,
 .console-panel,
 .review-card,
-.focus-card {
+.focus-card,
+.landing-card {
   border: 1px solid var(--line-soft);
   background: var(--surface-1);
   box-shadow: 0 18px 38px rgba(15, 23, 42, 0.07);
@@ -521,6 +623,52 @@ function signalClass(value: StrategySignalValue): string {
   margin-bottom: 18px;
 }
 
+.landing-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 18px;
+}
+
+.landing-card {
+  border-radius: 20px;
+  padding: 16px 18px;
+}
+
+.landing-card span,
+.landing-card p {
+  color: var(--ink-soft);
+}
+
+.landing-card span {
+  display: block;
+  font-size: 12px;
+}
+
+.landing-card strong {
+  display: block;
+  margin: 8px 0;
+  font-size: 24px;
+}
+
+.landing-card p {
+  margin: 0;
+  line-height: 1.7;
+  font-size: 13px;
+}
+
+.landing-card.positive strong {
+  color: #16a34a;
+}
+
+.landing-card.negative strong {
+  color: #dc2626;
+}
+
+.landing-card.warning strong {
+  color: #d97706;
+}
+
 .context-list,
 .focus-list,
 .followup-grid {
@@ -637,6 +785,7 @@ function signalClass(value: StrategySignalValue): string {
   .workspace-shell,
   .signal-grid,
   .review-grid,
+  .landing-strip,
   .followup-grid {
     grid-template-columns: 1fr;
   }
