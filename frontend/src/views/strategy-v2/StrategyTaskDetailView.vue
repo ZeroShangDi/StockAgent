@@ -11,6 +11,9 @@
       <div class="hero-actions">
         <el-button @click="router.push({ name: 'StrategyTaskCenterV2', query: { scene: task.scene_type } })">返回任务台</el-button>
         <el-button plain @click="editTask">编辑任务</el-button>
+        <el-button :type="task.status === 'active' ? 'warning' : 'success'" plain @click="toggleTaskStatus">
+          {{ task.status === 'active' ? '暂停任务' : '启用任务' }}
+        </el-button>
         <el-button type="primary" plain @click="runNow">立即运行</el-button>
         <el-button v-if="latestRun" type="primary" @click="openLatestRun">查看最近运行</el-button>
       </div>
@@ -61,6 +64,21 @@
             </article>
           </div>
 
+          <div class="run-health-grid">
+            <article class="mini-metric">
+              <span>累计运行</span>
+              <strong>{{ runs.length }}</strong>
+            </article>
+            <article class="mini-metric positive">
+              <span>成功率</span>
+              <strong>{{ runSuccessRate }}</strong>
+            </article>
+            <article class="mini-metric warning">
+              <span>最近有效信号</span>
+              <strong>{{ latestEffectiveSignalCount }}</strong>
+            </article>
+          </div>
+
           <div v-if="latestRun" class="run-brief">
             <div class="run-brief-head">
               <div>
@@ -83,6 +101,11 @@
               <p>{{ latestRun.next_action_hint }}</p>
             </div>
           </div>
+
+          <div v-else class="empty-state-card">
+            <strong>这个任务还没有运行记录</strong>
+            <p>先手动运行一轮，确认信号、动作和结果去向是否符合预期，再决定是否长期启用。</p>
+          </div>
         </section>
 
         <section class="console-panel">
@@ -94,7 +117,7 @@
             <span class="panel-tip">{{ runs.length }} 条</span>
           </div>
 
-          <el-table :data="runs" stripe>
+          <el-table v-if="runs.length > 0" :data="runs" stripe>
             <el-table-column prop="title" label="运行标题" min-width="180" />
             <el-table-column prop="run_status" label="状态" width="120">
               <template #default="{ row }">
@@ -113,6 +136,7 @@
               </template>
             </el-table-column>
           </el-table>
+          <el-empty v-else description="当前还没有运行历史，适合先手动运行一轮。" />
         </section>
 
         <section v-if="latestRunItems.length > 0" class="console-panel">
@@ -249,8 +273,9 @@ import {
   runStrategySceneTask,
   STRATEGY_SCENE_LABELS,
   STRATEGY_TASK_STATUS_LABELS,
+  updateStrategySceneTaskStatus,
 } from '@/mocks/strategyV2'
-import type { StrategySignalValue, StrategySceneTask, StrategyTaskRun, StrategyTaskRunItem, StrategyRunStatus } from '@/types/strategy-v2'
+import type { StrategySignalValue, StrategySceneTask, StrategyTaskRun, StrategyTaskRunItem, StrategyRunStatus, StrategyTaskStatus } from '@/types/strategy-v2'
 
 const route = useRoute()
 const router = useRouter()
@@ -271,6 +296,15 @@ const paramsEntries = computed(() => {
 })
 
 const latestRun = computed(() => runs.value[0] || null)
+const runSuccessRate = computed(() => {
+  if (runs.value.length === 0) return '0%'
+  const okCount = runs.value.filter((item) => item.run_status === 'success' || item.run_status === 'partial_success').length
+  return `${Math.round((okCount / runs.value.length) * 100)}%`
+})
+const latestEffectiveSignalCount = computed(() => {
+  if (!latestRun.value) return '0'
+  return String(latestRun.value.signal_breakdown.positive + latestRun.value.signal_breakdown.negative)
+})
 const skippedItems = computed(() => latestRunItems.value.filter((item) => item.action_result.includes('无动作') || item.action_result.includes('跳过')))
 const negativeItems = computed(() => latestRunItems.value.filter((item) => item.signal === -1))
 const focusSectionTitle = computed(() => {
@@ -417,6 +451,18 @@ async function runNow(): Promise<void> {
   ElMessage.success('已生成新的运行记录')
   await loadData()
   router.push({ name: 'StrategyRunDetailV2', params: { runId: run.run_id } })
+}
+
+async function toggleTaskStatus(): Promise<void> {
+  if (!task.value) return
+  const nextStatus: StrategyTaskStatus = task.value.status === 'active' ? 'paused' : 'active'
+  const updated = await updateStrategySceneTaskStatus(task.value.task_id, nextStatus)
+  if (!updated) {
+    ElMessage.error('任务状态更新失败')
+    return
+  }
+  task.value = updated
+  ElMessage.success(nextStatus === 'active' ? '任务已启用' : '任务已暂停')
 }
 
 function openLatestRun(): void {
@@ -617,6 +663,7 @@ function signalClass(value: StrategySignalValue): string {
 
 .status-grid,
 .metric-list,
+.run-health-grid,
 .param-list,
 .item-grid {
   display: grid;
@@ -624,7 +671,8 @@ function signalClass(value: StrategySignalValue): string {
 }
 
 .status-grid,
-.metric-list {
+.metric-list,
+.run-health-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 16px;
 }
@@ -666,6 +714,23 @@ function signalClass(value: StrategySignalValue): string {
   border: 1px solid var(--line-strong);
   background: rgba(47, 95, 208, 0.08);
   padding: 14px 16px;
+}
+
+.empty-state-card {
+  margin-top: 18px;
+  border-radius: 18px;
+  border: 1px dashed var(--line-strong);
+  background: rgba(255, 255, 255, 0.8);
+  padding: 16px;
+}
+
+.empty-state-card strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.empty-state-card p {
+  margin: 0;
 }
 
 .config-list,
