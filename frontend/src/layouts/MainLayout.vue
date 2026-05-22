@@ -66,6 +66,8 @@ const activeMenu = computed(() => {
   if (path.startsWith('/analysis')) return '/analysis'
   if (path.startsWith('/assistant')) return '/assistant'
   if (path.startsWith('/automation-overview')) return '/automation-overview'
+  if (path.startsWith('/strategies-v2')) return '/strategies-v2'
+  if (path.startsWith('/strategy-tasks') || path.startsWith('/strategy-runs')) return '/strategy-tasks'
   if (path.startsWith('/stock-picker')) return '/stock-picker'
   if (path.startsWith('/stock-pools')) return '/stock-pools'
   if (path.startsWith('/positions')) return '/trade-review'
@@ -93,6 +95,8 @@ const menuSections = [
       { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
       { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
       { path: '/watchlist', icon: Star, title: '自选股' },
+      { path: '/strategies-v2', icon: DataAnalysis, title: '策略中心 V2' },
+      { path: '/strategy-tasks', icon: TrendCharts, title: '场景任务 V2' },
       { path: '/strategies', icon: TrendCharts, title: '市场监听' },
       { path: '/trade-review', icon: Document, title: '交割单复盘' },
       { path: '/kline-practice', icon: DataLine, title: '盘感练习' },

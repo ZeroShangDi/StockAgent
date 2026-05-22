@@ -202,6 +202,30 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '市场监听' },
       },
       {
+        path: 'strategies-v2',
+        name: 'StrategyCenterV2',
+        component: () => import('@/views/strategy-v2/StrategyCenterV2View.vue'),
+        meta: { title: '策略中心 V2' },
+      },
+      {
+        path: 'strategy-tasks',
+        name: 'StrategyTaskCenterV2',
+        component: () => import('@/views/strategy-v2/StrategyTaskCenterView.vue'),
+        meta: { title: '场景任务 V2' },
+      },
+      {
+        path: 'strategy-tasks/:taskId',
+        name: 'StrategyTaskDetailV2',
+        component: () => import('@/views/strategy-v2/StrategyTaskDetailView.vue'),
+        meta: { title: '任务详情 V2' },
+      },
+      {
+        path: 'strategy-runs/:runId',
+        name: 'StrategyRunDetailV2',
+        component: () => import('@/views/strategy-v2/StrategyRunDetailView.vue'),
+        meta: { title: '运行结果 V2' },
+      },
+      {
         path: 'strategies/new',
         name: 'StrategyCreate',
         component: () => import('@/views/strategy/StrategyEditView.vue'),
