@@ -530,6 +530,29 @@ export async function createStrategySceneTask(input: CreateStrategySceneTaskInpu
   return clone(task)
 }
 
+export async function updateStrategySceneTask(taskId: string, input: CreateStrategySceneTaskInput): Promise<StrategySceneTask | undefined> {
+  const task = taskStore.find((item) => item.task_id === taskId)
+  if (!task) return undefined
+
+  const strategy = strategyDefinitions.find((item) => item.strategy_key === input.strategy_key)
+
+  task.name = input.name.trim()
+  task.scene_type = input.scene_type
+  task.strategy_key = input.strategy_key
+  task.strategy_name = strategy?.name || input.strategy_key
+  task.target_scope_summary = input.target_scope_summary.trim()
+  task.schedule_label = input.schedule_label.trim()
+  task.notes = input.notes?.trim() || ''
+  task.actions = input.actions.map((actionType) =>
+    makeAction(actionType, STRATEGY_ACTION_LABELS[actionType], `由任务层执行 ${STRATEGY_ACTION_LABELS[actionType]}`),
+  )
+  task.tags = [STRATEGY_SCENE_LABELS[input.scene_type], ...(strategy?.tags.slice(0, 2) || [])]
+  task.params = Object.fromEntries((strategy?.param_schema || []).map((item) => [item.key, item.default]))
+  task.updated_at = nowString()
+
+  return clone(task)
+}
+
 export async function updateStrategySceneTaskStatus(taskId: string, status: StrategyTaskStatus): Promise<StrategySceneTask | undefined> {
   const task = taskStore.find((item) => item.task_id === taskId)
   if (!task) return undefined

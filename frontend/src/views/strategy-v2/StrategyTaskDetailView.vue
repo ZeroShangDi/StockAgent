@@ -10,6 +10,7 @@
       </div>
       <div class="hero-actions">
         <el-button @click="router.push({ name: 'StrategyTaskCenterV2', query: { scene: task.scene_type } })">返回任务台</el-button>
+        <el-button plain @click="editTask">编辑任务</el-button>
         <el-button type="primary" plain @click="runNow">立即运行</el-button>
         <el-button v-if="latestRun" type="primary" @click="openLatestRun">查看最近运行</el-button>
       </div>
@@ -351,6 +352,17 @@ function openRoute(routeName: string): void {
     return
   }
   router.push({ name: routeName })
+}
+
+function editTask(): void {
+  if (!task.value) return
+  router.push({
+    name: 'StrategyTaskCenterV2',
+    query: {
+      scene: task.value.scene_type,
+      editTask: task.value.task_id,
+    },
+  })
 }
 
 function runStatusLabel(status: StrategyRunStatus): string {

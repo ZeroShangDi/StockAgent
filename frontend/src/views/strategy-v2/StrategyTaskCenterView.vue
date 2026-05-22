@@ -123,6 +123,7 @@
               </div>
               <div class="row-actions">
                 <el-button size="small" @click.stop="goDetail(task.task_id)">详情</el-button>
+                <el-button size="small" plain @click.stop="openEditDialog(task.task_id)">编辑</el-button>
                 <el-button
                   size="small"
                   :type="task.status === 'active' ? 'warning' : 'success'"
@@ -174,6 +175,7 @@
           <p class="inspector-notes">{{ selectedTask.notes || '当前没有额外说明。' }}</p>
           <div class="quick-actions">
             <el-button type="primary" @click="goDetail(selectedTask.task_id)">查看详情</el-button>
+            <el-button plain @click="openEditDialog(selectedTask.task_id)">编辑任务</el-button>
             <el-button :type="selectedTask.status === 'active' ? 'warning' : 'success'" plain @click="toggleTaskStatus(selectedTask)">
               {{ statusActionLabel(selectedTask.status) }}
             </el-button>
@@ -201,7 +203,7 @@
       </aside>
     </section>
 
-    <el-dialog v-model="createDialogVisible" title="新建 V2 场景任务" width="860px" :close-on-click-modal="false">
+    <el-dialog v-model="createDialogVisible" :title="dialogTitle" width="860px" :close-on-click-modal="false">
       <div class="dialog-shell">
         <section class="form-panel">
           <div class="wizard-steps">
@@ -346,7 +348,7 @@
         <el-button @click="createDialogVisible = false">取消</el-button>
         <el-button v-if="createStepIndex > 0" @click="prevCreateStep">上一步</el-button>
         <el-button v-if="createStepIndex < createStepItems.length - 1" type="primary" @click="nextCreateStep">下一步</el-button>
-        <el-button v-else type="primary" :loading="submitting" @click="submitCreateTask">创建任务</el-button>
+        <el-button v-else type="primary" :loading="submitting" @click="submitCreateTask">{{ dialogSubmitLabel }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -366,6 +368,7 @@ import {
   STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
   STRATEGY_TASK_STATUS_LABELS,
+  updateStrategySceneTask,
   updateStrategySceneTaskStatus,
 } from '@/mocks/strategyV2'
 import type {
@@ -388,6 +391,8 @@ const activeScene = ref<StrategySceneType>('listen')
 const selectedTaskId = ref('')
 const createDialogVisible = ref(false)
 const createStepIndex = ref(0)
+const dialogMode = ref<'create' | 'edit'>('create')
+const editingTaskId = ref('')
 const submitting = ref(false)
 const overview = ref({
   strategyCount: 0,
@@ -460,6 +465,8 @@ const avgActionCount = computed(() => {
   return (filteredTasks.value.reduce((sum, item) => sum + item.actions.length, 0) / filteredTasks.value.length).toFixed(1)
 })
 const currentCreateStep = computed(() => createStepItems[createStepIndex.value])
+const dialogTitle = computed(() => (dialogMode.value === 'edit' ? '编辑 V2 场景任务' : '新建 V2 场景任务'))
+const dialogSubmitLabel = computed(() => (dialogMode.value === 'edit' ? '保存修改' : '创建任务'))
 const selectedFormStrategy = computed(() => {
   return strategyOptions.value.find((item) => item.strategy_key === taskForm.strategy_key) || null
 })
@@ -506,6 +513,7 @@ function hydrateFromQuery(): void {
   const scene = String(route.query.scene || '').trim() as StrategySceneType
   const strategy = String(route.query.strategy || '').trim()
   const autoCreate = String(route.query.autoCreate || '') === '1'
+  const editTaskId = String(route.query.editTask || '').trim()
 
   if (scene && ['scan', 'listen', 'backtest', 'sim_trade'].includes(scene)) {
     activeScene.value = scene
@@ -517,10 +525,17 @@ function hydrateFromQuery(): void {
   if (autoCreate) {
     openCreateDialog({ scene, strategy })
     router.replace({ name: 'StrategyTaskCenterV2', query: { scene, strategy } })
+    return
+  }
+  if (editTaskId) {
+    openEditDialog(editTaskId)
+    router.replace({ name: 'StrategyTaskCenterV2', query: { scene } })
   }
 }
 
 function openCreateDialog(preset?: { scene?: string; strategy?: string }): void {
+  dialogMode.value = 'create'
+  editingTaskId.value = ''
   taskForm.name = ''
   taskForm.scene_type = (preset?.scene as StrategySceneType) || activeScene.value
   taskForm.strategy_key = preset?.strategy || taskForm.strategy_key || strategyOptions.value[0]?.strategy_key || ''
@@ -528,6 +543,25 @@ function openCreateDialog(preset?: { scene?: string; strategy?: string }): void 
   taskForm.schedule_label = defaultSchedule(taskForm.scene_type)
   taskForm.notes = ''
   taskForm.actions = defaultActions(taskForm.scene_type)
+  createStepIndex.value = 0
+  createDialogVisible.value = true
+}
+
+function openEditDialog(taskId: string): void {
+  const task = tasks.value.find((item) => item.task_id === taskId)
+  if (!task) {
+    ElMessage.warning('任务不存在')
+    return
+  }
+  dialogMode.value = 'edit'
+  editingTaskId.value = task.task_id
+  taskForm.name = task.name
+  taskForm.scene_type = task.scene_type
+  taskForm.strategy_key = task.strategy_key
+  taskForm.target_scope_summary = task.target_scope_summary
+  taskForm.schedule_label = task.schedule_label
+  taskForm.notes = task.notes || ''
+  taskForm.actions = task.actions.map((item) => item.action_type)
   createStepIndex.value = 0
   createDialogVisible.value = true
 }
@@ -621,20 +655,30 @@ async function submitCreateTask(): Promise<void> {
 
   submitting.value = true
   try {
-    const created = await createStrategySceneTask({
+    const payload = {
       ...taskForm,
       name: taskForm.name.trim(),
       target_scope_summary: taskForm.target_scope_summary.trim(),
       schedule_label: taskForm.schedule_label.trim(),
       notes: taskForm.notes?.trim(),
       actions: [...taskForm.actions],
-    })
+    }
+    const task =
+      dialogMode.value === 'edit' && editingTaskId.value
+        ? await updateStrategySceneTask(editingTaskId.value, payload)
+        : await createStrategySceneTask(payload)
+
+    if (!task) {
+      ElMessage.error(dialogMode.value === 'edit' ? '任务更新失败' : '任务创建失败')
+      return
+    }
+
     await refreshPage()
-    activeScene.value = created.scene_type
-    selectedTaskId.value = created.task_id
+    activeScene.value = task.scene_type
+    selectedTaskId.value = task.task_id
     createDialogVisible.value = false
-    ElMessage.success('V2 任务已创建')
-    router.push({ name: 'StrategyTaskDetailV2', params: { taskId: created.task_id } })
+    ElMessage.success(dialogMode.value === 'edit' ? 'V2 任务已更新' : 'V2 任务已创建')
+    router.push({ name: 'StrategyTaskDetailV2', params: { taskId: task.task_id } })
   } finally {
     submitting.value = false
   }
