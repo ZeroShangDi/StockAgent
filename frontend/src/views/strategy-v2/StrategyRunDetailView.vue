@@ -167,6 +167,23 @@
             </article>
           </div>
         </section>
+
+        <section class="console-panel">
+          <div class="section-title-row compact">
+            <div>
+              <span class="section-kicker">后续动作</span>
+              <h3>{{ followupTitle }}</h3>
+            </div>
+          </div>
+          <div class="followup-grid">
+            <article v-for="card in followupCards" :key="card.title" class="followup-card">
+              <span>{{ card.kicker }}</span>
+              <strong>{{ card.title }}</strong>
+              <p>{{ card.description }}</p>
+              <el-button size="small" @click="openFollowup(card.routeName)">{{ card.actionLabel }}</el-button>
+            </article>
+          </div>
+        </section>
       </aside>
     </section>
   </div>
@@ -202,6 +219,86 @@ const prioritizedItems = computed(() => {
     .sort((a, b) => b.score - a.score)
     .slice(0, 4)
 })
+const followupTitle = computed(() => {
+  if (!run.value) return '这次运行之后去哪里'
+  if (run.value.scene_type === 'scan') return '候选承接与人工复核'
+  if (run.value.scene_type === 'listen') return '流转复核与任务回看'
+  if (run.value.scene_type === 'backtest') return '交割单分析与样本对照'
+  return '模拟结果分析与持仓复盘'
+})
+const followupCards = computed(() => {
+  if (!run.value) return []
+  if (run.value.scene_type === 'scan') {
+    return [
+      {
+        kicker: '候选承接',
+        title: '去现有股池继续筛',
+        description: '扫描结果的重点不是直接交易，而是把高质量候选先放进股池继续流转和复盘。',
+        routeName: 'StockPools',
+        actionLabel: '打开股池',
+      },
+      {
+        kicker: '运行回看',
+        title: `${run.value.signal_breakdown.positive} 个正向候选待复核`,
+        description: '结合强度、标签和动作结果，先确认哪些应该保留在临时列表里继续看。',
+        routeName: 'StrategyTaskDetailV2',
+        actionLabel: '返回任务',
+      },
+    ]
+  }
+  if (run.value.scene_type === 'listen') {
+    return [
+      {
+        kicker: '业务落点',
+        title: '检查池内流转结果',
+        description: '监听任务最重要的是触发之后有没有真的落到池内变化或提醒动作。',
+        routeName: 'StockPools',
+        actionLabel: '查看股池',
+      },
+      {
+        kicker: '回到任务',
+        title: `${reviewNeededCount.value} 个对象建议复核`,
+        description: '优先检查被冷却拦下或需要人工确认的对象，避免只看通知数量。',
+        routeName: 'StrategyTaskDetailV2',
+        actionLabel: '返回任务',
+      },
+    ]
+  }
+  if (run.value.scene_type === 'backtest') {
+    return [
+      {
+        kicker: '分析闭环',
+        title: run.value.related_trade_review_group_name || '打开交割单分析',
+        description: '回测的价值在于继续看盈亏分布、胜率和模式归因，而不是停留在这页摘要。',
+        routeName: 'TradeReview',
+        actionLabel: '打开交割单',
+      },
+      {
+        kicker: '任务回放',
+        title: `${skippedCount.value} 个中性样本可做对照`,
+        description: '未触发样本也很重要，它们能帮助判断当前策略阈值是否过宽或过严。',
+        routeName: 'StrategyTaskDetailV2',
+        actionLabel: '返回任务',
+      },
+    ]
+  }
+  return [
+    {
+      kicker: '结果分析',
+      title: run.value.related_trade_review_group_name || '进入模拟交易分析',
+      description: '模拟交易最终还是要进入交割单分析页，才有后续复盘和归因价值。',
+      routeName: 'TradeReview',
+      actionLabel: '打开交割单',
+    },
+    {
+      kicker: '持仓复核',
+      title: `${reviewNeededCount.value} 个风险或待确认对象`,
+      description: '优先处理预警对象和模拟卖出结果，再决定是否同步加入后续复盘链路。',
+      routeName: 'StrategyTaskDetailV2',
+      actionLabel: '返回任务',
+    },
+  ]
+})
 
 onMounted(async () => {
   const runId = String(route.params.runId || '')
@@ -212,6 +309,15 @@ onMounted(async () => {
 function openTask(): void {
   if (!run.value) return
   router.push({ name: 'StrategyTaskDetailV2', params: { taskId: run.value.task_id } })
+}
+
+function openFollowup(routeName: string): void {
+  if (!run.value) return
+  if (routeName === 'StrategyTaskDetailV2') {
+    router.push({ name: routeName, params: { taskId: run.value.task_id } })
+    return
+  }
+  router.push({ name: routeName })
 }
 
 function runStatusLabel(status: StrategyRunStatus): string {
@@ -416,7 +522,8 @@ function signalClass(value: StrategySignalValue): string {
 }
 
 .context-list,
-.focus-list {
+.focus-list,
+.followup-grid {
   display: grid;
   gap: 12px;
 }
@@ -453,6 +560,37 @@ function signalClass(value: StrategySignalValue): string {
 .focus-card {
   border-radius: 18px;
   padding: 14px;
+}
+
+.followup-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.followup-card {
+  border-radius: 18px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.82);
+  padding: 14px;
+}
+
+.followup-card span,
+.followup-card p {
+  color: var(--ink-soft);
+}
+
+.followup-card span {
+  display: block;
+  font-size: 12px;
+}
+
+.followup-card strong {
+  display: block;
+  margin: 6px 0 8px;
+}
+
+.followup-card p {
+  margin: 0 0 12px;
+  line-height: 1.7;
 }
 
 .focus-head {
@@ -498,7 +636,8 @@ function signalClass(value: StrategySignalValue): string {
   .summary-strip,
   .workspace-shell,
   .signal-grid,
-  .review-grid {
+  .review-grid,
+  .followup-grid {
     grid-template-columns: 1fr;
   }
 
