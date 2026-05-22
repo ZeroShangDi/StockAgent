@@ -140,6 +140,23 @@
             </article>
           </div>
         </section>
+
+        <section v-if="focusCards.length > 0" class="console-panel">
+          <div class="section-title-row compact">
+            <div>
+              <span class="section-kicker">场景焦点</span>
+              <h3>{{ focusSectionTitle }}</h3>
+            </div>
+          </div>
+
+          <div class="focus-grid">
+            <article v-for="card in focusCards" :key="card.title" class="focus-card">
+              <span>{{ card.kicker }}</span>
+              <strong>{{ card.title }}</strong>
+              <p>{{ card.description }}</p>
+            </article>
+          </div>
+        </section>
       </main>
 
       <aside class="inspector-column">
@@ -254,6 +271,72 @@ const paramsEntries = computed(() => {
 })
 
 const latestRun = computed(() => runs.value[0] || null)
+const skippedItems = computed(() => latestRunItems.value.filter((item) => item.action_result.includes('无动作') || item.action_result.includes('跳过')))
+const negativeItems = computed(() => latestRunItems.value.filter((item) => item.signal === -1))
+const focusSectionTitle = computed(() => {
+  if (!task.value) return '当前场景重点'
+  if (task.value.scene_type === 'scan') return '候选去留与人工复核'
+  if (task.value.scene_type === 'listen') return '触发、冷却与流转结果'
+  if (task.value.scene_type === 'backtest') return '交割单写入与回放摘要'
+  return '持仓变化与风险结果'
+})
+const focusCards = computed(() => {
+  if (!task.value || !latestRun.value) return []
+  if (task.value.scene_type === 'scan') {
+    return [
+      {
+        kicker: '候选数量',
+        title: `${latestRun.value.signal_breakdown.positive} 个正向候选`,
+        description: '优先把高强度候选送进股池，再决定哪些保留在临时列表中继续观察。',
+      },
+      {
+        kicker: '人工复核',
+        title: `${skippedItems.value.length} 个待继续确认`,
+        description: '扫描任务的重点不是立即交易，而是把不确定但有价值的对象先承接住。',
+      },
+    ]
+  }
+  if (task.value.scene_type === 'listen') {
+    return [
+      {
+        kicker: '触发结果',
+        title: `${latestRun.value.signal_breakdown.positive + latestRun.value.signal_breakdown.negative} 个有效触发`,
+        description: '监听任务要重点核对已通知、已流转以及被冷却机制拦下的对象。',
+      },
+      {
+        kicker: '跳过与冷却',
+        title: `${skippedItems.value.length} 个无动作或跳过`,
+        description: '这些对象最适合检查频率控制、动作条件或池内流转规则是否过严。',
+      },
+    ]
+  }
+  if (task.value.scene_type === 'backtest') {
+    return [
+      {
+        kicker: '回放结果',
+        title: latestRun.value.related_trade_review_group_name || '等待交割单结果',
+        description: '回测任务最终价值在于把结果送进交割单分析，而不是停留在本页摘要。',
+      },
+      {
+        kicker: '中性样本',
+        title: `${skippedItems.value.length} 个未触发保持样本`,
+        description: '这类未触发样本适合后面做分组对照，判断策略是否过于宽松或严格。',
+      },
+    ]
+  }
+  return [
+    {
+      kicker: '风险对象',
+      title: `${negativeItems.value.length} 个负向或预警对象`,
+      description: '模拟交易任务要优先看预警对象和模拟卖出结果，再决定是否要同步复盘。',
+    },
+    {
+      kicker: '结果落点',
+      title: latestRun.value.related_trade_review_group_name || '模拟结果待分析',
+      description: '持仓演进的价值在于把每日动作沉淀到分析链路里，便于后续复盘归因。',
+    },
+  ]
+})
 const destinationCards = computed(() => {
   if (!task.value) return []
   if (task.value.scene_type === 'scan') {
@@ -592,6 +675,12 @@ function signalClass(value: StrategySignalValue): string {
   gap: 12px;
 }
 
+.focus-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .config-row {
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line-soft);
@@ -623,21 +712,31 @@ function signalClass(value: StrategySignalValue): string {
   padding: 14px;
 }
 
+.focus-card span,
 .destination-card span {
   display: block;
   color: var(--ink-soft);
   font-size: 12px;
 }
 
+.focus-card strong,
 .destination-card strong {
   display: block;
   margin: 6px 0 8px;
 }
 
+.focus-card p,
 .destination-card p {
   margin: 0 0 12px;
   color: var(--ink-soft);
   line-height: 1.7;
+}
+
+.focus-card {
+  border-radius: 18px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.76);
+  padding: 14px;
 }
 
 .item-head strong {
@@ -681,7 +780,8 @@ function signalClass(value: StrategySignalValue): string {
   .status-grid,
   .metric-list,
   .param-list,
-  .item-grid {
+  .item-grid,
+  .focus-grid {
     grid-template-columns: 1fr;
   }
 

@@ -123,6 +123,7 @@
               </div>
               <div class="row-actions">
                 <el-button size="small" @click.stop="goDetail(task.task_id)">详情</el-button>
+                <el-button v-if="task.last_run_id" size="small" @click.stop="openLatestTaskRun(task)">最近运行</el-button>
                 <el-button size="small" plain @click.stop="openEditDialog(task.task_id)">编辑</el-button>
                 <el-button
                   size="small"
@@ -175,6 +176,7 @@
           <p class="inspector-notes">{{ selectedTask.notes || '当前没有额外说明。' }}</p>
           <div class="quick-actions">
             <el-button type="primary" @click="goDetail(selectedTask.task_id)">查看详情</el-button>
+            <el-button v-if="selectedTask.last_run_id" @click="openLatestTaskRun(selectedTask)">最近运行</el-button>
             <el-button plain @click="openEditDialog(selectedTask.task_id)">编辑任务</el-button>
             <el-button :type="selectedTask.status === 'active' ? 'warning' : 'success'" plain @click="toggleTaskStatus(selectedTask)">
               {{ statusActionLabel(selectedTask.status) }}
@@ -693,6 +695,11 @@ async function handleRun(taskId: string): Promise<void> {
   await refreshPage()
   ElMessage.success('已生成一条新的运行记录')
   router.push({ name: 'StrategyRunDetailV2', params: { runId: run.run_id } })
+}
+
+function openLatestTaskRun(task: StrategySceneTask): void {
+  if (!task.last_run_id) return
+  router.push({ name: 'StrategyRunDetailV2', params: { runId: task.last_run_id } })
 }
 
 async function toggleTaskStatus(task: StrategySceneTask): Promise<void> {
