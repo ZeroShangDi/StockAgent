@@ -3,153 +3,237 @@
     <section class="hero-card">
       <div>
         <p class="eyebrow">Strategy Tasks V2</p>
-        <h1>场景任务中心 V2</h1>
+        <h1>任务控制台</h1>
         <p class="description">
-          任务才是 V2 的业务主对象。策略保持纯函数，任务负责目标范围、调度、动作与运行结果。
+          这里不是“策略展示页”，而是日常工作台。你在这里决定哪个策略挂到哪个场景、扫什么范围、触发后要做什么动作。
         </p>
       </div>
       <div class="hero-actions">
-        <el-button @click="router.push({ name: 'StrategyCenterV2' })">策略中心</el-button>
-        <el-button type="primary" @click="openCreateDialog()">新建任务</el-button>
+        <el-button @click="router.push({ name: 'StrategyCenterV2' })">查看策略定义</el-button>
+        <el-button type="primary" @click="openCreateDialog()">创建任务</el-button>
       </div>
     </section>
 
-    <section class="stats-grid">
+    <section class="top-stats">
       <article class="stat-card">
-        <span>任务总数</span>
+        <span>全部任务</span>
         <strong>{{ tasks.length }}</strong>
       </article>
       <article class="stat-card">
-        <span>运行中任务</span>
+        <span>运行中</span>
         <strong>{{ activeTaskCount }}</strong>
       </article>
       <article class="stat-card">
-        <span>最近运行数</span>
+        <span>有最近运行</span>
         <strong>{{ recentRunCount }}</strong>
       </article>
       <article class="stat-card">
-        <span>高优先动作</span>
+        <span>动作密度</span>
         <strong>{{ priorityActionCount }}</strong>
       </article>
     </section>
 
-    <section class="control-bar">
-      <el-tabs v-model="activeScene">
-        <el-tab-pane v-for="scene in sceneTabs" :key="scene.value" :label="scene.label" :name="scene.value" />
-      </el-tabs>
-      <div class="control-actions">
-        <el-input v-model="keyword" clearable placeholder="搜索任务名称 / 策略 / 标签" />
-      </div>
-    </section>
-
-    <section class="task-grid">
-      <article v-for="task in filteredTasks" :key="task.task_id" class="task-card">
-        <div class="task-head">
+    <section class="workspace-shell">
+      <aside class="scene-rail">
+        <div class="rail-head">
+          <span class="rail-kicker">场景视图</span>
+          <h2>Scenes</h2>
+        </div>
+        <button
+          v-for="scene in sceneTabs"
+          :key="scene.value"
+          type="button"
+          :class="['scene-button', { active: activeScene === scene.value }]"
+          @click="activeScene = scene.value"
+        >
           <div>
-            <div class="task-title-row">
-              <h3>{{ task.name }}</h3>
-              <el-tag :type="statusTagType(task.status)" effect="plain" round>
-                {{ statusLabels[task.status] }}
-              </el-tag>
-            </div>
-            <p class="task-subtitle">{{ sceneLabels[task.scene_type] }} · {{ task.strategy_name }}</p>
+            <strong>{{ scene.label }}</strong>
+            <small>{{ sceneHint(scene.value) }}</small>
           </div>
-          <div class="task-score">
-            <span>最近信号</span>
-            <strong>{{ task.last_signal_count }}</strong>
+          <span>{{ taskCountByScene(scene.value) }}</span>
+        </button>
+      </aside>
+
+      <section class="board-panel">
+        <div class="board-toolbar">
+          <div class="toolbar-main">
+            <span class="panel-kicker">当前场景</span>
+            <h2>{{ sceneLabels[activeScene] }}</h2>
+          </div>
+          <div class="toolbar-actions">
+            <el-input v-model="keyword" clearable placeholder="搜索任务 / 策略 / 标签" />
+            <el-button type="primary" @click="openCreateDialog()">新建任务</el-button>
           </div>
         </div>
 
-        <div class="task-body">
-          <div class="meta-row">
-            <span class="meta-label">目标范围</span>
-            <strong>{{ task.target_scope_summary }}</strong>
+        <div class="board-strip">
+          <div class="strip-chip">
+            <span>当前场景任务</span>
+            <strong>{{ filteredTasks.length }}</strong>
           </div>
-          <div class="meta-row">
-            <span class="meta-label">调度</span>
-            <strong>{{ task.schedule_label }}</strong>
+          <div class="strip-chip">
+            <span>激活任务</span>
+            <strong>{{ filteredTasks.filter(item => item.status === 'active').length }}</strong>
           </div>
-          <div class="meta-row">
-            <span class="meta-label">动作</span>
-            <div class="tag-row">
-              <span v-for="action in task.actions" :key="action.action_id" class="tag-chip">
-                {{ action.label }}
-              </span>
-            </div>
+          <div class="strip-chip">
+            <span>平均动作数</span>
+            <strong>{{ avgActionCount }}</strong>
           </div>
-          <p class="task-notes">{{ task.notes || '当前未填写任务说明。' }}</p>
+          <div class="strip-chip muted">
+            <span>工作建议</span>
+            <strong>{{ sceneSuggestion }}</strong>
+          </div>
         </div>
 
-        <div class="task-footer">
-          <div class="footer-meta">
-            <span>更新于 {{ task.updated_at }}</span>
-            <span v-if="task.last_run_status">最近运行 {{ runStatusLabel(task.last_run_status) }}</span>
+        <div class="task-list">
+          <button
+            v-for="task in filteredTasks"
+            :key="task.task_id"
+            type="button"
+            :class="['task-row', { active: task.task_id === selectedTaskId }]"
+            @click="selectedTaskId = task.task_id"
+          >
+            <div class="task-row-main">
+              <div class="task-title-line">
+                <strong>{{ task.name }}</strong>
+                <el-tag :type="statusTagType(task.status)" effect="plain" round>
+                  {{ statusLabels[task.status] }}
+                </el-tag>
+              </div>
+              <div class="task-sub-line">
+                <span>{{ task.strategy_name }}</span>
+                <span>·</span>
+                <span>{{ task.target_scope_summary }}</span>
+              </div>
+              <div class="task-action-line">
+                <span v-for="action in task.actions" :key="action.action_id" class="action-chip">
+                  {{ action.label }}
+                </span>
+              </div>
+            </div>
+
+            <div class="task-row-side">
+              <div class="metric-block">
+                <span>最近信号</span>
+                <strong>{{ task.last_signal_count }}</strong>
+              </div>
+              <div class="meta-stack">
+                <span>{{ task.schedule_label }}</span>
+                <span v-if="task.last_run_status">最近运行 {{ runStatusLabel(task.last_run_status) }}</span>
+              </div>
+              <div class="row-actions">
+                <el-button size="small" @click.stop="goDetail(task.task_id)">详情</el-button>
+                <el-button size="small" type="primary" plain @click.stop="handleRun(task.task_id)">运行</el-button>
+              </div>
+            </div>
+          </button>
+
+          <el-empty v-if="filteredTasks.length === 0" description="当前场景下还没有任务，可以先新建一条任务。" />
+        </div>
+      </section>
+
+      <aside class="inspector-panel">
+        <div class="panel-block">
+          <span class="panel-kicker">工作上下文</span>
+          <h2>{{ sceneLabels[activeScene] }}</h2>
+          <p>{{ sceneDetail(activeScene) }}</p>
+        </div>
+
+        <div v-if="selectedTask" class="panel-block emphasis">
+          <div class="inspector-head">
+            <div>
+              <span class="panel-kicker">当前聚焦</span>
+              <h3>{{ selectedTask.name }}</h3>
+            </div>
+            <el-tag :type="statusTagType(selectedTask.status)" effect="plain" round>
+              {{ statusLabels[selectedTask.status] }}
+            </el-tag>
           </div>
-          <div class="footer-actions">
-            <el-button size="small" @click="goDetail(task.task_id)">详情</el-button>
-            <el-button
-              size="small"
-              type="primary"
-              plain
-              @click="handleRun(task.task_id)"
-            >
-              手动运行
-            </el-button>
-            <el-dropdown trigger="click" @command="(value: string) => handleStatusCommand(task.task_id, value)">
-              <el-button size="small">
-                更多
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="active">启用</el-dropdown-item>
-                  <el-dropdown-item command="paused">暂停</el-dropdown-item>
-                  <el-dropdown-item command="draft">设为草稿</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+          <div class="inspector-meta">
+            <div>
+              <span>策略</span>
+              <strong>{{ selectedTask.strategy_name }}</strong>
+            </div>
+            <div>
+              <span>范围</span>
+              <strong>{{ selectedTask.target_scope_summary }}</strong>
+            </div>
+            <div>
+              <span>调度</span>
+              <strong>{{ selectedTask.schedule_label }}</strong>
+            </div>
+          </div>
+          <p class="inspector-notes">{{ selectedTask.notes || '当前没有额外说明。' }}</p>
+          <div class="quick-actions">
+            <el-button type="primary" @click="goDetail(selectedTask.task_id)">查看详情</el-button>
+            <el-button @click="handleRun(selectedTask.task_id)">立即运行</el-button>
           </div>
         </div>
-      </article>
+
+        <div class="panel-block">
+          <span class="panel-kicker">任务原则</span>
+          <div class="principle-list">
+            <article class="principle-card">
+              <strong>策略负责判断</strong>
+              <p>不要在策略定义里直接写通知、入池、流转。</p>
+            </article>
+            <article class="principle-card">
+              <strong>任务负责动作</strong>
+              <p>任务把同一策略挂到不同目标范围和动作上。</p>
+            </article>
+            <article class="principle-card">
+              <strong>运行负责反馈</strong>
+              <p>最终要回到运行结果页复盘，而不是停留在配置本身。</p>
+            </article>
+          </div>
+        </div>
+      </aside>
     </section>
 
-    <el-empty v-if="filteredTasks.length === 0" description="当前筛选条件下还没有任务，可以先创建一条 V2 任务。" />
+    <el-dialog v-model="createDialogVisible" title="新建 V2 场景任务" width="760px" :close-on-click-modal="false">
+      <div class="dialog-shell">
+        <section class="form-panel">
+          <el-form label-position="top">
+            <el-form-item label="任务名称">
+              <el-input v-model="taskForm.name" placeholder="例如：主线盘口监听 / MA5 候选入池" />
+            </el-form-item>
+            <el-form-item label="场景类型">
+              <el-select v-model="taskForm.scene_type" style="width: 100%">
+                <el-option v-for="scene in sceneTabs" :key="scene.value" :label="scene.label" :value="scene.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="策略">
+              <el-select v-model="taskForm.strategy_key" style="width: 100%">
+                <el-option
+                  v-for="strategy in strategyOptions"
+                  :key="strategy.strategy_key"
+                  :label="strategy.name"
+                  :value="strategy.strategy_key"
+                >
+                  <div class="strategy-option">
+                    <span>{{ strategy.name }}</span>
+                    <small>{{ strategy.description }}</small>
+                  </div>
+                </el-option>
+              </el-select>
+            </el-form-item>
+            <el-form-item label="目标范围">
+              <el-input v-model="taskForm.target_scope_summary" placeholder="例如：观察池 + 自选股 / 全市场 · 排除 ST" />
+            </el-form-item>
+            <el-form-item label="调度方式">
+              <el-input v-model="taskForm.schedule_label" placeholder="例如：交易时段每 1 分钟轮询" />
+            </el-form-item>
+            <el-form-item label="任务说明">
+              <el-input v-model="taskForm.notes" type="textarea" :rows="3" placeholder="说明这个任务在链路中的角色，例如入池前筛选、盘中确认、历史回放。" />
+            </el-form-item>
+          </el-form>
+        </section>
 
-    <el-dialog v-model="createDialogVisible" title="新建场景任务 V2" width="680px" :close-on-click-modal="false">
-      <div class="dialog-grid">
-        <el-form label-position="top">
-          <el-form-item label="任务名称">
-            <el-input v-model="taskForm.name" placeholder="例如：盘口异动监听 V2" />
-          </el-form-item>
-          <el-form-item label="场景类型">
-            <el-select v-model="taskForm.scene_type" style="width: 100%">
-              <el-option v-for="scene in sceneTabs" :key="scene.value" :label="scene.label" :value="scene.value" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="策略">
-            <el-select v-model="taskForm.strategy_key" style="width: 100%">
-              <el-option v-for="strategy in strategyOptions" :key="strategy.strategy_key" :label="strategy.name" :value="strategy.strategy_key">
-                <div class="strategy-option">
-                  <span>{{ strategy.name }}</span>
-                  <small>{{ strategy.description }}</small>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item label="目标范围">
-            <el-input v-model="taskForm.target_scope_summary" placeholder="例如：观察池 + 自选股" />
-          </el-form-item>
-          <el-form-item label="调度方式">
-            <el-input v-model="taskForm.schedule_label" placeholder="例如：交易时段每 1 分钟轮询" />
-          </el-form-item>
-          <el-form-item label="任务说明">
-            <el-input v-model="taskForm.notes" type="textarea" :rows="3" placeholder="说明这个任务在策略链路中的角色。" />
-          </el-form-item>
-        </el-form>
-
-        <section class="action-section">
-          <div class="section-header">
-            <h3>任务动作</h3>
-            <span>场景来解释策略信号并执行动作</span>
+        <section class="action-panel">
+          <div class="panel-block compact">
+            <span class="panel-kicker">任务动作</span>
+            <h3>信号触发后做什么</h3>
+            <p>动作不属于策略，而属于场景任务。</p>
           </div>
           <el-checkbox-group v-model="taskForm.actions" class="action-grid">
             <el-checkbox v-for="item in actionOptions" :key="item.value" :label="item.value">
@@ -184,7 +268,6 @@ import {
   STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
   STRATEGY_TASK_STATUS_LABELS,
-  updateStrategySceneTaskStatus,
 } from '@/mocks/strategyV2'
 import type {
   CreateStrategySceneTaskInput,
@@ -203,6 +286,7 @@ const tasks = ref<StrategySceneTask[]>([])
 const strategyOptions = ref<StrategyDefinition[]>([])
 const keyword = ref('')
 const activeScene = ref<StrategySceneType>('listen')
+const selectedTaskId = ref('')
 const createDialogVisible = ref(false)
 const submitting = ref(false)
 const overview = ref({
@@ -254,9 +338,25 @@ const filteredTasks = computed(() => {
   })
 })
 
+const selectedTask = computed(() => {
+  return filteredTasks.value.find((item) => item.task_id === selectedTaskId.value)
+    || filteredTasks.value[0]
+    || null
+})
+
 const activeTaskCount = computed(() => tasks.value.filter((item) => item.status === 'active').length)
 const recentRunCount = computed(() => tasks.value.filter((item) => !!item.last_run_id).length)
 const priorityActionCount = computed(() => tasks.value.reduce((sum, item) => sum + item.actions.length, 0))
+const avgActionCount = computed(() => {
+  if (filteredTasks.value.length === 0) return '0'
+  return (filteredTasks.value.reduce((sum, item) => sum + item.actions.length, 0) / filteredTasks.value.length).toFixed(1)
+})
+const sceneSuggestion = computed(() => {
+  if (activeScene.value === 'listen') return '优先整理异常触发和冷却逻辑'
+  if (activeScene.value === 'scan') return '把候选先送池，再做人工确认'
+  if (activeScene.value === 'backtest') return '先看结果写入交割单链路是否通'
+  return '重点看持仓变化和动作记录'
+})
 
 onMounted(async () => {
   await refreshPage()
@@ -269,6 +369,16 @@ watch(
     hydrateFromQuery()
   },
 )
+
+watch(filteredTasks, (value) => {
+  if (!value.length) {
+    selectedTaskId.value = ''
+    return
+  }
+  if (!value.find((item) => item.task_id === selectedTaskId.value)) {
+    selectedTaskId.value = value[0].task_id
+  }
+}, { immediate: true })
 
 async function refreshPage(): Promise<void> {
   tasks.value = await listStrategySceneTasks()
@@ -289,10 +399,7 @@ function hydrateFromQuery(): void {
     taskForm.strategy_key = strategy
   }
   if (autoCreate) {
-    openCreateDialog({
-      scene,
-      strategy,
-    })
+    openCreateDialog({ scene, strategy })
     router.replace({ name: 'StrategyTaskCenterV2', query: { scene, strategy } })
   }
 }
@@ -358,6 +465,7 @@ async function submitCreateTask(): Promise<void> {
     })
     await refreshPage()
     activeScene.value = created.scene_type
+    selectedTaskId.value = created.task_id
     createDialogVisible.value = false
     ElMessage.success('V2 任务已创建')
     router.push({ name: 'StrategyTaskDetailV2', params: { taskId: created.task_id } })
@@ -377,13 +485,6 @@ async function handleRun(taskId: string): Promise<void> {
   router.push({ name: 'StrategyRunDetailV2', params: { runId: run.run_id } })
 }
 
-async function handleStatusCommand(taskId: string, value: string): Promise<void> {
-  const nextStatus = value as StrategyTaskStatus
-  await updateStrategySceneTaskStatus(taskId, nextStatus)
-  await refreshPage()
-  ElMessage.success(`任务已更新为${statusLabels[nextStatus]}`)
-}
-
 function goDetail(taskId: string): void {
   router.push({ name: 'StrategyTaskDetailV2', params: { taskId } })
 }
@@ -401,24 +502,49 @@ function runStatusLabel(status: StrategyRunStatus): string {
   if (status === 'failed') return '失败'
   return '运行中'
 }
+
+function taskCountByScene(scene: StrategySceneType): number {
+  return tasks.value.filter((item) => item.scene_type === scene).length
+}
+
+function sceneHint(scene: StrategySceneType): string {
+  if (scene === 'listen') return '盘中轮询与动作联动'
+  if (scene === 'scan') return '候选扫描与入池'
+  if (scene === 'backtest') return '历史回放与验证'
+  return '持续更新持仓结果'
+}
+
+function sceneDetail(scene: StrategySceneType): string {
+  if (scene === 'listen') return '监听任务最接近日常盘中操作，应优先体现频率、动作和最近异常。'
+  if (scene === 'scan') return '选股任务更像候选生成器，重点不是立即买，而是先形成可流转的观察对象。'
+  if (scene === 'backtest') return '回测任务需要强调区间、交易配置与交割单结果的闭环，而不是只看配置。'
+  return '模拟交易任务更像持仓演进记录台，重点看每日变化、风险提醒和动作留痕。'
+}
 </script>
 
 <style scoped>
 .task-center-page {
+  --surface-1: linear-gradient(180deg, rgba(252, 253, 255, 0.98), rgba(246, 248, 252, 0.95));
+  --surface-2: rgba(255, 255, 255, 0.78);
+  --line-strong: rgba(42, 82, 190, 0.22);
+  --line-soft: rgba(15, 23, 42, 0.08);
+  --accent: #2f5fd0;
+  --ink-soft: #5b6473;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 .hero-card,
 .stat-card,
-.task-card,
-.control-bar {
-  border: 1px solid var(--el-border-color-lighter);
-  background:
-    radial-gradient(circle at top right, rgba(46, 125, 255, 0.12), transparent 28%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(246, 248, 252, 0.96));
-  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.08);
+.scene-rail,
+.board-panel,
+.inspector-panel,
+.panel-block,
+.task-row {
+  border: 1px solid var(--line-soft);
+  background: var(--surface-1);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.07);
 }
 
 .hero-card {
@@ -429,24 +555,30 @@ function runStatusLabel(status: StrategyRunStatus): string {
   gap: 24px;
 }
 
-.eyebrow {
+.eyebrow,
+.panel-kicker,
+.rail-kicker {
   margin: 0 0 10px;
-  font-size: 12px;
-  text-transform: uppercase;
+  font-size: 11px;
   letter-spacing: 0.18em;
-  color: #4b6cb7;
+  text-transform: uppercase;
+  color: #6274b7;
 }
 
-.hero-card h1 {
+.hero-card h1,
+.board-toolbar h2,
+.rail-head h2 {
   margin: 0;
   font-size: 34px;
 }
 
-.description {
-  max-width: 760px;
-  margin: 10px 0 0;
+.description,
+.panel-block p,
+.principle-card p,
+.action-option small,
+.strategy-option small {
   line-height: 1.7;
-  color: var(--el-text-color-secondary);
+  color: var(--ink-soft);
 }
 
 .hero-actions {
@@ -455,21 +587,20 @@ function runStatusLabel(status: StrategyRunStatus): string {
   align-items: flex-start;
 }
 
-.stats-grid {
+.top-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
 }
 
 .stat-card {
   border-radius: 22px;
-  padding: 18px 20px;
+  padding: 16px 18px;
 }
 
 .stat-card span {
   display: block;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
+  color: var(--ink-soft);
 }
 
 .stat-card strong {
@@ -478,154 +609,264 @@ function runStatusLabel(status: StrategyRunStatus): string {
   font-size: 28px;
 }
 
-.control-bar {
-  border-radius: 22px;
-  padding: 14px 18px 2px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.control-actions {
-  width: 320px;
-}
-
-.task-grid {
+.workspace-shell {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
   gap: 18px;
+  align-items: start;
 }
 
-.task-card {
-  border-radius: 24px;
-  padding: 20px;
+.scene-rail,
+.board-panel,
+.inspector-panel {
+  border-radius: 28px;
+  padding: 18px;
 }
 
-.task-head,
-.task-footer {
+.scene-rail {
+  position: sticky;
+  top: 84px;
+}
+
+.scene-rail,
+.inspector-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.scene-button {
+  width: 100%;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.72);
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
+  text-align: left;
 }
 
-.task-title-row {
+.scene-button strong,
+.task-title-line strong,
+.inspector-head h3 {
+  display: block;
+}
+
+.scene-button small,
+.task-sub-line,
+.meta-stack,
+.inspector-notes,
+.principle-card p {
+  color: var(--ink-soft);
+}
+
+.scene-button.active {
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, rgba(47, 95, 208, 0.08), rgba(255, 255, 255, 0.88));
+}
+
+.scene-button span:last-child {
+  min-width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(47, 95, 208, 0.12);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.board-toolbar,
+.task-title-line,
+.task-row,
+.inspector-head {
   display: flex;
-  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.board-toolbar {
+  align-items: end;
+}
+
+.toolbar-actions {
+  display: grid;
+  grid-template-columns: 280px auto;
   gap: 10px;
 }
 
-.task-title-row h3 {
-  margin: 0;
+.board-strip {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.strip-chip {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(47, 95, 208, 0.08);
+}
+
+.strip-chip.muted {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.strip-chip span,
+.metric-block span,
+.inspector-meta span {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.strip-chip strong,
+.metric-block strong {
+  display: block;
+  margin-top: 6px;
   font-size: 22px;
 }
 
-.task-subtitle {
-  margin: 8px 0 0;
-  color: #4f67a9;
-  font-size: 13px;
+.task-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
 }
 
-.task-score {
-  min-width: 92px;
-  border-radius: 18px;
-  background: rgba(46, 125, 255, 0.08);
-  padding: 12px;
-  text-align: center;
+.task-row {
+  width: 100%;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.76);
+  text-align: left;
+  align-items: center;
 }
 
-.task-score span {
-  display: block;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+.task-row.active {
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, rgba(47, 95, 208, 0.08), rgba(255, 255, 255, 0.88));
 }
 
-.task-score strong {
-  display: block;
-  margin-top: 6px;
-  font-size: 28px;
+.task-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
 }
 
-.task-body {
-  margin: 18px 0;
+.task-title-line {
+  align-items: center;
 }
 
-.meta-row + .meta-row {
-  margin-top: 12px;
-}
-
-.meta-label {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--el-text-color-secondary);
-}
-
-.tag-row {
+.task-sub-line {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.tag-chip {
-  padding: 5px 10px;
-  border-radius: 999px;
-  background: rgba(46, 125, 255, 0.1);
-  color: #305ec9;
-  font-size: 12px;
-}
-
-.task-notes {
-  margin: 14px 0 0;
-  line-height: 1.7;
-  color: var(--el-text-color-secondary);
-}
-
-.footer-meta {
+.task-action-line,
+.quick-actions {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
-
-.footer-actions {
-  display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.dialog-grid {
+.action-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(47, 95, 208, 0.1);
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.task-row-side {
+  min-width: 260px;
   display: grid;
-  grid-template-columns: 1.15fr 0.85fr;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.metric-block {
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(47, 95, 208, 0.08);
+  text-align: center;
+}
+
+.meta-stack {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.panel-block {
+  border-radius: 22px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.panel-block.emphasis {
+  background: linear-gradient(180deg, rgba(47, 95, 208, 0.08), rgba(255, 255, 255, 0.82));
+}
+
+.panel-block.compact h3,
+.inspector-head h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.inspector-meta {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.inspector-meta strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.inspector-notes {
+  margin: 14px 0;
+}
+
+.principle-list {
+  display: grid;
+  gap: 10px;
+}
+
+.principle-card {
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.principle-card:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.dialog-shell {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
   gap: 20px;
 }
 
-.action-section {
-  border-radius: 20px;
-  border: 1px solid var(--el-border-color-lighter);
+.action-panel {
+  border-radius: 22px;
+  border: 1px solid var(--line-soft);
   background: rgba(255, 255, 255, 0.72);
   padding: 18px;
-}
-
-.section-header h3 {
-  margin: 0;
-  font-size: 18px;
-}
-
-.section-header span {
-  display: block;
-  margin-top: 6px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
 }
 
 .action-grid {
   display: grid;
   gap: 14px;
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
 .action-option {
@@ -634,27 +875,28 @@ function runStatusLabel(status: StrategyRunStatus): string {
   gap: 4px;
 }
 
-.action-option small,
-.strategy-option small {
-  color: var(--el-text-color-secondary);
-}
-
-@media (max-width: 1100px) {
-  .stats-grid,
-  .task-grid,
-  .dialog-grid {
+@media (max-width: 1280px) {
+  .workspace-shell,
+  .top-stats,
+  .board-strip,
+  .dialog-shell {
     grid-template-columns: 1fr;
   }
 
   .hero-card,
-  .control-bar,
-  .task-head,
-  .task-footer {
+  .board-toolbar,
+  .task-row,
+  .task-row-side {
     flex-direction: column;
   }
 
-  .control-actions {
+  .toolbar-actions {
+    grid-template-columns: 1fr;
     width: 100%;
+  }
+
+  .scene-rail {
+    position: static;
   }
 }
 </style>

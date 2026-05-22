@@ -9,87 +9,90 @@
         </p>
       </div>
       <div class="hero-actions">
-        <el-button @click="router.push({ name: 'StrategyTaskCenterV2', query: { scene: task.scene_type } })">返回任务中心</el-button>
-        <el-button type="primary" plain @click="runNow">手动运行</el-button>
+        <el-button @click="router.push({ name: 'StrategyTaskCenterV2', query: { scene: task.scene_type } })">返回任务台</el-button>
+        <el-button type="primary" plain @click="runNow">立即运行</el-button>
         <el-button v-if="latestRun" type="primary" @click="openLatestRun">查看最近运行</el-button>
       </div>
     </section>
 
-    <section class="summary-grid">
-      <article class="summary-card">
+    <section class="top-strip">
+      <article class="strip-card">
         <span>任务状态</span>
         <strong>{{ statusLabels[task.status] }}</strong>
       </article>
-      <article class="summary-card">
-        <span>策略</span>
-        <strong>{{ task.strategy_name }}</strong>
-      </article>
-      <article class="summary-card">
-        <span>最近信号</span>
+      <article class="strip-card">
+        <span>最近信号数</span>
         <strong>{{ task.last_signal_count }}</strong>
       </article>
-      <article class="summary-card">
-        <span>调度</span>
+      <article class="strip-card">
+        <span>调度方式</span>
         <strong>{{ task.schedule_label }}</strong>
+      </article>
+      <article class="strip-card emphasis" v-if="latestRun">
+        <span>最近运行</span>
+        <strong>{{ latestRun.title }}</strong>
       </article>
     </section>
 
-    <section class="body-grid">
-      <div class="left-column">
-        <section class="panel-card">
-          <header class="panel-header">
-            <h2>任务配置</h2>
+    <section class="workspace-shell">
+      <main class="operations-column">
+        <section class="console-panel">
+          <div class="section-title-row">
+            <div>
+              <span class="section-kicker">运行视角</span>
+              <h2>当前任务不只是配置，而是一个持续运行的场景容器</h2>
+            </div>
             <el-tag effect="plain" round>{{ sceneLabels[task.scene_type] }}</el-tag>
-          </header>
-          <div class="config-list">
-            <div class="config-item">
+          </div>
+
+          <div class="status-grid">
+            <article class="status-card">
+              <span>策略</span>
+              <strong>{{ task.strategy_name }}</strong>
+            </article>
+            <article class="status-card">
               <span>目标范围</span>
               <strong>{{ task.target_scope_summary }}</strong>
-            </div>
-            <div class="config-item">
-              <span>创建时间</span>
-              <strong>{{ task.created_at }}</strong>
-            </div>
-            <div class="config-item">
-              <span>最后更新</span>
-              <strong>{{ task.updated_at }}</strong>
-            </div>
-          </div>
-          <p class="notes">{{ task.notes || '当前还没有额外的任务说明。' }}</p>
-        </section>
-
-        <section class="panel-card">
-          <header class="panel-header">
-            <h2>参数预览</h2>
-            <span class="panel-tip">当前先展示任务层默认参数</span>
-          </header>
-          <div class="param-grid">
-            <article v-for="item in paramsEntries" :key="item.key" class="param-card">
-              <span>{{ item.key }}</span>
-              <strong>{{ item.value }}</strong>
+            </article>
+            <article class="status-card">
+              <span>动作数量</span>
+              <strong>{{ task.actions.length }}</strong>
             </article>
           </div>
-        </section>
 
-        <section class="panel-card">
-          <header class="panel-header">
-            <h2>任务动作</h2>
-          </header>
-          <div class="action-list">
-            <article v-for="action in task.actions" :key="action.action_id" class="action-card">
-              <strong>{{ action.label }}</strong>
-              <p>{{ action.summary }}</p>
-            </article>
+          <div v-if="latestRun" class="run-brief">
+            <div class="run-brief-head">
+              <div>
+                <span class="section-kicker">最近运行摘要</span>
+                <h3>{{ latestRun.title }}</h3>
+              </div>
+              <el-tag :type="runStatusTagType(latestRun.run_status)" effect="plain" round>
+                {{ runStatusLabel(latestRun.run_status) }}
+              </el-tag>
+            </div>
+            <p>{{ latestRun.summary }}</p>
+            <div class="metric-list">
+              <article v-for="metric in latestRun.summary_metrics" :key="metric.label" class="mini-metric" :class="metric.tone || 'default'">
+                <span>{{ metric.label }}</span>
+                <strong>{{ metric.value }}</strong>
+              </article>
+            </div>
+            <div v-if="latestRun.next_action_hint" class="next-action-card">
+              <strong>后续建议</strong>
+              <p>{{ latestRun.next_action_hint }}</p>
+            </div>
           </div>
         </section>
-      </div>
 
-      <div class="right-column">
-        <section class="panel-card">
-          <header class="panel-header">
-            <h2>最近运行记录</h2>
+        <section class="console-panel">
+          <div class="section-title-row compact">
+            <div>
+              <span class="section-kicker">运行历史</span>
+              <h3>最近运行记录</h3>
+            </div>
             <span class="panel-tip">{{ runs.length }} 条</span>
-          </header>
+          </div>
+
           <el-table :data="runs" stripe>
             <el-table-column prop="title" label="运行标题" min-width="180" />
             <el-table-column prop="run_status" label="状态" width="120">
@@ -98,7 +101,7 @@
               </template>
             </el-table-column>
             <el-table-column prop="started_at" label="开始时间" width="160" />
-            <el-table-column label="信号" width="120">
+            <el-table-column label="信号" width="110">
               <template #default="{ row }">
                 {{ row.signal_breakdown.positive + row.signal_breakdown.negative }}
               </template>
@@ -111,14 +114,21 @@
           </el-table>
         </section>
 
-        <section v-if="latestRunItems.length > 0" class="panel-card">
-          <header class="panel-header">
-            <h2>最近运行明细预览</h2>
-          </header>
-          <div class="item-list">
+        <section v-if="latestRunItems.length > 0" class="console-panel">
+          <div class="section-title-row compact">
+            <div>
+              <span class="section-kicker">最新明细预览</span>
+              <h3>本轮最值得复核的对象</h3>
+            </div>
+          </div>
+
+          <div class="item-grid">
             <article v-for="item in latestRunItems" :key="item.item_id" class="item-card">
               <div class="item-head">
-                <strong>{{ item.entity_name }}</strong>
+                <div>
+                  <strong>{{ item.entity_name }}</strong>
+                  <span>{{ item.entity_key }}</span>
+                </div>
                 <span :class="['signal-pill', signalClass(item.signal)]">{{ signalLabel(item.signal) }}</span>
               </div>
               <p>{{ item.reason }}</p>
@@ -129,7 +139,63 @@
             </article>
           </div>
         </section>
-      </div>
+      </main>
+
+      <aside class="inspector-column">
+        <section class="console-panel">
+          <div class="section-title-row compact">
+            <div>
+              <span class="section-kicker">任务定义</span>
+              <h3>配置快照</h3>
+            </div>
+          </div>
+
+          <div class="config-list">
+            <div class="config-row">
+              <span>创建时间</span>
+              <strong>{{ task.created_at }}</strong>
+            </div>
+            <div class="config-row">
+              <span>最后更新</span>
+              <strong>{{ task.updated_at }}</strong>
+            </div>
+            <div class="config-row">
+              <span>任务说明</span>
+              <strong>{{ task.notes || '暂无说明' }}</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="console-panel">
+          <div class="section-title-row compact">
+            <div>
+              <span class="section-kicker">参数快照</span>
+              <h3>当前任务层默认值</h3>
+            </div>
+          </div>
+          <div class="param-list">
+            <article v-for="item in paramsEntries" :key="item.key" class="param-chip">
+              <span>{{ item.key }}</span>
+              <strong>{{ item.value }}</strong>
+            </article>
+          </div>
+        </section>
+
+        <section class="console-panel">
+          <div class="section-title-row compact">
+            <div>
+              <span class="section-kicker">动作链</span>
+              <h3>信号触发后将发生什么</h3>
+            </div>
+          </div>
+          <div class="action-list">
+            <article v-for="action in task.actions" :key="action.action_id" class="action-card">
+              <strong>{{ action.label }}</strong>
+              <p>{{ action.summary }}</p>
+            </article>
+          </div>
+        </section>
+      </aside>
     </section>
   </div>
   <el-empty v-else description="任务不存在或尚未初始化" />
@@ -212,6 +278,13 @@ function runStatusLabel(status: StrategyRunStatus): string {
   return '运行中'
 }
 
+function runStatusTagType(status: StrategyRunStatus): 'success' | 'warning' | 'danger' | 'info' {
+  if (status === 'success') return 'success'
+  if (status === 'partial_success') return 'warning'
+  if (status === 'failed') return 'danger'
+  return 'info'
+}
+
 function signalLabel(value: StrategySignalValue): string {
   if (value > 0) return '1'
   if (value < 0) return '-1'
@@ -227,19 +300,25 @@ function signalClass(value: StrategySignalValue): string {
 
 <style scoped>
 .task-detail-page {
+  --surface-1: linear-gradient(180deg, rgba(252, 253, 255, 0.98), rgba(246, 248, 252, 0.95));
+  --line-soft: rgba(15, 23, 42, 0.08);
+  --line-strong: rgba(42, 82, 190, 0.22);
+  --accent: #2f5fd0;
+  --ink-soft: #5b6473;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 .hero-card,
-.summary-card,
-.panel-card {
-  border: 1px solid var(--el-border-color-lighter);
-  background:
-    radial-gradient(circle at top right, rgba(46, 125, 255, 0.12), transparent 28%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(246, 248, 252, 0.96));
-  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.08);
+.strip-card,
+.console-panel,
+.item-card,
+.status-card,
+.mini-metric {
+  border: 1px solid var(--line-soft);
+  background: var(--surface-1);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.07);
 }
 
 .hero-card {
@@ -250,12 +329,13 @@ function signalClass(value: StrategySignalValue): string {
   gap: 24px;
 }
 
-.eyebrow {
+.eyebrow,
+.section-kicker {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #4b6cb7;
+  color: #6274b7;
 }
 
 .hero-card h1 {
@@ -263,10 +343,13 @@ function signalClass(value: StrategySignalValue): string {
   font-size: 34px;
 }
 
-.description {
-  margin: 10px 0 0;
+.description,
+.run-brief p,
+.action-card p,
+.item-card p,
+.next-action-card p {
   line-height: 1.7;
-  color: var(--el-text-color-secondary);
+  color: var(--ink-soft);
 }
 
 .hero-actions {
@@ -275,138 +358,177 @@ function signalClass(value: StrategySignalValue): string {
   align-items: flex-start;
 }
 
-.summary-grid {
+.top-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
 }
 
-.summary-card {
-  border-radius: 22px;
-  padding: 18px 20px;
+.strip-card {
+  border-radius: 20px;
+  padding: 16px 18px;
 }
 
-.summary-card span {
+.strip-card.emphasis {
+  background: linear-gradient(180deg, rgba(47, 95, 208, 0.08), rgba(255, 255, 255, 0.9));
+}
+
+.strip-card span,
+.status-card span,
+.mini-metric span,
+.config-row span,
+.param-chip span,
+.item-head span,
+.item-meta {
   display: block;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
+  color: var(--ink-soft);
+  font-size: 12px;
 }
 
-.summary-card strong {
+.strip-card strong,
+.status-card strong {
   display: block;
   margin-top: 8px;
   font-size: 24px;
 }
 
-.body-grid {
+.workspace-shell {
   display: grid;
-  grid-template-columns: 1fr 1.1fr;
+  grid-template-columns: 1.15fr 0.85fr;
   gap: 18px;
 }
 
-.left-column,
-.right-column {
+.operations-column,
+.inspector-column {
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
 
-.panel-card {
-  border-radius: 24px;
+.console-panel {
+  border-radius: 28px;
   padding: 20px;
 }
 
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.panel-header h2 {
-  margin: 0;
-  font-size: 20px;
-}
-
-.panel-tip {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
-.config-list {
-  display: grid;
-  gap: 14px;
-}
-
-.config-item span {
-  display: block;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--el-text-color-secondary);
-}
-
-.config-item strong {
-  display: block;
-  margin-top: 6px;
-}
-
-.notes {
-  margin: 16px 0 0;
-  line-height: 1.7;
-  color: var(--el-text-color-secondary);
-}
-
-.param-grid,
-.action-list,
-.item-list {
-  display: grid;
-  gap: 12px;
-}
-
-.param-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.param-card,
-.action-card,
-.item-card {
-  border-radius: 18px;
-  border: 1px solid var(--el-border-color-lighter);
-  background: rgba(255, 255, 255, 0.84);
-  padding: 14px;
-}
-
-.param-card span,
-.item-meta {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
-
-.param-card strong {
-  display: block;
-  margin-top: 6px;
-}
-
-.action-card p,
-.item-card p {
-  margin: 8px 0 0;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
-}
-
+.section-title-row,
+.run-brief-head,
 .item-head {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
-  align-items: center;
+  gap: 12px;
+}
+
+.section-title-row h2,
+.section-title-row h3,
+.run-brief-head h3 {
+  margin: 0;
+}
+
+.section-title-row h2 {
+  font-size: 24px;
+}
+
+.section-title-row h3,
+.run-brief-head h3 {
+  font-size: 20px;
+}
+
+.section-title-row.compact .panel-tip {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.status-grid,
+.metric-list,
+.param-list,
+.item-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.status-grid,
+.metric-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.status-card,
+.mini-metric,
+.param-chip,
+.action-card,
+.item-card {
+  border-radius: 18px;
+  padding: 14px;
+}
+
+.run-brief {
+  margin-top: 18px;
+}
+
+.mini-metric.positive strong {
+  color: #16a34a;
+}
+
+.mini-metric.negative strong {
+  color: #dc2626;
+}
+
+.mini-metric.warning strong {
+  color: #d97706;
+}
+
+.mini-metric strong,
+.param-chip strong {
+  display: block;
+  margin-top: 6px;
+}
+
+.next-action-card {
+  margin-top: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line-strong);
+  background: rgba(47, 95, 208, 0.08);
+  padding: 14px 16px;
+}
+
+.config-list,
+.action-list {
+  display: grid;
+  gap: 12px;
+}
+
+.config-row {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.config-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.config-row strong {
+  display: block;
+  margin-top: 6px;
+  line-height: 1.6;
+}
+
+.param-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.item-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.item-head strong {
+  display: block;
 }
 
 .item-meta {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   margin-top: 10px;
 }
 
@@ -434,14 +556,19 @@ function signalClass(value: StrategySignalValue): string {
   color: #d14343;
 }
 
-@media (max-width: 1100px) {
-  .summary-grid,
-  .body-grid,
-  .param-grid {
+@media (max-width: 1200px) {
+  .top-strip,
+  .workspace-shell,
+  .status-grid,
+  .metric-list,
+  .param-list,
+  .item-grid {
     grid-template-columns: 1fr;
   }
 
-  .hero-card {
+  .hero-card,
+  .section-title-row,
+  .run-brief-head {
     flex-direction: column;
   }
 }
