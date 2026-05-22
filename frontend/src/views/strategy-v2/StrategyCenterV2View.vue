@@ -239,6 +239,80 @@
               </article>
             </div>
           </section>
+
+          <section class="console-panel trial-panel">
+            <div class="section-title-row compact">
+              <div>
+                <span class="section-kicker">试运行面板</span>
+                <h3>先验证信号，再决定要不要挂任务</h3>
+              </div>
+              <el-tag effect="plain" round>{{ strategySceneLabels[trialScene] }}</el-tag>
+            </div>
+
+            <div class="trial-form">
+              <el-form label-position="top">
+                <el-form-item label="试运行场景">
+                  <el-select v-model="trialScene" style="width: 100%">
+                    <el-option
+                      v-for="scene in selectedStrategy.supported_scenes"
+                      :key="scene"
+                      :label="strategySceneLabels[scene]"
+                      :value="scene"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="目标对象">
+                  <el-input v-model="trialTarget" placeholder="例如：300750.SZ / 观察池 / 持仓组" />
+                </el-form-item>
+                <el-form-item v-for="param in selectedStrategy.param_schema" :key="param.key" :label="param.label">
+                  <el-select
+                    v-if="param.type === 'select' && param.options"
+                    :model-value="String(trialParams[param.key] ?? '')"
+                    @update:model-value="(value) => updateTrialParam(param.key, value)"
+                    style="width: 100%"
+                  >
+                    <el-option
+                      v-for="option in param.options"
+                      :key="String(option.value)"
+                      :label="option.label"
+                      :value="option.value"
+                    />
+                  </el-select>
+                  <el-switch
+                    v-else-if="param.type === 'boolean'"
+                    :model-value="Boolean(trialParams[param.key])"
+                    @update:model-value="(value) => updateTrialParam(param.key, value)"
+                  />
+                  <el-input
+                    v-else
+                    :model-value="String(trialParams[param.key] ?? '')"
+                    @update:model-value="(value) => updateTrialParam(param.key, value)"
+                    :placeholder="`默认 ${param.default}`"
+                  />
+                </el-form-item>
+              </el-form>
+            </div>
+
+            <div class="trial-footer">
+              <p>这里先用前端模拟试跑，帮助确认参数和信号语义，后面再替换成真实接口。</p>
+              <el-button type="primary" @click="runTrial">试运行</el-button>
+            </div>
+
+            <div v-if="trialResult" class="trial-result" :class="signalClass(trialResult.signal)">
+              <div class="trial-result-head">
+                <span class="signal-badge">{{ signalLabel(trialResult.signal) }}</span>
+                <div>
+                  <strong>{{ trialResult.title }}</strong>
+                  <p>{{ trialResult.summary }}</p>
+                </div>
+              </div>
+              <div class="trial-result-meta">
+                <span>强度 {{ Math.round(trialResult.score * 100) }}%</span>
+                <span>{{ trialResult.target }}</span>
+                <span>{{ strategySceneLabels[trialResult.scene] }}</span>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
     </section>
@@ -246,7 +320,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import {
@@ -264,6 +338,17 @@ const tasks = ref<StrategySceneTask[]>([])
 const selectedStrategyKey = ref('')
 const keyword = ref('')
 const sceneFilter = ref<'all' | StrategySceneType>('all')
+const trialScene = ref<StrategySceneType>('listen')
+const trialTarget = ref('300750.SZ · 示例标的')
+const trialParams = ref<Record<string, string | number | boolean>>({})
+const trialResult = ref<{
+  signal: StrategySignalValue
+  title: string
+  summary: string
+  score: number
+  target: string
+  scene: StrategySceneType
+} | null>(null)
 const overview = ref({
   strategyCount: 0,
   statefulCount: 0,
@@ -323,6 +408,18 @@ onMounted(async () => {
   selectedStrategyKey.value = strategies.value[0]?.strategy_key || ''
 })
 
+watch(
+  selectedStrategy,
+  (value) => {
+    if (!value) return
+    trialScene.value = value.supported_scenes[0] || 'listen'
+    trialTarget.value = value.supported_scenes.includes('scan') ? '全市场候选样本' : '300750.SZ · 示例标的'
+    trialParams.value = Object.fromEntries(value.param_schema.map((item) => [item.key, item.default]))
+    trialResult.value = null
+  },
+  { immediate: true },
+)
+
 function goTaskCenter(scene?: StrategySceneType, strategyKey?: string): void {
   router.push({
     name: 'StrategyTaskCenterV2',
@@ -336,6 +433,34 @@ function goTaskCenter(scene?: StrategySceneType, strategyKey?: string): void {
 
 function openTask(taskId: string): void {
   router.push({ name: 'StrategyTaskDetailV2', params: { taskId } })
+}
+
+function runTrial(): void {
+  if (!selectedStrategy.value) return
+  const samples = selectedStrategy.value.sample_outputs
+  const positiveBias = Object.values(trialParams.value).some((value) => `${value}`.includes('up') || Number(value) > 5)
+  const sample =
+    trialScene.value === 'backtest'
+      ? samples.find((item) => item.signal >= 0) || samples[0]
+      : positiveBias
+        ? samples.find((item) => item.signal === 1) || samples[0]
+        : samples.find((item) => item.signal === 0) || samples[0]
+
+  trialResult.value = {
+    signal: sample.signal,
+    title: sample.title,
+    summary: `${sample.summary} 当前目标：${trialTarget.value || '未指定对象'}。`,
+    score: sample.signal === 1 ? 0.82 : sample.signal === -1 ? 0.74 : 0.46,
+    target: trialTarget.value || '未指定对象',
+    scene: trialScene.value,
+  }
+}
+
+function updateTrialParam(key: string, value: string | number | boolean): void {
+  trialParams.value = {
+    ...trialParams.value,
+    [key]: value,
+  }
 }
 
 function signalLabel(value: StrategySignalValue): string {
@@ -587,10 +712,15 @@ function typeLabel(type: string): string {
   flex-wrap: wrap;
 }
 
-.definition-grid,
-.parameter-shell {
+.definition-grid {
   display: grid;
   grid-template-columns: 1.08fr 0.92fr;
+  gap: 18px;
+}
+
+.parameter-shell {
+  display: grid;
+  grid-template-columns: 1.05fr 0.8fr 1fr;
   gap: 18px;
 }
 
@@ -756,6 +886,58 @@ function typeLabel(type: string): string {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
   gap: 12px;
+}
+
+.trial-form {
+  margin-top: 12px;
+}
+
+.trial-footer,
+.trial-result-head,
+.trial-result-meta {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.trial-footer {
+  margin-top: 8px;
+  justify-content: space-between;
+}
+
+.trial-footer p,
+.trial-result p,
+.trial-result-meta {
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+
+.trial-result {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.trial-result.positive {
+  border-color: rgba(22, 163, 74, 0.25);
+  background: linear-gradient(180deg, rgba(22, 163, 74, 0.08), rgba(255, 255, 255, 0.86));
+}
+
+.trial-result.negative {
+  border-color: rgba(220, 38, 38, 0.2);
+  background: linear-gradient(180deg, rgba(220, 38, 38, 0.08), rgba(255, 255, 255, 0.86));
+}
+
+.trial-result-head strong {
+  display: block;
+}
+
+.trial-result-meta {
+  margin-top: 10px;
+  font-size: 12px;
 }
 
 .guidance-step span {

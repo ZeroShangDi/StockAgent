@@ -195,6 +195,24 @@
             </article>
           </div>
         </section>
+
+        <section class="console-panel">
+          <div class="section-title-row compact">
+            <div>
+              <span class="section-kicker">结果去向</span>
+              <h3>这个任务下一步会流到哪里</h3>
+            </div>
+          </div>
+
+          <div class="destination-list">
+            <article v-for="item in destinationCards" :key="item.title" class="destination-card">
+              <span>{{ item.kicker }}</span>
+              <strong>{{ item.title }}</strong>
+              <p>{{ item.description }}</p>
+              <el-button v-if="item.routeName" size="small" @click="openRoute(item.routeName)">{{ item.actionLabel }}</el-button>
+            </article>
+          </div>
+        </section>
       </aside>
     </section>
   </div>
@@ -235,6 +253,61 @@ const paramsEntries = computed(() => {
 })
 
 const latestRun = computed(() => runs.value[0] || null)
+const destinationCards = computed(() => {
+  if (!task.value) return []
+  if (task.value.scene_type === 'scan') {
+    return [
+      {
+        kicker: '候选承接',
+        title: '进入现有股池',
+        description: '选股结果先承接到股池，再做流转、复盘和人工确认。',
+        routeName: 'StockPools',
+        actionLabel: '打开股池',
+      },
+      {
+        kicker: '运行复核',
+        title: '查看本轮候选',
+        description: '先到运行结果里看强度、原因和是否值得继续观察。',
+        routeName: latestRun.value ? 'StrategyRunDetailV2' : '',
+        actionLabel: '查看最近运行',
+      },
+    ]
+  }
+  if (task.value.scene_type === 'listen') {
+    return [
+      {
+        kicker: '触发留痕',
+        title: '回看最近信号',
+        description: '重点复核已通知、已流转和被冷却跳过的对象。',
+        routeName: latestRun.value ? 'StrategyRunDetailV2' : '',
+        actionLabel: '打开运行结果',
+      },
+      {
+        kicker: '业务落点',
+        title: '检查池内流转',
+        description: '监听结果最终要落到池内变化或提醒动作，而不是停留在任务本身。',
+        routeName: 'StockPools',
+        actionLabel: '查看股池',
+      },
+    ]
+  }
+  return [
+    {
+      kicker: '分析闭环',
+      title: '进入交割单分析',
+      description: '回测和模拟交易的价值在于进入交割单分析页继续看收益与模式归因。',
+      routeName: 'TradeReview',
+      actionLabel: '打开交割单',
+    },
+    {
+      kicker: '结果复核',
+      title: '查看最新运行',
+      description: '先确认模拟成交、风险信号和状态写回是否符合预期。',
+      routeName: latestRun.value ? 'StrategyRunDetailV2' : '',
+      actionLabel: '查看运行结果',
+    },
+  ]
+})
 
 onMounted(async () => {
   await loadData()
@@ -269,6 +342,15 @@ function openLatestRun(): void {
 
 function openRun(runId: string): void {
   router.push({ name: 'StrategyRunDetailV2', params: { runId } })
+}
+
+function openRoute(routeName: string): void {
+  if (!routeName) return
+  if (routeName === 'StrategyRunDetailV2' && latestRun.value) {
+    router.push({ name: routeName, params: { runId: latestRun.value.run_id } })
+    return
+  }
+  router.push({ name: routeName })
 }
 
 function runStatusLabel(status: StrategyRunStatus): string {
@@ -492,7 +574,8 @@ function signalClass(value: StrategySignalValue): string {
 }
 
 .config-list,
-.action-list {
+.action-list,
+.destination-list {
   display: grid;
   gap: 12px;
 }
@@ -519,6 +602,30 @@ function signalClass(value: StrategySignalValue): string {
 
 .item-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.destination-card {
+  border-radius: 18px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.76);
+  padding: 14px;
+}
+
+.destination-card span {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.destination-card strong {
+  display: block;
+  margin: 6px 0 8px;
+}
+
+.destination-card p {
+  margin: 0 0 12px;
+  color: var(--ink-soft);
+  line-height: 1.7;
 }
 
 .item-head strong {

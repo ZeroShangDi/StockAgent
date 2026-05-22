@@ -49,7 +49,14 @@
             </article>
           </div>
 
-          <el-table :data="items" stripe class="result-table">
+          <div class="table-filters">
+            <button type="button" :class="['filter-pill', { active: itemFilter === 'all' }]" @click="itemFilter = 'all'">全部</button>
+            <button type="button" :class="['filter-pill', { active: itemFilter === 'positive' }]" @click="itemFilter = 'positive'">正向</button>
+            <button type="button" :class="['filter-pill', { active: itemFilter === 'review' }]" @click="itemFilter = 'review'">待复核</button>
+            <button type="button" :class="['filter-pill', { active: itemFilter === 'skipped' }]" @click="itemFilter = 'skipped'">无动作/跳过</button>
+          </div>
+
+          <el-table :data="filteredItems" stripe class="result-table">
             <el-table-column prop="entity_key" label="标的代码" width="140" />
             <el-table-column prop="entity_name" label="名称" min-width="140" />
             <el-table-column label="信号" width="100">
@@ -62,8 +69,20 @@
                 {{ Math.round(row.score * 100) }}%
               </template>
             </el-table-column>
+            <el-table-column label="标签" min-width="160">
+              <template #default="{ row }">
+                <div class="tag-cloud">
+                  <span v-for="tag in row.tags" :key="tag" class="mini-tag">{{ tag }}</span>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column prop="reason" label="原因" min-width="260" show-overflow-tooltip />
             <el-table-column prop="action_result" label="动作结果" min-width="180" />
+            <el-table-column label="状态写回" width="110">
+              <template #default="{ row }">
+                {{ row.state_writeback ? '已写回' : '未写回' }}
+              </template>
+            </el-table-column>
           </el-table>
         </section>
       </main>
@@ -118,6 +137,11 @@
               <strong>{{ reviewNeededCount }}</strong>
               <small>动作结果里带人工确认意味</small>
             </article>
+            <article class="review-card">
+              <span>无动作 / 跳过</span>
+              <strong>{{ skippedCount }}</strong>
+              <small>便于核对冷却、过滤和未命中情况</small>
+            </article>
           </div>
           <div v-if="run.next_action_hint" class="next-action-card">
             <strong>下一步建议</strong>
@@ -161,10 +185,18 @@ const router = useRouter()
 
 const run = ref<StrategyTaskRun | null>(null)
 const items = ref<StrategyTaskRunItem[]>([])
+const itemFilter = ref<'all' | 'positive' | 'review' | 'skipped'>('all')
 const sceneLabels = STRATEGY_SCENE_LABELS
 
 const stateWritebackCount = computed(() => items.value.filter((item) => item.state_writeback).length)
 const reviewNeededCount = computed(() => items.value.filter((item) => item.action_result.includes('待') || item.action_result.includes('建议')).length)
+const skippedCount = computed(() => items.value.filter((item) => item.action_result.includes('无动作') || item.action_result.includes('跳过')).length)
+const filteredItems = computed(() => {
+  if (itemFilter.value === 'positive') return items.value.filter((item) => item.signal === 1)
+  if (itemFilter.value === 'review') return items.value.filter((item) => item.action_result.includes('待') || item.action_result.includes('建议'))
+  if (itemFilter.value === 'skipped') return items.value.filter((item) => item.action_result.includes('无动作') || item.action_result.includes('跳过'))
+  return items.value
+})
 const prioritizedItems = computed(() => {
   return [...items.value]
     .sort((a, b) => b.score - a.score)
@@ -348,6 +380,33 @@ function signalClass(value: StrategySignalValue): string {
   font-size: 20px;
 }
 
+.table-filters,
+.tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.table-filters {
+  margin: 0 0 16px;
+}
+
+.filter-pill,
+.mini-tag {
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.82);
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.filter-pill.active {
+  border-color: var(--line-strong);
+  background: rgba(47, 95, 208, 0.1);
+  color: var(--accent);
+}
+
 .signal-grid,
 .review-grid {
   display: grid;
@@ -376,10 +435,6 @@ function signalClass(value: StrategySignalValue): string {
   display: block;
   margin-top: 6px;
   line-height: 1.6;
-}
-
-.review-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .review-card small {

@@ -123,6 +123,14 @@
               </div>
               <div class="row-actions">
                 <el-button size="small" @click.stop="goDetail(task.task_id)">详情</el-button>
+                <el-button
+                  size="small"
+                  :type="task.status === 'active' ? 'warning' : 'success'"
+                  plain
+                  @click.stop="toggleTaskStatus(task)"
+                >
+                  {{ statusActionLabel(task.status) }}
+                </el-button>
                 <el-button size="small" type="primary" plain @click.stop="handleRun(task.task_id)">运行</el-button>
               </div>
             </div>
@@ -166,6 +174,9 @@
           <p class="inspector-notes">{{ selectedTask.notes || '当前没有额外说明。' }}</p>
           <div class="quick-actions">
             <el-button type="primary" @click="goDetail(selectedTask.task_id)">查看详情</el-button>
+            <el-button :type="selectedTask.status === 'active' ? 'warning' : 'success'" plain @click="toggleTaskStatus(selectedTask)">
+              {{ statusActionLabel(selectedTask.status) }}
+            </el-button>
             <el-button @click="handleRun(selectedTask.task_id)">立即运行</el-button>
           </div>
         </div>
@@ -268,6 +279,7 @@ import {
   STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
   STRATEGY_TASK_STATUS_LABELS,
+  updateStrategySceneTaskStatus,
 } from '@/mocks/strategyV2'
 import type {
   CreateStrategySceneTaskInput,
@@ -485,8 +497,23 @@ async function handleRun(taskId: string): Promise<void> {
   router.push({ name: 'StrategyRunDetailV2', params: { runId: run.run_id } })
 }
 
+async function toggleTaskStatus(task: StrategySceneTask): Promise<void> {
+  const nextStatus: StrategyTaskStatus = task.status === 'active' ? 'paused' : 'active'
+  await updateStrategySceneTaskStatus(task.task_id, nextStatus)
+  await refreshPage()
+  selectedTaskId.value = task.task_id
+  ElMessage.success(`任务已${nextStatus === 'active' ? '启用' : '暂停'}`)
+}
+
 function goDetail(taskId: string): void {
   router.push({ name: 'StrategyTaskDetailV2', params: { taskId } })
+}
+
+function statusActionLabel(status: StrategyTaskStatus): string {
+  if (status === 'active') return '暂停'
+  if (status === 'paused') return '启用'
+  if (status === 'draft') return '激活'
+  return '恢复'
 }
 
 function statusTagType(status: StrategyTaskStatus): 'success' | 'warning' | 'info' | 'primary' {
