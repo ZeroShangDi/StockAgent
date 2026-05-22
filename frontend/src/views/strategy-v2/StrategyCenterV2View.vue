@@ -167,16 +167,41 @@
               <div v-if="relatedTasks.length === 0" class="empty-inline">
                 这个策略还没有被挂到任何 V2 任务上，适合先创建一个监听或选股任务验证流程。
               </div>
-              <button
+              <article
                 v-for="task in relatedTasks.slice(0, 3)"
                 :key="task.task_id"
-                type="button"
-                class="task-preview"
-                @click="openTask(task.task_id)"
+                class="task-runtime-card"
               >
-                <strong>{{ task.name }}</strong>
-                <span>{{ strategySceneLabels[task.scene_type] }} · {{ task.target_scope_summary }}</span>
-              </button>
+                <div class="task-runtime-head">
+                  <div>
+                    <strong>{{ task.name }}</strong>
+                    <span>{{ strategySceneLabels[task.scene_type] }} · {{ task.target_scope_summary }}</span>
+                  </div>
+                  <el-tag :type="statusTagType(task.status)" effect="plain" round>
+                    {{ taskStatusLabels[task.status] }}
+                  </el-tag>
+                </div>
+                <div class="task-runtime-meta">
+                  <div>
+                    <span>调度</span>
+                    <strong>{{ task.schedule_label }}</strong>
+                  </div>
+                  <div>
+                    <span>最近信号</span>
+                    <strong>{{ task.last_signal_count }}</strong>
+                  </div>
+                  <div>
+                    <span>最近运行</span>
+                    <strong>{{ task.last_run_status ? runStatusLabel(task.last_run_status) : '尚未运行' }}</strong>
+                  </div>
+                </div>
+                <div class="task-runtime-actions">
+                  <el-button size="small" @click="openTask(task.task_id)">查看任务</el-button>
+                  <el-button v-if="task.last_run_id" size="small" type="primary" plain @click="openLatestRun(task.last_run_id)">
+                    最近运行
+                  </el-button>
+                </div>
+              </article>
             </div>
           </section>
         </div>
@@ -328,8 +353,9 @@ import {
   listStrategyDefinitions,
   listStrategySceneTasks,
   STRATEGY_SCENE_LABELS,
+  STRATEGY_TASK_STATUS_LABELS,
 } from '@/mocks/strategyV2'
-import type { StrategyDefinition, StrategySceneTask, StrategySceneType, StrategySignalValue } from '@/types/strategy-v2'
+import type { StrategyDefinition, StrategySceneTask, StrategySceneType, StrategySignalValue, StrategyRunStatus, StrategyTaskStatus } from '@/types/strategy-v2'
 
 const router = useRouter()
 
@@ -358,6 +384,7 @@ const overview = ref({
 })
 
 const strategySceneLabels = STRATEGY_SCENE_LABELS
+const taskStatusLabels = STRATEGY_TASK_STATUS_LABELS
 
 const sceneOptions = [
   { label: STRATEGY_SCENE_LABELS.scan, value: 'scan' as const },
@@ -435,6 +462,10 @@ function openTask(taskId: string): void {
   router.push({ name: 'StrategyTaskDetailV2', params: { taskId } })
 }
 
+function openLatestRun(runId: string): void {
+  router.push({ name: 'StrategyRunDetailV2', params: { runId } })
+}
+
 function runTrial(): void {
   if (!selectedStrategy.value) return
   const samples = selectedStrategy.value.sample_outputs
@@ -473,6 +504,19 @@ function signalClass(value: StrategySignalValue): string {
   if (value > 0) return 'positive'
   if (value < 0) return 'negative'
   return 'neutral'
+}
+
+function statusTagType(status: StrategyTaskStatus): 'success' | 'warning' | 'info' {
+  if (status === 'active') return 'success'
+  if (status === 'paused') return 'warning'
+  return 'info'
+}
+
+function runStatusLabel(status: StrategyRunStatus): string {
+  if (status === 'success') return '成功'
+  if (status === 'partial_success') return '部分成功'
+  if (status === 'failed') return '失败'
+  return '运行中'
 }
 
 function typeLabel(type: string): string {
@@ -749,6 +793,7 @@ function typeLabel(type: string): string {
 .signal-lane,
 .guidance-step,
 .task-preview,
+.task-runtime-card,
 .param-row,
 .usage-card {
   border-radius: 18px;
@@ -858,6 +903,48 @@ function typeLabel(type: string): string {
   display: block;
 }
 
+.task-runtime-card {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.task-runtime-head,
+.task-runtime-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.task-runtime-head strong,
+.task-runtime-meta strong {
+  display: block;
+}
+
+.task-runtime-head span,
+.task-runtime-meta span {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.task-runtime-head span {
+  margin-top: 8px;
+}
+
+.task-runtime-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.task-runtime-meta strong {
+  margin-top: 6px;
+  font-size: 14px;
+}
+
 .empty-inline {
   padding: 14px;
   border-radius: 18px;
@@ -958,7 +1045,8 @@ function typeLabel(type: string): string {
   .parameter-shell,
   .workspace-shell,
   .stats-grid,
-  .usage-stack {
+  .usage-stack,
+  .task-runtime-meta {
     grid-template-columns: 1fr;
   }
 
