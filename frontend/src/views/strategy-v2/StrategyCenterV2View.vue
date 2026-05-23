@@ -60,7 +60,7 @@
             <div class="table-action-list">
               <el-button size="small" type="primary" link @click="openViewDialog(row.strategy_key)">查看</el-button>
               <el-button size="small" type="primary" link @click="openTaskDialogForStrategy(row.strategy_key)">创建任务</el-button>
-              <el-button size="small" type="primary" link @click="openStrategyTasks(row.strategy_key)">任务列表</el-button>
+              <el-button size="small" type="primary" link @click="openStrategyTasks(row)">任务列表</el-button>
               <el-dropdown trigger="click" @command="(command) => handleCommand(command, row.strategy_key)">
                 <el-button size="small" link>
                   更多
@@ -1091,11 +1091,11 @@ function handleCommand(command: string, strategyKey: string): void {
   }
 }
 
-function openStrategyTasks(strategyKey: string): void {
+function openStrategyTasks(strategy: StrategyDefinition): void {
   router.push({
     name: 'StrategyTaskCenterV2',
     query: {
-      strategy: strategyKey,
+      strategy: strategy.name,
     },
   })
 }
