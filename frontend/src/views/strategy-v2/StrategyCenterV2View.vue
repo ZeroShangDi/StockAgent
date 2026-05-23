@@ -1,11 +1,19 @@
 <template>
   <div class="strategy-center-page">
     <section class="page-toolbar">
+      <div class="toolbar-filters">
+        <el-input v-model="keyword" clearable placeholder="搜索策略名 / 描述" class="toolbar-search" />
+        <el-select v-model="sceneFilter" class="toolbar-select">
+          <el-option label="全部场景" value="all" />
+          <el-option v-for="scene in sceneOptions" :key="scene.value" :label="scene.label" :value="scene.value" />
+        </el-select>
+        <span class="toolbar-count">共 {{ filteredStrategies.length }} 条</span>
+      </div>
       <el-button type="primary" @click="openCreateDialog">创建策略</el-button>
     </section>
 
     <section class="page-body">
-      <el-table :data="strategies" row-key="strategy_key" stripe class="strategy-table" empty-text="暂时还没有策略">
+      <el-table :data="filteredStrategies" row-key="strategy_key" stripe size="small" class="strategy-table" empty-text="暂时还没有策略">
         <el-table-column label="策略名" min-width="220">
           <template #default="{ row }">
             <div class="strategy-name-cell">
@@ -104,14 +112,13 @@
     <el-dialog v-model="viewDialogVisible" title="查看策略" width="760px" class="strategy-view-dialog">
       <template v-if="selectedStrategy">
         <div class="strategy-dialog-shell">
-          <div class="strategy-dialog-hero">
-            <div>
-              <strong>{{ selectedStrategy.name }}</strong>
-              <p>{{ selectedStrategy.description }}</p>
+          <div class="strategy-dialog-summary">
+            <strong>{{ selectedStrategy.name }}</strong>
+            <div class="summary-meta">
+              <span>{{ selectedStrategy.supports_state ? '支持跨日记忆' : '无跨日记忆' }}</span>
+              <span>v{{ selectedStrategy.version }}</span>
+              <span>{{ selectedStrategy.impl_type }}</span>
             </div>
-            <el-tag :type="selectedStrategy.supports_state ? 'success' : 'info'" effect="plain" round>
-              {{ selectedStrategy.supports_state ? '支持跨日记忆' : '无跨日记忆' }}
-            </el-tag>
           </div>
 
           <el-tabs v-model="viewActiveTab" class="strategy-detail-tabs">
@@ -120,19 +127,14 @@
                 <div class="tab-section-head">
                   <div>
                     <strong>策略信息</strong>
-                    <p>这里展示策略的基础定义信息。</p>
                   </div>
                   <el-button type="primary" plain @click="openEditDialog(selectedStrategy.strategy_key)">编辑主要信息</el-button>
                 </div>
 
-                <div class="detail-inline-grid">
-                  <div class="detail-block">
-                    <span>策略名</span>
-                    <strong>{{ selectedStrategy.name }}</strong>
-                  </div>
-                  <div class="detail-block">
-                    <span>版本</span>
-                    <strong>v{{ selectedStrategy.version }}</strong>
+                <div class="overview-grid">
+                  <div class="detail-block span-2">
+                    <span>策略描述</span>
+                    <p>{{ selectedStrategy.description }}</p>
                   </div>
                   <div class="detail-block">
                     <span>跨日记忆</span>
@@ -142,28 +144,21 @@
                     <span>实现类型</span>
                     <strong>{{ selectedStrategy.impl_type }}</strong>
                   </div>
-                </div>
-
-                <div class="detail-block">
-                  <span>策略描述</span>
-                  <p>{{ selectedStrategy.description }}</p>
-                </div>
-
-                <div class="detail-block">
-                  <span>应用场景</span>
-                  <div class="full-scene-list align-start">
-                    <el-tag v-for="scene in selectedStrategy.supported_scenes" :key="scene" effect="plain" round>
-                      {{ sceneLabelMap[scene] }}
-                    </el-tag>
+                  <div class="detail-block span-2">
+                    <span>应用场景</span>
+                    <div class="full-scene-list align-start">
+                      <el-tag v-for="scene in selectedStrategy.supported_scenes" :key="scene" effect="plain" round>
+                        {{ sceneLabelMap[scene] }}
+                      </el-tag>
+                    </div>
                   </div>
-                </div>
-
-                <div class="detail-block" v-if="selectedStrategy.tags.length > 0">
-                  <span>标签</span>
-                  <div class="full-scene-list align-start">
-                    <el-tag v-for="tag in selectedStrategy.tags" :key="tag" type="info" effect="plain" round>
-                      {{ tag }}
-                    </el-tag>
+                  <div class="detail-block span-2" v-if="selectedStrategy.tags.length > 0">
+                    <span>标签</span>
+                    <div class="full-scene-list align-start">
+                      <el-tag v-for="tag in selectedStrategy.tags" :key="tag" type="info" effect="plain" round>
+                        {{ tag }}
+                      </el-tag>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -174,51 +169,53 @@
                 <div class="tab-section-head">
                   <div>
                     <strong>参数信息</strong>
-                    <p>这里可以查看并修改参数默认值。</p>
                   </div>
                   <el-button type="success" plain @click="saveViewStrategy">保存参数信息</el-button>
                 </div>
 
-                <div v-if="selectedStrategy.param_schema.length > 0" class="param-detail-list">
-                  <article v-for="param in selectedStrategy.param_schema" :key="param.key" class="param-detail-card">
-                    <div class="param-detail-head">
-                      <div>
-                        <strong>{{ param.label }}</strong>
-                        <small>{{ param.key }} · {{ paramTypeLabel(param.type) }}</small>
+                <el-table v-if="selectedStrategy.param_schema.length > 0" :data="selectedStrategy.param_schema" size="small" stripe class="param-table">
+                  <el-table-column label="参数" min-width="180">
+                    <template #default="{ row }">
+                      <div class="param-name-cell">
+                        <strong>{{ row.label }}</strong>
+                        <small>{{ row.key }}</small>
                       </div>
-                    </div>
-
-                    <p>{{ param.description }}</p>
-
-                    <div class="param-edit-row">
-                      <span>默认值</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="类型" width="100">
+                    <template #default="{ row }">
+                      {{ paramTypeLabel(row.type) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="description" label="说明" min-width="220" show-overflow-tooltip />
+                  <el-table-column label="默认值" width="240">
+                    <template #default="{ row }">
                       <el-select
-                        v-if="param.type === 'select' && param.options"
-                        :model-value="String(param.default)"
-                        style="width: 220px"
-                        @update:model-value="(value) => updateViewParamDefault(param.key, value)"
+                        v-if="row.type === 'select' && row.options"
+                        :model-value="String(row.default)"
+                        style="width: 100%"
+                        @update:model-value="(value) => updateViewParamDefault(row.key, value)"
                       >
                         <el-option
-                          v-for="option in param.options"
+                          v-for="option in row.options"
                           :key="String(option.value)"
                           :label="option.label"
                           :value="option.value"
                         />
                       </el-select>
                       <el-switch
-                        v-else-if="param.type === 'boolean'"
-                        :model-value="Boolean(param.default)"
-                        @update:model-value="(value) => updateViewParamDefault(param.key, value)"
+                        v-else-if="row.type === 'boolean'"
+                        :model-value="Boolean(row.default)"
+                        @update:model-value="(value) => updateViewParamDefault(row.key, value)"
                       />
                       <el-input
                         v-else
-                        :model-value="String(param.default)"
-                        style="width: 220px"
-                        @update:model-value="(value) => updateViewParamDefault(param.key, castParamValue(param.type, value))"
+                        :model-value="String(row.default)"
+                        @update:model-value="(value) => updateViewParamDefault(row.key, castParamValue(row.type, value))"
                       />
-                    </div>
-                  </article>
-                </div>
+                    </template>
+                  </el-table-column>
+                </el-table>
                 <el-empty v-else description="当前没有参数信息" :image-size="72" />
               </section>
             </el-tab-pane>
@@ -228,28 +225,30 @@
                 <div class="tab-section-head">
                   <div>
                     <strong>相关任务列表</strong>
-                    <p>这里展示当前使用这个策略的任务。</p>
                   </div>
                 </div>
 
-                <div v-if="selectedRelatedTasks.length > 0" class="related-task-list">
-                  <article v-for="task in selectedRelatedTasks" :key="task.task_id" class="related-task-card">
-                    <div class="related-task-head">
-                      <div>
-                        <strong>{{ task.name }}</strong>
-                        <p>{{ sceneLabelMap[task.scene_type] }} · {{ task.target_scope_summary }}</p>
-                      </div>
-                      <el-tag effect="plain" round>{{ taskStatusLabel(task.status) }}</el-tag>
-                    </div>
-                    <div class="related-task-meta">
-                      <span>调度：{{ task.schedule_label }}</span>
-                      <span>最近信号：{{ task.last_signal_count }}</span>
-                    </div>
-                    <div class="related-task-actions">
-                      <el-button size="small" @click="openRelatedTask(task.task_id)">查看任务</el-button>
-                    </div>
-                  </article>
-                </div>
+                <el-table v-if="selectedRelatedTasks.length > 0" :data="selectedRelatedTasks" size="small" stripe class="related-task-table">
+                  <el-table-column prop="name" label="任务名" min-width="180" />
+                  <el-table-column label="场景" width="100">
+                    <template #default="{ row }">
+                      {{ sceneLabel(row.scene_type) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="target_scope_summary" label="范围" min-width="220" show-overflow-tooltip />
+                  <el-table-column label="状态" width="100">
+                    <template #default="{ row }">
+                      <el-tag size="small" effect="plain" round>{{ taskStatusLabel(row.status) }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="schedule_label" label="调度" min-width="180" show-overflow-tooltip />
+                  <el-table-column prop="last_signal_count" label="最近信号" width="90" align="center" />
+                  <el-table-column label="操作" width="90" align="right">
+                    <template #default="{ row }">
+                      <el-button size="small" @click="openRelatedTask(row.task_id)">查看</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
                 <el-empty v-else description="当前没有关联任务" :image-size="72" />
               </section>
             </el-tab-pane>
@@ -296,6 +295,8 @@ const sceneOptions = [
 const strategies = ref<StrategyDefinition[]>([])
 const tasks = ref<StrategySceneTask[]>([])
 const selectedStrategy = ref<StrategyDefinition | null>(null)
+const keyword = ref('')
+const sceneFilter = ref<'all' | StrategySceneType>('all')
 const formDialogVisible = ref(false)
 const viewDialogVisible = ref(false)
 const formDialogMode = ref<'create' | 'edit'>('create')
@@ -317,6 +318,17 @@ const formState = reactive<{
 onMounted(async () => {
   strategies.value = await listStrategyDefinitions()
   tasks.value = await listStrategySceneTasks()
+})
+
+const filteredStrategies = computed(() => {
+  const text = keyword.value.trim().toLowerCase()
+  return strategies.value.filter((item) => {
+    const matchesText = !text
+      || item.name.toLowerCase().includes(text)
+      || item.description.toLowerCase().includes(text)
+    const matchesScene = sceneFilter.value === 'all' || item.supported_scenes.includes(sceneFilter.value)
+    return matchesText && matchesScene
+  })
 })
 
 const selectedRelatedTasks = computed(() => {
@@ -539,32 +551,68 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 .page-toolbar,
 .page-body {
   border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 16px;
+  border-radius: 12px;
   background: #fff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
 }
 
 .page-toolbar {
-  padding: 16px 20px;
+  padding: 12px 16px;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .page-body {
-  padding: 12px;
+  padding: 8px 12px 12px;
+}
+
+.toolbar-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar-search {
+  width: 260px;
+}
+
+.toolbar-select {
+  width: 144px;
+}
+
+.toolbar-count {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
 }
 
 .strategy-table {
   width: 100%;
 }
 
+.strategy-table :deep(th.el-table__cell) {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+}
+
+.strategy-table :deep(td.el-table__cell) {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
 .strategy-name-cell strong {
   font-size: 14px;
   color: #0f172a;
+  line-height: 1.4;
 }
 
 .strategy-description-cell {
-  line-height: 1.7;
+  line-height: 1.6;
   color: #475569;
   white-space: normal;
 }
@@ -573,8 +621,8 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 .full-scene-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
+  gap: 6px;
+  justify-content: flex-start;
 }
 
 .full-scene-list.align-start {
@@ -607,195 +655,141 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 .strategy-dialog-shell {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
-.strategy-dialog-hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  padding: 16px 18px;
+.strategy-dialog-summary {
+  padding: 12px 14px;
   border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 14px;
-  background: linear-gradient(180deg, #f8fbff, #f8fafc);
+  border-radius: 10px;
+  background: #f8fafc;
 }
 
-.strategy-dialog-hero strong {
-  display: block;
-  font-size: 18px;
-  color: #0f172a;
-}
-
-.strategy-dialog-hero p {
-  margin: 8px 0 0;
-  color: #475569;
-  line-height: 1.7;
-}
-
-.tab-section {
-  padding-top: 8px;
-}
-
-.tab-section-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 16px;
-}
-
-.tab-section-head strong {
+.strategy-dialog-summary strong {
   display: block;
   font-size: 16px;
   color: #0f172a;
 }
 
-.tab-section-head p {
-  margin: 6px 0 0;
+.summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
   color: #64748b;
-  line-height: 1.6;
 }
 
-.detail-block + .detail-block {
-  margin-top: 18px;
+.tab-section {
+  padding-top: 4px;
+}
+
+.tab-section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.tab-section-head strong {
+  display: block;
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.span-2 {
+  grid-column: 1 / -1;
 }
 
 .detail-block span {
   display: block;
-  margin-bottom: 8px;
-  font-size: 13px;
+  margin-bottom: 6px;
+  font-size: 12px;
   color: #64748b;
 }
 
 .detail-block strong {
-  font-size: 15px;
+  font-size: 14px;
   color: #0f172a;
 }
 
 .detail-block p {
   margin: 0;
-  line-height: 1.7;
+  line-height: 1.6;
   color: #475569;
 }
 
-.detail-inline-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+.detail-block,
+.param-table,
+.related-task-table {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 10px;
 }
 
-.detail-inline-grid .detail-block,
-.detail-block,
-.param-detail-card,
-.related-task-card {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 12px;
-  padding: 14px;
+.detail-block {
+  padding: 12px;
   background: #fff;
 }
 
-.param-detail-list {
-  display: grid;
-  gap: 12px;
-}
-
-.param-detail-card {
+.param-table :deep(th.el-table__cell),
+.related-task-table :deep(th.el-table__cell) {
   background: #f8fafc;
-}
-
-.param-detail-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.param-detail-head strong {
-  display: block;
-}
-
-.param-detail-head small {
-  display: block;
-  margin-top: 4px;
-  color: #64748b;
-}
-
-.param-detail-card p {
-  margin: 10px 0 0;
   color: #475569;
-  line-height: 1.7;
+  font-weight: 600;
 }
 
-.param-edit-row {
-  margin-top: 12px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
+.param-table :deep(td.el-table__cell),
+.related-task-table :deep(td.el-table__cell) {
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 
-.param-edit-row span {
-  margin: 0;
-}
-
-.related-task-list {
-  display: grid;
-  gap: 12px;
-}
-
-.related-task-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.related-task-head strong {
+.param-name-cell strong {
   display: block;
+  font-size: 13px;
   color: #0f172a;
 }
 
-.related-task-head p,
-.related-task-meta {
-  margin: 6px 0 0;
+.param-name-cell small {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
   color: #64748b;
-  line-height: 1.6;
-}
-
-.related-task-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.related-task-actions {
-  margin-top: 12px;
 }
 
 @media (max-width: 768px) {
   .page-toolbar {
-    justify-content: stretch;
-  }
-
-  .page-toolbar :deep(.el-button) {
-    width: 100%;
-  }
-
-  .detail-inline-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .strategy-dialog-hero,
-  .tab-section-head,
-  .param-edit-row {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .related-task-head {
+  .toolbar-filters {
+    flex-wrap: wrap;
+  }
+
+  .toolbar-search,
+  .toolbar-select {
+    width: 100%;
+  }
+
+  .page-toolbar > :deep(.el-button) {
+    width: 100%;
+  }
+
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tab-section-head {
     flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>
