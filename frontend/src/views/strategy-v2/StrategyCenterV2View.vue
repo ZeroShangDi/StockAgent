@@ -160,18 +160,18 @@
                   </div>
                   <div class="detail-block span-2">
                     <span>应用场景</span>
-                    <div class="full-scene-list align-start">
-                      <el-tag v-for="scene in selectedStrategy.supported_scenes" :key="scene" effect="plain" round>
+                    <div class="info-tab-list">
+                      <span v-for="scene in selectedStrategy.supported_scenes" :key="scene" class="info-tab-item">
                         {{ sceneLabelMap[scene] }}
-                      </el-tag>
+                      </span>
                     </div>
                   </div>
                   <div class="detail-block span-2" v-if="selectedStrategy.tags.length > 0">
                     <span>标签</span>
-                    <div class="full-scene-list align-start">
-                      <el-tag v-for="tag in selectedStrategy.tags" :key="tag" type="info" effect="plain" round>
+                    <div class="info-tab-list">
+                      <span v-for="tag in selectedStrategy.tags" :key="tag" class="info-tab-item info-tab-item-muted">
                         {{ tag }}
-                      </el-tag>
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -642,6 +642,32 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 
 .full-scene-list.align-start {
   justify-content: flex-start;
+}
+
+.info-tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.info-tab-item {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #d8e1ea;
+  border-bottom-color: #b8c6d8;
+  border-radius: 8px 8px 0 0;
+  background: #f8fbff;
+  color: #1f3b63;
+  font-size: 13px;
+  line-height: 28px;
+  white-space: nowrap;
+}
+
+.info-tab-item-muted {
+  background: #f6f8fa;
+  color: #475569;
 }
 
 .scene-mini-button {
