@@ -1,10 +1,6 @@
 <template>
   <div class="strategy-center-page">
-    <section class="page-header">
-      <div>
-        <h1>策略中心</h1>
-        <p>当前先只保留策略创建入口和策略列表，后续再按需要逐步扩展。</p>
-      </div>
+    <section class="page-toolbar">
       <el-button type="primary" @click="handleCreateStrategy">创建策略</el-button>
     </section>
 
@@ -127,7 +123,7 @@ async function deleteStrategy(strategyKey: string, strategyName: string): Promis
   gap: 16px;
 }
 
-.page-header,
+.page-toolbar,
 .page-body {
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 16px;
@@ -135,26 +131,10 @@ async function deleteStrategy(strategyKey: string, strategyName: string): Promis
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
 }
 
-.page-header {
-  padding: 20px 24px;
+.page-toolbar {
+  padding: 16px 20px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.page-header h1 {
-  margin: 0;
-  font-size: 24px;
-  line-height: 1.2;
-  color: #0f172a;
-}
-
-.page-header p {
-  margin: 8px 0 0;
-  font-size: 14px;
-  line-height: 1.6;
-  color: #475569;
+  justify-content: flex-end;
 }
 
 .page-body {
@@ -177,9 +157,12 @@ async function deleteStrategy(strategyKey: string, strategyName: string): Promis
 }
 
 @media (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    align-items: flex-start;
+  .page-toolbar {
+    justify-content: stretch;
+  }
+
+  .page-toolbar :deep(.el-button) {
+    width: 100%;
   }
 }
 </style>
