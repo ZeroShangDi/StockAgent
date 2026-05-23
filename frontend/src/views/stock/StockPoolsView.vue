@@ -193,35 +193,32 @@
         </div>
 
         <div class="field-block">
-          <label>监听策略</label>
+          <label>V2 监听任务</label>
           <el-select
-            v-model="selectedStrategyType"
+            v-model="selectedMonitorTaskId"
             class="dialog-select"
-            placeholder="请选择策略"
+            placeholder="请选择监听任务"
             :loading="strategyTypeLoading"
           >
             <el-option
-              v-for="item in strategyTypes"
-              :key="item.type"
+              v-for="item in monitorTasks"
+              :key="item.task_id"
               :label="item.name"
-              :value="item.type"
+              :value="item.task_id"
             >
               <div class="strategy-option">
                 <span>{{ item.name }}</span>
-                <small>{{ item.description }}</small>
+                <small>{{ item.strategy_name }} · {{ item.target_scope_summary || item.target_scope?.summary }}</small>
               </div>
             </el-option>
           </el-select>
         </div>
 
-        <p v-if="selectedStrategyType === 'support_resistance'" class="batch-hint">
-          撑压线策略批量加入后，还需要到市场监听页面逐只补充点位配置。
+        <p v-if="monitorTasks.length === 0" class="batch-hint">
+          暂无可用的 V2 自定义股票列表监听任务，请先到策略中心创建监听任务。
         </p>
-        <p v-else-if="selectedStrategyType === 'fixed_stop_loss'" class="batch-hint">
-          固定止损策略批量加入后，会按最新本地收盘价初始化止损基准，后续可逐只调整。
-        </p>
-        <p v-else-if="selectedStrategyType === 'trailing_stop_loss'" class="batch-hint">
-          移动止损策略批量加入后，会按最新本地收盘价初始化入场价与最高价，后续可逐只调整。
+        <p v-else class="batch-hint">
+          股票会加入所选任务的自定义股票列表；股票级策略参数后续会保存在该任务的参数配置中。
         </p>
       </div>
 
@@ -231,7 +228,7 @@
           <el-button
             type="primary"
             :loading="batchAdding"
-            :disabled="!selectedStrategyType"
+            :disabled="!selectedMonitorTaskId"
             @click="handleBatchAddStrategy"
           >
             确认加入
@@ -294,11 +291,11 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { stockPickerApi, subscriptionApi } from '@/api'
-import { StrategyType } from '@/api/types'
+import { stockPickerApi } from '@/api'
+import { addStockToStrategySceneTask, listStrategySceneTasks } from '@/api/modules/strategy-v2'
 import { STOCK_POOL_TYPE_OPTIONS } from '@/api/modules/stock-picker'
 import type { StockPoolDetail, StockPoolSummary, StockPoolStock } from '@/api/modules/stock-picker'
-import type { StrategyTypeInfo } from '@/api/types'
+import type { StrategySceneTask } from '@/types/strategy-v2'
 
 const router = useRouter()
 
@@ -308,10 +305,10 @@ const activePoolId = ref('')
 const activePool = ref<StockPoolDetail | null>(null)
 const selectedPoolStocks = ref<StockPoolStock[]>([])
 const batchDialogVisible = ref(false)
-const strategyTypes = ref<StrategyTypeInfo[]>([])
+const monitorTasks = ref<StrategySceneTask[]>([])
 const strategyTypeLoading = ref(false)
 const batchAdding = ref(false)
-const selectedStrategyType = ref('')
+const selectedMonitorTaskId = ref('')
 const createDialogVisible = ref(false)
 const creatingPool = ref(false)
 const currentPage = ref(1)
@@ -413,16 +410,16 @@ function handleSelectionChange(rows: StockPoolStock[]): void {
   selectedPoolStocks.value = rows
 }
 
-async function ensureStrategyTypesLoaded(): Promise<void> {
-  if (strategyTypes.value.length > 0) return
+async function ensureMonitorTasksLoaded(): Promise<void> {
+  if (monitorTasks.value.length > 0) return
 
   strategyTypeLoading.value = true
   try {
-    strategyTypes.value = (await subscriptionApi.getStrategyTypes()).filter(
-      (item) => item.type !== StrategyType.MARKET_INDEX_ALERT,
+    monitorTasks.value = (await listStrategySceneTasks()).filter(
+      (item) => item.scene_type === 'listen' && item.target_scope?.scope_type === 'custom_stock_list',
     )
-    if (!selectedStrategyType.value && strategyTypes.value.length > 0) {
-      selectedStrategyType.value = strategyTypes.value[0].type
+    if (!selectedMonitorTaskId.value && monitorTasks.value.length > 0) {
+      selectedMonitorTaskId.value = monitorTasks.value[0].task_id
     }
   } finally {
     strategyTypeLoading.value = false
@@ -435,26 +432,27 @@ async function openBatchDialog(): Promise<void> {
     return
   }
 
-  await ensureStrategyTypesLoaded()
+  await ensureMonitorTasksLoaded()
   batchDialogVisible.value = true
 }
 
 async function handleBatchAddStrategy(): Promise<void> {
-  if (!selectedStrategyType.value) {
-    ElMessage.warning('请选择监听策略')
+  if (!selectedMonitorTaskId.value) {
+    ElMessage.warning('请选择监听任务')
     return
   }
 
   batchAdding.value = true
   try {
-    const response = await subscriptionApi.batchAddStocksToStrategy(
-      selectedStrategyType.value,
-      selectedPoolStocks.value.map((item) => item.ts_code),
+    const results = await Promise.allSettled(
+      selectedPoolStocks.value.map((item) => addStockToStrategySceneTask(selectedMonitorTaskId.value, item.ts_code)),
     )
-    if (response.added.length > 0) {
-      ElMessage.success(response.message)
+    const successCount = results.filter((item) => item.status === 'fulfilled').length
+    const failedCount = results.length - successCount
+    if (successCount > 0) {
+      ElMessage.success(`已加入 ${successCount} 只股票到 V2 监听任务${failedCount > 0 ? `，失败 ${failedCount} 只` : ''}`)
     } else {
-      ElMessage.warning(response.message)
+      ElMessage.warning('没有股票成功加入监听任务')
     }
     batchDialogVisible.value = false
   } finally {

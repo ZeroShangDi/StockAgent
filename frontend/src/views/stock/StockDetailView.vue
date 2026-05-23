@@ -4,16 +4,17 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
 import { useUserStore } from '@/stores/user'
 import { useTask } from '@/hooks'
-import { stockApi, subscriptionApi } from '@/api'
+import { stockApi } from '@/api'
+import { addStockToStrategySceneTask, listStrategySceneTasks } from '@/api/modules/strategy-v2'
 import { ElMessage, ElDialog, ElSelect, ElOption, ElTag, ElEmpty } from 'element-plus'
 import StockReviewChartPanel from '@/components/review/StockReviewChartPanel.vue'
 import { 
   ArrowLeft, Star, StarFilled, TrendCharts, Bell, Document, 
   Histogram, Clock, ArrowUp, ArrowDown, Refresh
 } from '@element-plus/icons-vue'
-import { StrategyType } from '@/api/types'
-import type { StockQuote, StrategySubscription, StockDaily, StrategyTypeInfo } from '@/api/types'
+import type { StockQuote, StockDaily } from '@/api/types'
 import type { StockRepairTaskStatus, StockReviewContext } from '@/api/modules/stock'
+import type { StrategySceneTask } from '@/types/strategy-v2'
 
 const route = useRoute()
 const router = useRouter()
@@ -51,7 +52,7 @@ const priceDirection = computed<'up' | 'down' | 'flat'>(() => {
 
 // ==================== 监听订阅相关 ====================
 
-const activeSubscriptions = ref<StrategySubscription[]>([])
+const activeSubscriptions = ref<StrategySceneTask[]>([])
 const subscribedStrategyIds = ref<Set<string>>(new Set())
 const loadingSubscriptions = ref(false)
 const subscribeDialogVisible = ref(false)
@@ -63,19 +64,13 @@ const isSubscribedToAny = computed(() => subscribedStrategyIds.value.size > 0)
 async function loadSubscriptions(): Promise<void> {
   loadingSubscriptions.value = true
   try {
-    const [strategyTypes, existingSubs] = await Promise.all([
-      subscriptionApi.getStrategyTypes(),
-      subscriptionApi.getSubscriptions({ is_active: true }),
-    ])
-    activeSubscriptions.value = await ensureSubscriptions(
-      strategyTypes.filter((item) => item.type !== StrategyType.MARKET_INDEX_ALERT),
-      existingSubs,
+    activeSubscriptions.value = (await listStrategySceneTasks()).filter(
+      (item) => item.scene_type === 'listen' && item.target_scope?.scope_type === 'custom_stock_list',
     )
-    
     const subscribedTypes = new Set<string>()
-    for (const sub of activeSubscriptions.value) {
-      if (sub.watch_list.includes(tsCode.value)) {
-        subscribedTypes.add(sub.strategy_type)
+    for (const task of activeSubscriptions.value) {
+      if ((task.target_scope?.ts_codes || []).includes(tsCode.value)) {
+        subscribedTypes.add(task.task_id)
       }
     }
     subscribedStrategyIds.value = subscribedTypes
@@ -86,29 +81,6 @@ async function loadSubscriptions(): Promise<void> {
   }
 }
 
-async function ensureSubscriptions(
-  strategyTypes: StrategyTypeInfo[],
-  existingSubs: StrategySubscription[],
-): Promise<StrategySubscription[]> {
-  const existingMap = new Map(existingSubs.map(sub => [sub.strategy_type, sub]))
-  const missingTypes = strategyTypes
-    .map(item => item.type)
-    .filter(type => !existingMap.has(type))
-
-  if (missingTypes.length === 0) {
-    return existingSubs
-  }
-
-  const hydratedSubs = await Promise.all(
-    missingTypes.map(type => subscriptionApi.getSubscriptionByType(type))
-  )
-  const allSubs = [...existingSubs, ...hydratedSubs].filter(sub => sub.is_active)
-
-  return strategyTypes
-    .map(item => allSubs.find(sub => sub.strategy_type === item.type))
-    .filter((sub): sub is StrategySubscription => Boolean(sub))
-}
-
 function openSubscribeDialog(): void {
   selectedStrategyType.value = ''
   subscribeDialogVisible.value = true
@@ -116,7 +88,7 @@ function openSubscribeDialog(): void {
 
 const availableSubscriptions = computed(() => {
   return activeSubscriptions.value.filter(
-    sub => !subscribedStrategyIds.value.has(sub.strategy_type)
+    task => !subscribedStrategyIds.value.has(task.task_id)
   )
 })
 
@@ -128,18 +100,14 @@ async function addToSubscription(): Promise<void> {
   
   addingToSubscription.value = true
   try {
-    const response = await subscriptionApi.addStockToStrategy(
+    const task = await addStockToStrategySceneTask(
       selectedStrategyType.value,
       tsCode.value
     )
-    
-    if (response.success) {
-      ElMessage.success(response.message)
-      subscribedStrategyIds.value.add(selectedStrategyType.value)
-      subscribeDialogVisible.value = false
-    } else {
-      ElMessage.warning(response.message)
-    }
+    activeSubscriptions.value = activeSubscriptions.value.map((item) => (item.task_id === task.task_id ? task : item))
+    ElMessage.success('已加入 V2 监听任务')
+    subscribedStrategyIds.value.add(selectedStrategyType.value)
+    subscribeDialogVisible.value = false
   } catch (error) {
     ElMessage.error('添加失败')
     console.error(error)
@@ -607,38 +575,38 @@ function getPnlClass(value?: number | null): string {
     <!-- 加入监听策略弹窗 -->
     <ElDialog
       v-model="subscribeDialogVisible"
-      title="加入监听策略"
+      title="加入 V2 监听任务"
       width="480px"
       :close-on-click-modal="false"
       class="subscribe-dialog"
     >
       <div class="dialog-body">
         <p class="dialog-hint">
-          将 <strong>{{ stockInfo?.name || tsCode }}</strong> 添加到以下策略的监听列表：
+          将 <strong>{{ stockInfo?.name || tsCode }}</strong> 添加到以下 V2 自定义股票列表监听任务：
         </p>
         
         <ElSelect
           v-model="selectedStrategyType"
-          placeholder="选择策略"
+          placeholder="选择监听任务"
           class="strategy-select"
           size="large"
         >
           <ElOption
             v-for="sub in availableSubscriptions"
-            :key="sub.strategy_type"
-            :label="sub.strategy_name"
-            :value="sub.strategy_type"
+            :key="sub.task_id"
+            :label="sub.name"
+            :value="sub.task_id"
           >
             <div class="strategy-option">
-              <span class="strategy-name">{{ sub.strategy_name }}</span>
-              <ElTag size="small" type="info">{{ sub.strategy_type }}</ElTag>
+              <span class="strategy-name">{{ sub.name }}</span>
+              <ElTag size="small" type="info">{{ sub.strategy_name }}</ElTag>
             </div>
           </ElOption>
         </ElSelect>
         
         <ElEmpty 
           v-if="availableSubscriptions.length === 0" 
-          description="暂无可用策略"
+          description="暂无可用 V2 自定义股票列表监听任务"
           :image-size="60"
         />
         
@@ -646,12 +614,12 @@ function getPnlClass(value?: number | null): string {
           <p>该股票已在以下策略中监听：</p>
           <div class="tag-list">
             <ElTag 
-              v-for="sub in activeSubscriptions.filter(s => subscribedStrategyIds.has(s.strategy_type))"
-              :key="sub.strategy_type"
+              v-for="sub in activeSubscriptions.filter(s => subscribedStrategyIds.has(s.task_id))"
+              :key="sub.task_id"
               size="small"
               type="success"
             >
-              {{ sub.strategy_name }}
+              {{ sub.name }}
             </ElTag>
           </div>
         </div>

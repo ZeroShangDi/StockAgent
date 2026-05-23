@@ -26,6 +26,19 @@ export const strategyV2Api = {
   createTask(payload: CreateStrategySceneTaskInput): Promise<StrategySceneTask> {
     return api.post('/strategy-v2/tasks', payload)
   },
+
+  addStockToTask(taskId: string, tsCode: string, config?: Record<string, unknown>): Promise<StrategySceneTask> {
+    return api.post(`/strategy-v2/tasks/${taskId}/stocks`, {
+      ts_code: tsCode.toUpperCase(),
+      config,
+    })
+  },
+
+  updateTaskStockConfig(taskId: string, tsCode: string, config: Record<string, unknown>): Promise<StrategySceneTask> {
+    return api.put(`/strategy-v2/tasks/${taskId}/stocks/${tsCode.toUpperCase()}/config`, {
+      config,
+    })
+  },
 }
 
 export async function listStrategyDefinitions(): Promise<StrategyDefinition[]> {
@@ -42,4 +55,20 @@ export async function getStrategySceneTask(taskId: string): Promise<StrategyScen
 
 export async function createStrategySceneTask(input: CreateStrategySceneTaskInput): Promise<StrategySceneTask> {
   return strategyV2Api.createTask(input)
+}
+
+export async function addStockToStrategySceneTask(
+  taskId: string,
+  tsCode: string,
+  config?: Record<string, unknown>,
+): Promise<StrategySceneTask> {
+  return strategyV2Api.addStockToTask(taskId, tsCode, config)
+}
+
+export async function updateStrategySceneTaskStockConfig(
+  taskId: string,
+  tsCode: string,
+  config: Record<string, unknown>,
+): Promise<StrategySceneTask> {
+  return strategyV2Api.updateTaskStockConfig(taskId, tsCode, config)
 }

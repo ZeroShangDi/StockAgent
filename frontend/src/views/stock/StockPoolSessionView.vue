@@ -92,22 +92,30 @@
             </div>
 
             <div class="block">
-              <label>加入监听</label>
+              <label>V2 股池监听配置</label>
               <el-select
                 v-model="selectedStrategyType"
                 class="full-width"
-                placeholder="请选择监听策略"
+                placeholder="请选择当前股池的监听任务"
                 :loading="strategyLoading"
               >
                 <el-option
                   v-for="item in strategyTypes"
-                  :key="item.type"
+                  :key="item.task_id"
                   :label="item.name"
-                  :value="item.type"
-                />
+                  :value="item.task_id"
+                >
+                  <div class="strategy-option">
+                    <span>{{ item.name }}</span>
+                    <small>{{ item.strategy_name }} · {{ item.schedule_label }}</small>
+                  </div>
+                </el-option>
               </el-select>
               <div v-if="selectedStrategyMeta && isPerStockConfigStrategy(selectedStrategyType)" class="listener-config-hint">
-                {{ selectedStrategyMeta.name }} 支持单股特殊配置，添加后会在当前页直接继续配置。
+                {{ selectedStrategyMeta.name }} 支持单股特殊配置，可在当前页直接保存到任务的股票级参数。
+              </div>
+              <div v-else-if="strategyTypes.length === 0" class="listener-config-hint">
+                当前股池暂无 V2 监听任务。请先在策略中心创建“监听 + 股池分组”任务，并选择该股池。
               </div>
               <div class="block-actions">
                 <el-button
@@ -116,7 +124,7 @@
                   :loading="listenerLoading"
                   @click="addCurrentToStrategy"
                 >
-                  {{ isPerStockConfigStrategy(selectedStrategyType) ? '添加并配置' : '添加到该策略' }}
+                  {{ isPerStockConfigStrategy(selectedStrategyType) ? '配置当前股票' : '启用当前股票配置' }}
                   <span class="button-shortcut">A</span>
                 </el-button>
               </div>
@@ -402,14 +410,16 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { stockApi, stockPickerApi, subscriptionApi } from '@/api'
+import { stockApi, stockPickerApi } from '@/api'
+import { listStrategySceneTasks, updateStrategySceneTaskStockConfig } from '@/api/modules/strategy-v2'
 import { useUserStore } from '@/stores/user'
 import StockReviewChartPanel from '@/components/review/StockReviewChartPanel.vue'
 import type { StockDaily } from '@/api'
 import { StrategyType } from '@/api/types'
-import type { StrategyStockConfig, StrategyStockPoint, StrategyTypeInfo } from '@/api/types'
+import type { StrategyStockConfig, StrategyStockPoint } from '@/api/types'
 import type { StockPoolReviewContext, StockPoolSummary } from '@/api/modules/stock-picker'
 import type { StockRepairTaskStatus } from '@/api/modules/stock'
+import type { StrategySceneTask } from '@/types/strategy-v2'
 
 const route = useRoute()
 const router = useRouter()
@@ -425,7 +435,7 @@ const removeLoading = ref(false)
 const repairLoading = ref(false)
 
 const context = ref<StockPoolReviewContext | null>(null)
-const strategyTypes = ref<StrategyTypeInfo[]>([])
+const strategyTypes = ref<StrategySceneTask[]>([])
 const targetPools = ref<StockPoolSummary[]>([])
 const selectedStrategyType = ref('')
 const selectedTargetPoolId = ref('')
@@ -510,23 +520,27 @@ const chartMarkers = computed(() => {
 })
 
 const selectedStrategyMeta = computed(() => {
-  return strategyTypes.value.find((item) => item.type === selectedStrategyType.value) || null
+  return strategyTypes.value.find((item) => item.task_id === selectedStrategyType.value) || null
 })
 
+function resolveStrategyKey(strategyType?: string): string {
+  return strategyTypes.value.find((item) => item.task_id === strategyType)?.strategy_key || strategyType || ''
+}
+
 function isMaBuyStrategy(strategyType?: string): boolean {
-  return strategyType === StrategyType.MA5_BUY
+  return resolveStrategyKey(strategyType) === StrategyType.MA5_BUY
 }
 
 function isSupportResistanceStrategy(strategyType?: string): boolean {
-  return strategyType === StrategyType.SUPPORT_RESISTANCE
+  return resolveStrategyKey(strategyType) === StrategyType.SUPPORT_RESISTANCE
 }
 
 function isFixedStopLossStrategy(strategyType?: string): boolean {
-  return strategyType === StrategyType.FIXED_STOP_LOSS
+  return resolveStrategyKey(strategyType) === StrategyType.FIXED_STOP_LOSS
 }
 
 function isTrailingStopLossStrategy(strategyType?: string): boolean {
-  return strategyType === StrategyType.TRAILING_STOP_LOSS
+  return resolveStrategyKey(strategyType) === StrategyType.TRAILING_STOP_LOSS
 }
 
 function isPerStockConfigStrategy(strategyType?: string): boolean {
@@ -774,11 +788,17 @@ async function ensureStrategyTypesLoaded(): Promise<void> {
   if (strategyTypes.value.length > 0) return
   strategyLoading.value = true
   try {
-    strategyTypes.value = (await subscriptionApi.getStrategyTypes()).filter(
-      (item) => item.type !== StrategyType.MARKET_INDEX_ALERT,
+    strategyTypes.value = (await listStrategySceneTasks()).filter(
+      (item) =>
+        item.scene_type === 'listen'
+        && item.target_scope?.scope_type === 'stock_pool'
+        && (
+          item.target_scope.scope_id === currentPoolId.value
+          || item.target_scope.params?.stock_pool_id === currentPoolId.value
+        ),
     )
     if (!selectedStrategyType.value && strategyTypes.value.length > 0) {
-      selectedStrategyType.value = strategyTypes.value[0].type
+      selectedStrategyType.value = strategyTypes.value[0].task_id
     }
   } finally {
     strategyLoading.value = false
@@ -787,8 +807,8 @@ async function ensureStrategyTypesLoaded(): Promise<void> {
 
 async function openStrategyConfigDialog(strategyType: string): Promise<void> {
   if (!context.value) return
-  const subscription = await subscriptionApi.getSubscriptionByType(strategyType)
-  const stockConfigs = (subscription.params?.stock_configs as Record<string, StrategyStockConfig> | undefined) || {}
+  const task = strategyTypes.value.find((item) => item.task_id === strategyType)
+  const stockConfigs = (task?.params?.stock_configs as Record<string, StrategyStockConfig> | undefined) || {}
   editingStockConfig.value = createDialogStockConfig(strategyType, stockConfigs[context.value.stock.ts_code] || undefined)
   stockConfigDialogVisible.value = true
 }
@@ -851,14 +871,16 @@ async function addCurrentToStrategy(): Promise<void> {
   if (!context.value || !selectedStrategyType.value) return
   listenerLoading.value = true
   try {
-    const response = await subscriptionApi.addStockToStrategy(selectedStrategyType.value, context.value.stock.ts_code)
-    if (response.success) {
-      ElMessage.success(response.message)
-    } else {
-      ElMessage.warning(response.message)
-    }
     if (isPerStockConfigStrategy(selectedStrategyType.value)) {
       await openStrategyConfigDialog(selectedStrategyType.value)
+    } else {
+      const updated = await updateStrategySceneTaskStockConfig(
+        selectedStrategyType.value,
+        context.value.stock.ts_code,
+        { enabled: true },
+      )
+      strategyTypes.value = strategyTypes.value.map((item) => (item.task_id === updated.task_id ? updated : item))
+      ElMessage.success('已为当前股票启用 V2 监听配置')
     }
   } finally {
     listenerLoading.value = false
@@ -941,11 +963,12 @@ async function saveListenerStockConfig(): Promise<void> {
 
   savingStockConfig.value = true
   try {
-    await subscriptionApi.updateStockConfig(
+    const updated = await updateStrategySceneTaskStockConfig(
       selectedStrategyType.value,
       context.value.stock.ts_code,
-      payload,
+      payload as Record<string, unknown>,
     )
+    strategyTypes.value = strategyTypes.value.map((item) => (item.task_id === updated.task_id ? updated : item))
     ElMessage.success(`${getStockConfigActionLabel(selectedStrategyType.value)}已保存`)
     stockConfigDialogVisible.value = false
   } finally {
@@ -1071,6 +1094,9 @@ watch(
   () => [route.params.poolId, route.params.tsCode],
   () => {
     loadContext()
+    strategyTypes.value = []
+    selectedStrategyType.value = ''
+    ensureStrategyTypesLoaded()
     ensureTargetPoolsLoaded()
   },
 )
