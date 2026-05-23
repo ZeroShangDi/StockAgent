@@ -237,6 +237,9 @@
                   <div>
                     <strong>相关任务列表</strong>
                   </div>
+                  <button type="button" class="tab-action-button" @click="createRelatedTask">
+                    创建任务
+                  </button>
                 </div>
 
                 <el-table v-if="selectedRelatedTasks.length > 0" :data="selectedRelatedTasks" size="small" stripe class="related-task-table">
@@ -544,6 +547,17 @@ function openRelatedTask(taskId: string): void {
   router.push({
     name: 'StrategyTaskDetailV2',
     params: { taskId },
+  })
+}
+
+function createRelatedTask(): void {
+  if (!selectedStrategy.value) return
+  router.push({
+    name: 'StrategyTaskCenterV2',
+    query: {
+      strategy: selectedStrategy.value.strategy_key,
+      autoCreate: '1',
+    },
   })
 }
 
