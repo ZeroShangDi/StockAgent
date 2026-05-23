@@ -9,7 +9,7 @@
         </el-select>
         <span class="toolbar-count">共 {{ filteredStrategies.length }} 条</span>
       </div>
-      <el-button type="primary" @click="openCreateDialog">创建策略</el-button>
+      <el-button type="primary" size="small" @click="openCreateDialog">创建策略</el-button>
     </section>
 
     <section class="page-body">
@@ -58,7 +58,7 @@
         <el-table-column label="操作" width="140" align="right">
           <template #default="{ row }">
             <el-dropdown trigger="click" @command="(command) => handleCommand(command, row.strategy_key)">
-              <el-button>
+              <el-button size="small">
                 操作
                 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
               </el-button>
@@ -245,9 +245,9 @@
                   <el-table-column prop="last_signal_count" label="最近信号" width="90" align="center" />
                   <el-table-column label="操作" width="90" align="right">
                     <template #default="{ row }">
-                      <el-button size="small" @click="openRelatedTask(row.task_id)">查看</el-button>
-                    </template>
-                  </el-table-column>
+                    <el-button size="small" plain @click="openRelatedTask(row.task_id)">查看</el-button>
+                  </template>
+                </el-table-column>
                 </el-table>
                 <el-empty v-else description="当前没有关联任务" :image-size="72" />
               </section>
@@ -551,9 +551,8 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 .page-toolbar,
 .page-body {
   border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
 }
 
 .page-toolbar {
@@ -565,7 +564,7 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 }
 
 .page-body {
-  padding: 8px 12px 12px;
+  padding: 4px 8px 8px;
 }
 
 .toolbar-filters {
@@ -595,14 +594,14 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 }
 
 .strategy-table :deep(th.el-table__cell) {
-  background: #f8fafc;
+  background: #f6f8fa;
   color: #475569;
   font-weight: 600;
 }
 
 .strategy-table :deep(td.el-table__cell) {
-  padding-top: 10px;
-  padding-bottom: 10px;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .strategy-name-cell strong {
@@ -630,20 +629,19 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 }
 
 .scene-mini-button {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #f8fafc;
+  border-radius: 6px;
+  background: #fff;
   color: #334155;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
 .scene-mini-button:hover {
   border-color: #409eff;
   color: #409eff;
-  background: #ecf5ff;
+  background: #f8fbff;
 }
 
 .dialog-footer {
@@ -655,14 +653,14 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 .strategy-dialog-shell {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .strategy-dialog-summary {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 10px;
-  background: #f8fafc;
+  border-radius: 8px;
+  background: #fff;
 }
 
 .strategy-dialog-summary strong {
@@ -689,7 +687,7 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .tab-section-head strong {
@@ -730,7 +728,7 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 .param-table,
 .related-task-table {
   border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 
 .detail-block {
@@ -740,15 +738,15 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 
 .param-table :deep(th.el-table__cell),
 .related-task-table :deep(th.el-table__cell) {
-  background: #f8fafc;
+  background: #f6f8fa;
   color: #475569;
   font-weight: 600;
 }
 
 .param-table :deep(td.el-table__cell),
 .related-task-table :deep(td.el-table__cell) {
-  padding-top: 10px;
-  padding-bottom: 10px;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .param-name-cell strong {
