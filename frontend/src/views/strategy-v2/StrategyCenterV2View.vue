@@ -841,6 +841,7 @@ const sceneShortLabelMap: Record<StrategySceneType, string> = {
   backtest: '回',
   sim_trade: '模',
 }
+const DEFAULT_NOTIFICATION_CHANNEL_ID = '__system_default__'
 
 const sceneOptions = [
   { label: STRATEGY_SCENE_LABELS.scan, value: 'scan' as const },
@@ -995,7 +996,7 @@ const creatableTradeReviewAccountOptions = computed(() => [
   ...tradeReviewAccountOptions.value,
 ])
 const notificationChannelOptions = computed(() => [
-  { label: '系统默认（企业微信）', value: '' },
+  { label: '系统默认（企业微信）', value: DEFAULT_NOTIFICATION_CHANNEL_ID },
   ...notificationChannels.value.map((channel) => ({
     label: `${channel.name}（${channel.provider === 'dingtalk' ? '钉钉' : '企业微信'}）`,
     value: channel.channel_id,
@@ -1407,7 +1408,7 @@ function makeTaskAction(actionType: StrategyActionType): StrategyTaskActionInput
 }
 
 function defaultActionParams(actionType: StrategyActionType): Record<string, string | number | boolean | undefined> {
-  if (actionType === 'notify') return { notification_channel_id: '', alert_frequency: 'daily_once' }
+  if (actionType === 'notify') return { notification_channel_id: DEFAULT_NOTIFICATION_CHANNEL_ID, alert_frequency: 'daily_once' }
   if (actionType === 'add_to_pool') return { target_pool_id: defaultStockPoolId(), duplicate_policy: 'skip' }
   if (actionType === 'pool_transition') return { transition_mode: 'copy', target_pool_id: defaultStockPoolId() }
   if (actionType === 'temp_list') return { list_usage: 'manual_review', ttl_days: 1 }
@@ -1664,7 +1665,7 @@ async function submitTaskDialog(): Promise<void> {
       params: overrideStrategyParams.value ? taskForm.params : {},
       schedule: taskForm.schedule,
       notes: taskForm.notes?.trim(),
-      actions: [...taskForm.actions],
+      actions: normalizeTaskActionsForSubmit(),
     })
     tasks.value = await listStrategySceneTasks()
     taskDialogVisible.value = false
@@ -1675,6 +1676,18 @@ async function submitTaskDialog(): Promise<void> {
   finally {
     taskSubmitting.value = false
   }
+}
+
+function normalizeTaskActionsForSubmit(): StrategyTaskActionInput[] {
+  return taskForm.actions.map((action) => ({
+    ...action,
+    params: {
+      ...action.params,
+      ...(action.action_type === 'notify' && action.params.notification_channel_id === DEFAULT_NOTIFICATION_CHANNEL_ID
+        ? { notification_channel_id: '' }
+        : {}),
+    },
+  }))
 }
 
 function strategyTypeLabel(type: StrategyDefinition['impl_type']): string {
