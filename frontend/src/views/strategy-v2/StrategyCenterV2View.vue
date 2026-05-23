@@ -128,7 +128,9 @@
                   <div>
                     <strong>策略信息</strong>
                   </div>
-                  <el-button type="primary" plain @click="openEditDialog(selectedStrategy.strategy_key)">编辑主要信息</el-button>
+                  <button type="button" class="tab-action-button" @click="openEditDialog(selectedStrategy.strategy_key)">
+                    编辑主要信息
+                  </button>
                 </div>
 
                 <div class="overview-grid">
@@ -136,13 +138,25 @@
                     <span>策略描述</span>
                     <p>{{ selectedStrategy.description }}</p>
                   </div>
-                  <div class="detail-block">
-                    <span>跨日记忆</span>
-                    <strong>{{ selectedStrategy.supports_state ? '支持' : '不支持' }}</strong>
+                  <div class="detail-block detail-pair-block">
+                    <div class="detail-pair-row">
+                      <span>跨日记忆</span>
+                      <strong>{{ selectedStrategy.supports_state ? '支持' : '不支持' }}</strong>
+                    </div>
+                    <div class="detail-pair-row">
+                      <span>当前版本</span>
+                      <strong>v{{ selectedStrategy.version }}</strong>
+                    </div>
                   </div>
-                  <div class="detail-block">
-                    <span>实现类型</span>
-                    <strong>{{ selectedStrategy.impl_type }}</strong>
+                  <div class="detail-block detail-pair-block">
+                    <div class="detail-pair-row">
+                      <span>实现类型</span>
+                      <strong>{{ selectedStrategy.impl_type }}</strong>
+                    </div>
+                    <div class="detail-pair-row">
+                      <span>策略标识</span>
+                      <strong>{{ selectedStrategy.strategy_key }}</strong>
+                    </div>
                   </div>
                   <div class="detail-block span-2">
                     <span>应用场景</span>
@@ -170,7 +184,9 @@
                   <div>
                     <strong>参数信息</strong>
                   </div>
-                  <el-button type="success" plain @click="saveViewStrategy">保存参数信息</el-button>
+                  <button type="button" class="tab-action-button" @click="saveViewStrategy">
+                    保存参数信息
+                  </button>
                 </div>
 
                 <el-table v-if="selectedStrategy.param_schema.length > 0" :data="selectedStrategy.param_schema" size="small" stripe class="param-table">
@@ -696,6 +712,25 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
   color: #0f172a;
 }
 
+.tab-action-button {
+  min-width: 116px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid #d8e1ea;
+  border-radius: 8px 8px 0 0;
+  background: #f6f8fa;
+  color: #334155;
+  font-size: 13px;
+  line-height: 30px;
+  cursor: pointer;
+}
+
+.tab-action-button:hover {
+  color: #1d4ed8;
+  border-color: #bfd3f2;
+  background: #f8fbff;
+}
+
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -734,6 +769,31 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 .detail-block {
   padding: 12px;
   background: #fff;
+}
+
+.detail-pair-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-pair-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.detail-pair-row span {
+  margin-bottom: 0;
+}
+
+.detail-pair-row strong {
+  flex: 1;
+  text-align: right;
+  font-size: 13px;
+  color: #334155;
+  word-break: break-all;
 }
 
 .param-table :deep(th.el-table__cell),
@@ -788,6 +848,21 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
   .tab-section-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .tab-action-button {
+    width: 100%;
+    border-radius: 8px;
+  }
+
+  .detail-pair-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .detail-pair-row strong {
+    text-align: left;
   }
 }
 </style>
