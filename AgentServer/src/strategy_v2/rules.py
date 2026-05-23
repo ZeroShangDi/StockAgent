@@ -73,6 +73,38 @@ STOCK_SCOPES = {
 
 BUILTIN_STRATEGY_DEFINITIONS: list[dict[str, Any]] = [
     {
+        "strategy_key": "one_line_stock_picker",
+        "name": "一句话选股",
+        "description": "输入自然语言选股条件，复用原一句话选股服务生成候选列表；策略逐股匹配候选代码，命中返回 1，未命中返回 0。",
+        "impl_type": "builtin_code",
+        "supported_scenes": ["scan", "listen"],
+        "supports_state": False,
+        "version": 1,
+        "tags": ["AI选股", "自然语言", "候选池"],
+        "param_schema": [
+            {
+                "key": "query_text",
+                "label": "选股语句",
+                "type": "string",
+                "default": "",
+                "required": True,
+                "description": "传给一句话选股服务的自然语言条件，例如“近三个月放量突破年线且排除 ST”。",
+            },
+            {
+                "key": "cache_ttl_days",
+                "label": "缓存天数",
+                "type": "number",
+                "default": 1,
+                "description": "同一用户、同一选股语句在缓存期内复用候选列表，避免全市场逐股匹配时重复调用接口。",
+            },
+        ],
+        "sample_outputs": [
+            {"signal": 1, "title": "命中一句话选股结果", "summary": "股票代码出现在接口返回候选列表中，可进入股池或生成临时清单。"},
+            {"signal": 0, "title": "未命中候选列表", "summary": "股票代码不在当日缓存结果中，不触发动作。"},
+            {"signal": -1, "title": "查询不可用", "summary": "文本参数为空或接口异常时由运行器记录失败，不进入正常动作链。"},
+        ],
+    },
+    {
         "strategy_key": "ma5_buy",
         "name": "5日线低吸",
         "description": "股价回落到均线附近后，等待重新企稳并输出正向信号，适合做候选入池与低吸观察。",
@@ -217,9 +249,19 @@ def validate_task_config(body: StrategyV2CreateTaskRequest) -> list[str]:
     scope = body.target_scope.scope_type
     schedule_mode = body.schedule.mode
     strategy_scenes = BUILTIN_STRATEGY_SCENES.get(body.strategy_key)
+    strategy = get_strategy_definition(body.strategy_key)
 
     if strategy_scenes is not None and scene not in strategy_scenes:
         errors.append("当前策略不支持所选场景")
+
+    if strategy:
+        for param in strategy.get("param_schema", []):
+            if not param.get("required"):
+                continue
+            key = param.get("key")
+            value = body.params.get(key, param.get("default")) if key else None
+            if value is None or (isinstance(value, str) and not value.strip()):
+                errors.append(f"策略参数“{param.get('label') or key}”不能为空")
 
     if scope == StrategyV2TargetScopeType.EVENT:
         errors.append("事件范围本期只保留，不支持创建任务")

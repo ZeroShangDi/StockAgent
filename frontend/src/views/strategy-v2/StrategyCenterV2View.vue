@@ -223,6 +223,14 @@
                         @update:model-value="(value) => updateViewParamDefault(row.key, value)"
                       />
                       <el-input
+                        v-else-if="row.key === 'query_text'"
+                        :model-value="String(row.default)"
+                        type="textarea"
+                        :rows="3"
+                        placeholder="输入自然语言选股条件"
+                        @update:model-value="(value) => updateViewParamDefault(row.key, value)"
+                      />
+                      <el-input
                         v-else
                         :model-value="String(row.default)"
                         @update:model-value="(value) => updateViewParamDefault(row.key, castParamValue(row.type, value))"
@@ -324,10 +332,15 @@
 
             <template v-else-if="taskStepIndex === 1">
               <el-form-item label="覆盖策略默认参数">
-                <el-switch v-model="overrideStrategyParams" active-text="覆盖" inactive-text="使用默认" />
+                <el-switch
+                  v-model="overrideStrategyParams"
+                  :disabled="hasRequiredStrategyParams"
+                  :active-text="hasRequiredStrategyParams ? '当前策略需要填写参数' : '覆盖'"
+                  inactive-text="使用默认"
+                />
               </el-form-item>
               <el-table
-                v-if="overrideStrategyParams && selectedStrategy && selectedStrategy.param_schema.length > 0"
+                v-if="shouldEditTaskParams && selectedStrategy && selectedStrategy.param_schema.length > 0"
                 :data="selectedStrategy.param_schema"
                 size="small"
                 stripe
@@ -359,6 +372,14 @@
                     <el-switch
                       v-else-if="row.type === 'boolean'"
                       :model-value="Boolean(taskParamValue(row.key))"
+                      @update:model-value="(value) => updateTaskParam(row.key, value)"
+                    />
+                    <el-input
+                      v-else-if="row.key === 'query_text'"
+                      :model-value="String(taskParamValue(row.key))"
+                      type="textarea"
+                      :rows="3"
+                      placeholder="例如：近三个月放量突破年线且排除 ST"
                       @update:model-value="(value) => updateTaskParam(row.key, value)"
                     />
                     <el-input
@@ -986,6 +1007,8 @@ const currentTaskStep = computed(() => taskStepItems[taskStepIndex.value])
 const taskScopeOptions = computed(() => taskScopeCatalog)
 const taskScheduleOptions = computed(() => taskScheduleCatalog)
 const taskActionOptions = computed(() => taskActionCatalog)
+const hasRequiredStrategyParams = computed(() => Boolean(selectedStrategy.value?.param_schema.some((item) => item.required)))
+const shouldEditTaskParams = computed(() => overrideStrategyParams.value || hasRequiredStrategyParams.value)
 const stockPoolOptions = computed(() => stockPools.value.map((pool) => ({
   label: `${pool.name}（${pool.pool_type} · ${pool.stock_count}只）`,
   value: pool.pool_id,
@@ -1309,6 +1332,9 @@ function normalizeTaskForm(scene: StrategySceneType): void {
   if (!strategy) return
 
   taskForm.strategy_key = strategy.strategy_key
+  if (strategy.param_schema.some((item) => item.required)) {
+    overrideStrategyParams.value = true
+  }
 
   if (!strategy.supported_scenes.includes(scene)) {
     taskForm.scene_type = strategy.supported_scenes[0] || 'listen'
@@ -1606,6 +1632,17 @@ function validateTaskStep(step = taskStepIndex.value): boolean {
       return false
     }
   }
+  if (step === 1) {
+    const missingParam = selectedStrategy.value?.param_schema.find((item) => {
+      if (!item.required) return false
+      const value = taskParamValue(item.key)
+      return value === undefined || value === null || (typeof value === 'string' && !value.trim())
+    })
+    if (missingParam) {
+      ElMessage.warning(`请填写策略参数：${missingParam.label}`)
+      return false
+    }
+  }
   if (step === 2 && !taskForm.target_scope?.summary) {
     ElMessage.warning('请选择目标范围')
     return false
@@ -1666,7 +1703,7 @@ function prevTaskStep(): void {
 
 async function submitTaskDialog(): Promise<void> {
   if (!selectedStrategy.value) return
-  if (!validateTaskStep(0) || !validateTaskStep(2) || !validateTaskStep(3)) return
+  if (!validateTaskStep(0) || !validateTaskStep(1) || !validateTaskStep(2) || !validateTaskStep(3)) return
 
   taskSubmitting.value = true
   try {
@@ -1675,7 +1712,7 @@ async function submitTaskDialog(): Promise<void> {
       scene_type: taskForm.scene_type,
       strategy_key: selectedStrategy.value.strategy_key,
       target_scope: taskForm.target_scope,
-      params: overrideStrategyParams.value ? taskForm.params : {},
+      params: buildTaskParamsForSubmit(),
       schedule: taskForm.schedule,
       notes: taskForm.notes?.trim(),
       actions: normalizeTaskActionsForSubmit(),
@@ -1689,6 +1726,18 @@ async function submitTaskDialog(): Promise<void> {
   finally {
     taskSubmitting.value = false
   }
+}
+
+function buildTaskParamsForSubmit(): Record<string, unknown> {
+  if (!selectedStrategy.value || !shouldEditTaskParams.value) return {}
+
+  const params: Record<string, unknown> = { ...taskForm.params }
+  selectedStrategy.value.param_schema.forEach((item) => {
+    if (item.required && !(item.key in params)) {
+      params[item.key] = taskParamValue(item.key)
+    }
+  })
+  return params
 }
 
 function normalizeTaskActionsForSubmit(): StrategyTaskActionInput[] {
