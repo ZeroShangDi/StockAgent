@@ -101,98 +101,165 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="viewDialogVisible" title="查看策略" width="680px">
+    <el-dialog v-model="viewDialogVisible" title="查看策略" width="760px" class="strategy-view-dialog">
       <template v-if="selectedStrategy">
-        <div class="detail-block">
-          <span>策略名</span>
-          <strong>{{ selectedStrategy.name }}</strong>
-        </div>
-
-        <div class="detail-block">
-          <span>策略描述</span>
-          <p>{{ selectedStrategy.description }}</p>
-        </div>
-
-        <div class="detail-inline-grid">
-          <div class="detail-block">
-            <span>跨日记忆</span>
-            <strong>{{ selectedStrategy.supports_state ? '支持' : '不支持' }}</strong>
-          </div>
-          <div class="detail-block">
-            <span>版本</span>
-            <strong>v{{ selectedStrategy.version }}</strong>
-          </div>
-        </div>
-
-        <div class="detail-block">
-          <span>应用场景</span>
-          <div class="full-scene-list">
-            <el-tag v-for="scene in selectedStrategy.supported_scenes" :key="scene" effect="plain" round>
-              {{ sceneLabelMap[scene] }}
+        <div class="strategy-dialog-shell">
+          <div class="strategy-dialog-hero">
+            <div>
+              <strong>{{ selectedStrategy.name }}</strong>
+              <p>{{ selectedStrategy.description }}</p>
+            </div>
+            <el-tag :type="selectedStrategy.supports_state ? 'success' : 'info'" effect="plain" round>
+              {{ selectedStrategy.supports_state ? '支持跨日记忆' : '无跨日记忆' }}
             </el-tag>
           </div>
-        </div>
 
-        <div class="detail-block" v-if="selectedStrategy.tags.length > 0">
-          <span>标签</span>
-          <div class="full-scene-list">
-            <el-tag v-for="tag in selectedStrategy.tags" :key="tag" type="info" effect="plain" round>
-              {{ tag }}
-            </el-tag>
-          </div>
-        </div>
-
-        <div class="detail-block">
-          <span>参数信息</span>
-          <div v-if="selectedStrategy.param_schema.length > 0" class="param-detail-list">
-            <article v-for="param in selectedStrategy.param_schema" :key="param.key" class="param-detail-card">
-              <div class="param-detail-head">
-                <div>
-                  <strong>{{ param.label }}</strong>
-                  <small>{{ param.key }} · {{ paramTypeLabel(param.type) }}</small>
+          <el-tabs v-model="viewActiveTab" class="strategy-detail-tabs">
+            <el-tab-pane label="主要信息" name="overview">
+              <section class="tab-section">
+                <div class="tab-section-head">
+                  <div>
+                    <strong>策略信息</strong>
+                    <p>这里展示策略的基础定义信息。</p>
+                  </div>
+                  <el-button type="primary" plain @click="openEditDialog(selectedStrategy.strategy_key)">编辑主要信息</el-button>
                 </div>
-              </div>
 
-              <p>{{ param.description }}</p>
+                <div class="detail-inline-grid">
+                  <div class="detail-block">
+                    <span>策略名</span>
+                    <strong>{{ selectedStrategy.name }}</strong>
+                  </div>
+                  <div class="detail-block">
+                    <span>版本</span>
+                    <strong>v{{ selectedStrategy.version }}</strong>
+                  </div>
+                  <div class="detail-block">
+                    <span>跨日记忆</span>
+                    <strong>{{ selectedStrategy.supports_state ? '支持' : '不支持' }}</strong>
+                  </div>
+                  <div class="detail-block">
+                    <span>实现类型</span>
+                    <strong>{{ selectedStrategy.impl_type }}</strong>
+                  </div>
+                </div>
 
-              <div class="param-edit-row">
-                <span>默认值</span>
-                <el-select
-                  v-if="param.type === 'select' && param.options"
-                  :model-value="String(param.default)"
-                  style="width: 220px"
-                  @update:model-value="(value) => updateViewParamDefault(param.key, value)"
-                >
-                  <el-option
-                    v-for="option in param.options"
-                    :key="String(option.value)"
-                    :label="option.label"
-                    :value="option.value"
-                  />
-                </el-select>
-                <el-switch
-                  v-else-if="param.type === 'boolean'"
-                  :model-value="Boolean(param.default)"
-                  @update:model-value="(value) => updateViewParamDefault(param.key, value)"
-                />
-                <el-input
-                  v-else
-                  :model-value="String(param.default)"
-                  style="width: 220px"
-                  @update:model-value="(value) => updateViewParamDefault(param.key, castParamValue(param.type, value))"
-                />
-              </div>
-            </article>
-          </div>
-          <el-empty v-else description="当前没有参数信息" :image-size="72" />
+                <div class="detail-block">
+                  <span>策略描述</span>
+                  <p>{{ selectedStrategy.description }}</p>
+                </div>
+
+                <div class="detail-block">
+                  <span>应用场景</span>
+                  <div class="full-scene-list align-start">
+                    <el-tag v-for="scene in selectedStrategy.supported_scenes" :key="scene" effect="plain" round>
+                      {{ sceneLabelMap[scene] }}
+                    </el-tag>
+                  </div>
+                </div>
+
+                <div class="detail-block" v-if="selectedStrategy.tags.length > 0">
+                  <span>标签</span>
+                  <div class="full-scene-list align-start">
+                    <el-tag v-for="tag in selectedStrategy.tags" :key="tag" type="info" effect="plain" round>
+                      {{ tag }}
+                    </el-tag>
+                  </div>
+                </div>
+              </section>
+            </el-tab-pane>
+
+            <el-tab-pane label="参数信息" name="params">
+              <section class="tab-section">
+                <div class="tab-section-head">
+                  <div>
+                    <strong>参数信息</strong>
+                    <p>这里可以查看并修改参数默认值。</p>
+                  </div>
+                  <el-button type="success" plain @click="saveViewStrategy">保存参数信息</el-button>
+                </div>
+
+                <div v-if="selectedStrategy.param_schema.length > 0" class="param-detail-list">
+                  <article v-for="param in selectedStrategy.param_schema" :key="param.key" class="param-detail-card">
+                    <div class="param-detail-head">
+                      <div>
+                        <strong>{{ param.label }}</strong>
+                        <small>{{ param.key }} · {{ paramTypeLabel(param.type) }}</small>
+                      </div>
+                    </div>
+
+                    <p>{{ param.description }}</p>
+
+                    <div class="param-edit-row">
+                      <span>默认值</span>
+                      <el-select
+                        v-if="param.type === 'select' && param.options"
+                        :model-value="String(param.default)"
+                        style="width: 220px"
+                        @update:model-value="(value) => updateViewParamDefault(param.key, value)"
+                      >
+                        <el-option
+                          v-for="option in param.options"
+                          :key="String(option.value)"
+                          :label="option.label"
+                          :value="option.value"
+                        />
+                      </el-select>
+                      <el-switch
+                        v-else-if="param.type === 'boolean'"
+                        :model-value="Boolean(param.default)"
+                        @update:model-value="(value) => updateViewParamDefault(param.key, value)"
+                      />
+                      <el-input
+                        v-else
+                        :model-value="String(param.default)"
+                        style="width: 220px"
+                        @update:model-value="(value) => updateViewParamDefault(param.key, castParamValue(param.type, value))"
+                      />
+                    </div>
+                  </article>
+                </div>
+                <el-empty v-else description="当前没有参数信息" :image-size="72" />
+              </section>
+            </el-tab-pane>
+
+            <el-tab-pane label="相关任务" name="tasks">
+              <section class="tab-section">
+                <div class="tab-section-head">
+                  <div>
+                    <strong>相关任务列表</strong>
+                    <p>这里展示当前使用这个策略的任务。</p>
+                  </div>
+                </div>
+
+                <div v-if="selectedRelatedTasks.length > 0" class="related-task-list">
+                  <article v-for="task in selectedRelatedTasks" :key="task.task_id" class="related-task-card">
+                    <div class="related-task-head">
+                      <div>
+                        <strong>{{ task.name }}</strong>
+                        <p>{{ sceneLabelMap[task.scene_type] }} · {{ task.target_scope_summary }}</p>
+                      </div>
+                      <el-tag effect="plain" round>{{ taskStatusLabel(task.status) }}</el-tag>
+                    </div>
+                    <div class="related-task-meta">
+                      <span>调度：{{ task.schedule_label }}</span>
+                      <span>最近信号：{{ task.last_signal_count }}</span>
+                    </div>
+                    <div class="related-task-actions">
+                      <el-button size="small" @click="openRelatedTask(task.task_id)">查看任务</el-button>
+                    </div>
+                  </article>
+                </div>
+                <el-empty v-else description="当前没有关联任务" :image-size="72" />
+              </section>
+            </el-tab-pane>
+          </el-tabs>
         </div>
       </template>
 
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="viewDialogVisible = false">关闭</el-button>
-          <el-button v-if="selectedStrategy" type="success" plain @click="saveViewStrategy">保存参数</el-button>
-          <el-button v-if="selectedStrategy" type="primary" @click="openEditDialog(selectedStrategy.strategy_key)">编辑</el-button>
         </div>
       </template>
     </el-dialog>
@@ -200,17 +267,18 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { STRATEGY_SCENE_LABELS, listStrategyDefinitions } from '@/mocks/strategyV2'
-import type { StrategyDefinition, StrategySceneType } from '@/types/strategy-v2'
+import { STRATEGY_SCENE_LABELS, STRATEGY_TASK_STATUS_LABELS, listStrategyDefinitions, listStrategySceneTasks } from '@/mocks/strategyV2'
+import type { StrategyDefinition, StrategySceneTask, StrategySceneType } from '@/types/strategy-v2'
 
 const router = useRouter()
 
 const sceneLabelMap = STRATEGY_SCENE_LABELS
+const taskStatusLabelMap = STRATEGY_TASK_STATUS_LABELS
 const sceneShortLabelMap: Record<StrategySceneType, string> = {
   scan: '选',
   listen: '监',
@@ -226,11 +294,13 @@ const sceneOptions = [
 ]
 
 const strategies = ref<StrategyDefinition[]>([])
+const tasks = ref<StrategySceneTask[]>([])
 const selectedStrategy = ref<StrategyDefinition | null>(null)
 const formDialogVisible = ref(false)
 const viewDialogVisible = ref(false)
 const formDialogMode = ref<'create' | 'edit'>('create')
 const editingStrategyKey = ref('')
+const viewActiveTab = ref<'overview' | 'params' | 'tasks'>('overview')
 
 const formState = reactive<{
   name: string
@@ -246,6 +316,12 @@ const formState = reactive<{
 
 onMounted(async () => {
   strategies.value = await listStrategyDefinitions()
+  tasks.value = await listStrategySceneTasks()
+})
+
+const selectedRelatedTasks = computed(() => {
+  if (!selectedStrategy.value) return []
+  return tasks.value.filter((item) => item.strategy_key === selectedStrategy.value?.strategy_key)
 })
 
 function handleCommand(command: string, strategyKey: string): void {
@@ -285,6 +361,7 @@ function openViewDialog(strategyKey: string): void {
   const strategy = findStrategy(strategyKey)
   if (!strategy) return
   selectedStrategy.value = cloneStrategy(strategy)
+  viewActiveTab.value = 'overview'
   viewDialogVisible.value = true
 }
 
@@ -439,6 +516,17 @@ function saveViewStrategy(): void {
 
   ElMessage.success('策略参数已保存')
 }
+
+function openRelatedTask(taskId: string): void {
+  router.push({
+    name: 'StrategyTaskDetailV2',
+    params: { taskId },
+  })
+}
+
+function taskStatusLabel(status: StrategySceneTask['status']): string {
+  return taskStatusLabelMap[status]
+}
 </script>
 
 <style scoped>
@@ -489,6 +577,10 @@ function saveViewStrategy(): void {
   justify-content: center;
 }
 
+.full-scene-list.align-start {
+  justify-content: flex-start;
+}
+
 .scene-mini-button {
   width: 28px;
   height: 28px;
@@ -510,6 +602,59 @@ function saveViewStrategy(): void {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+.strategy-dialog-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.strategy-dialog-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 16px 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f8fbff, #f8fafc);
+}
+
+.strategy-dialog-hero strong {
+  display: block;
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.strategy-dialog-hero p {
+  margin: 8px 0 0;
+  color: #475569;
+  line-height: 1.7;
+}
+
+.tab-section {
+  padding-top: 8px;
+}
+
+.tab-section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.tab-section-head strong {
+  display: block;
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.tab-section-head p {
+  margin: 6px 0 0;
+  color: #64748b;
+  line-height: 1.6;
 }
 
 .detail-block + .detail-block {
@@ -540,15 +685,22 @@ function saveViewStrategy(): void {
   gap: 16px;
 }
 
+.detail-inline-grid .detail-block,
+.detail-block,
+.param-detail-card,
+.related-task-card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  padding: 14px;
+  background: #fff;
+}
+
 .param-detail-list {
   display: grid;
   gap: 12px;
 }
 
 .param-detail-card {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 12px;
-  padding: 14px;
   background: #f8fafc;
 }
 
@@ -587,6 +739,41 @@ function saveViewStrategy(): void {
   margin: 0;
 }
 
+.related-task-list {
+  display: grid;
+  gap: 12px;
+}
+
+.related-task-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.related-task-head strong {
+  display: block;
+  color: #0f172a;
+}
+
+.related-task-head p,
+.related-task-meta {
+  margin: 6px 0 0;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.related-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.related-task-actions {
+  margin-top: 12px;
+}
+
 @media (max-width: 768px) {
   .page-toolbar {
     justify-content: stretch;
@@ -600,9 +787,15 @@ function saveViewStrategy(): void {
     grid-template-columns: 1fr;
   }
 
+  .strategy-dialog-hero,
+  .tab-section-head,
   .param-edit-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .related-task-head {
+    flex-direction: column;
   }
 }
 </style>
