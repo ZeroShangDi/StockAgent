@@ -286,8 +286,13 @@
       :close-on-click-modal="false"
     >
       <div class="task-drawer-shell">
-        <el-steps :active="taskStepIndex" finish-status="success" simple class="task-steps">
-          <el-step v-for="step in taskStepItems" :key="step.title" :title="step.title" />
+        <el-steps :active="taskStepIndex" finish-status="success" align-center class="task-steps">
+          <el-step
+            v-for="step in taskStepItems"
+            :key="step.title"
+            :title="step.title"
+            :description="step.description"
+          />
         </el-steps>
 
         <section class="task-step-card">
