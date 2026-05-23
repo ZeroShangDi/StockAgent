@@ -405,9 +405,14 @@
               <el-row v-if="taskForm.target_scope.scope_type === 'trade_account'" :gutter="12">
                 <el-col :span="12">
                   <el-form-item label="交割单">
-                    <el-select v-model="targetParams.trade_review_group_id" style="width: 100%" @change="normalizeTaskScope">
-                      <el-option label="实盘训练账户" value="training_account" />
-                      <el-option label="模拟观察账户" value="simulation_watch" />
+                    <el-select v-model="targetParams.trade_review_group_id" :loading="resourceLoading" style="width: 100%" @change="normalizeTaskScope">
+                      <el-option
+                        v-for="group in tradeReviewAccountOptions"
+                        :key="group.value"
+                        :label="group.label"
+                        :value="group.value"
+                      />
+                      <el-option v-if="tradeReviewAccountOptions.length === 0" label="暂无交割单账户" value="" disabled />
                     </el-select>
                   </el-form-item>
                 </el-col>
@@ -415,10 +420,14 @@
               <el-row v-else-if="taskForm.target_scope.scope_type === 'stock_pool'" :gutter="12">
                 <el-col :span="12">
                   <el-form-item label="股池分组">
-                    <el-select v-model="targetParams.stock_pool_id" style="width: 100%" @change="normalizeTaskScope">
-                      <el-option label="候选池" value="candidate_pool" />
-                      <el-option label="观察池" value="watch_pool" />
-                      <el-option label="确认池" value="confirm_pool" />
+                    <el-select v-model="targetParams.stock_pool_id" :loading="resourceLoading" style="width: 100%" @change="normalizeTaskScope">
+                      <el-option
+                        v-for="pool in stockPoolOptions"
+                        :key="pool.value"
+                        :label="pool.label"
+                        :value="pool.value"
+                      />
+                      <el-option v-if="stockPoolOptions.length === 0" label="暂无股池分组" value="" disabled />
                     </el-select>
                   </el-form-item>
                 </el-col>
@@ -439,10 +448,13 @@
                 </el-col>
                 <el-col v-if="['backtest', 'sim_trade'].includes(taskForm.scene_type)" :span="12">
                   <el-form-item label="交割单账户">
-                    <el-select v-model="targetParams.trade_review_group_id" style="width: 100%" @change="normalizeTaskScope">
-                      <el-option label="创建新交割单账户" value="auto_create" />
-                      <el-option label="实盘训练账户" value="training_account" />
-                      <el-option label="模拟观察账户" value="simulation_watch" />
+                    <el-select v-model="targetParams.trade_review_group_id" :loading="resourceLoading" style="width: 100%" @change="normalizeTaskScope">
+                      <el-option
+                        v-for="group in creatableTradeReviewAccountOptions"
+                        :key="group.value"
+                        :label="group.label"
+                        :value="group.value"
+                      />
                     </el-select>
                   </el-form-item>
                 </el-col>
@@ -544,28 +556,24 @@
 
                   <template v-if="action.action_type === 'notify'">
                     <el-row :gutter="12">
-                      <el-col :span="8">
+                      <el-col :span="12">
                         <el-form-item label="通知渠道">
-                          <el-select v-model="action.params.channel_id" style="width: 100%">
-                            <el-option label="站内通知" value="in_app" />
-                            <el-option label="企业微信" value="wechat_work" />
+                          <el-select v-model="action.params.notification_channel_id" :loading="resourceLoading" style="width: 100%">
+                            <el-option
+                              v-for="channel in notificationChannelOptions"
+                              :key="channel.value"
+                              :label="channel.label"
+                              :value="channel.value"
+                            />
                           </el-select>
                         </el-form-item>
                       </el-col>
-                      <el-col :span="8">
-                        <el-form-item label="通知级别">
-                          <el-select v-model="action.params.notify_level" style="width: 100%">
-                            <el-option label="普通" value="normal" />
-                            <el-option label="重要" value="important" />
-                          </el-select>
-                        </el-form-item>
-                      </el-col>
-                      <el-col :span="8">
-                        <el-form-item label="冷却时间">
-                          <el-select v-model="action.params.cooldown_minutes" style="width: 100%">
-                            <el-option label="不限制" :value="0" />
-                            <el-option label="5 分钟" :value="5" />
-                            <el-option label="30 分钟" :value="30" />
+                      <el-col :span="12">
+                        <el-form-item label="通知频率">
+                          <el-select v-model="action.params.alert_frequency" style="width: 100%">
+                            <el-option label="每日一次" value="daily_once" />
+                            <el-option label="提醒后关闭" value="once_then_disable" />
+                            <el-option label="不限次数" value="unlimited" />
                           </el-select>
                         </el-form-item>
                       </el-col>
@@ -576,9 +584,14 @@
                     <el-row :gutter="12">
                       <el-col :span="12">
                         <el-form-item label="目标股池">
-                          <el-select v-model="action.params.target_pool_id" style="width: 100%">
-                            <el-option label="候选池" value="candidate_pool" />
-                            <el-option label="观察池" value="watch_pool" />
+                          <el-select v-model="action.params.target_pool_id" :loading="resourceLoading" style="width: 100%">
+                            <el-option
+                              v-for="pool in stockPoolOptions"
+                              :key="pool.value"
+                              :label="pool.label"
+                              :value="pool.value"
+                            />
+                            <el-option v-if="stockPoolOptions.length === 0" label="暂无股池分组" value="" disabled />
                           </el-select>
                         </el-form-item>
                       </el-col>
@@ -596,18 +609,24 @@
                   <template v-else-if="action.action_type === 'pool_transition'">
                     <el-row :gutter="12">
                       <el-col :span="12">
-                        <el-form-item label="流转方向">
-                          <el-select v-model="action.params.transition" style="width: 100%">
-                            <el-option label="观察池 -> 确认池" value="watch_to_confirm" />
-                            <el-option label="候选池 -> 淘汰池" value="candidate_to_rejected" />
+                        <el-form-item label="流转方式">
+                          <el-select v-model="action.params.transition_mode" style="width: 100%">
+                            <el-option label="复制到目标股池" value="copy" />
+                            <el-option label="移动到目标股池" value="move" />
+                            <el-option label="从当前股池删除" value="delete" />
                           </el-select>
                         </el-form-item>
                       </el-col>
-                      <el-col :span="12">
-                        <el-form-item label="流转原因">
-                          <el-select v-model="action.params.reason_tag" style="width: 100%">
-                            <el-option label="策略信号触发" value="strategy_signal" />
-                            <el-option label="风险条件触发" value="risk_signal" />
+                      <el-col v-if="action.params.transition_mode !== 'delete'" :span="12">
+                        <el-form-item label="目标股池">
+                          <el-select v-model="action.params.target_pool_id" :loading="resourceLoading" style="width: 100%">
+                            <el-option
+                              v-for="pool in stockPoolOptions"
+                              :key="pool.value"
+                              :label="pool.label"
+                              :value="pool.value"
+                            />
+                            <el-option v-if="stockPoolOptions.length === 0" label="暂无股池分组" value="" disabled />
                           </el-select>
                         </el-form-item>
                       </el-col>
@@ -640,11 +659,15 @@
                     <el-row :gutter="12">
                       <el-col :span="12">
                         <el-form-item label="结果分组">
-                          <el-select v-model="action.params.trade_review_group_id" style="width: 100%">
+                          <el-select v-model="action.params.trade_review_group_id" :loading="resourceLoading" style="width: 100%">
                             <el-option label="使用目标范围中的交割单账户" value="use_scope_account" />
                             <el-option label="自动新建交割单分组" value="auto_create" />
-                            <el-option label="实盘训练账户" value="training_account" />
-                            <el-option label="模拟观察账户" value="simulation_watch" />
+                            <el-option
+                              v-for="group in tradeReviewAccountOptions"
+                              :key="group.value"
+                              :label="group.label"
+                              :value="group.value"
+                            />
                           </el-select>
                         </el-form-item>
                       </el-col>
@@ -734,6 +757,10 @@ import {
   listStrategyDefinitions,
   listStrategySceneTasks,
 } from '@/api/modules/strategy-v2'
+import { stockPickerApi, type StockPoolSummary } from '@/api/modules/stock-picker'
+import { tradeReviewApi, type TradeReviewGroupSummary } from '@/api/modules/trade-review'
+import { userApi } from '@/api/modules/user'
+import type { NotificationChannel } from '@/api/types'
 import {
   STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
@@ -824,6 +851,9 @@ const sceneOptions = [
 
 const strategies = ref<StrategyDefinition[]>([])
 const tasks = ref<StrategySceneTask[]>([])
+const stockPools = ref<StockPoolSummary[]>([])
+const tradeReviewGroups = ref<TradeReviewGroupSummary[]>([])
+const notificationChannels = ref<NotificationChannel[]>([])
 const selectedStrategy = ref<StrategyDefinition | null>(null)
 const keyword = ref('')
 const sceneFilter = ref<'all' | StrategySceneType>('all')
@@ -836,6 +866,7 @@ const viewActiveTab = ref<'overview' | 'params' | 'tasks'>('overview')
 const taskStepIndex = ref(0)
 const taskSubmitting = ref(false)
 const overrideStrategyParams = ref(false)
+const resourceLoading = ref(false)
 
 const formState = reactive<{
   name: string
@@ -859,8 +890,8 @@ const taskStepItems = [
 
 const taskScopeCatalog: TaskScopeOption[] = [
   { option_key: 'watchlist', label: '自选股', scope_type: 'watchlist', summary: '当前用户自选股', description: '适合从熟悉标的中筛选或监听。', supported_scenes: ['scan', 'listen'] },
-  { option_key: 'trade_account', label: '持仓股/交易账户', scope_type: 'trade_account', scope_id: 'training_account', scope_name: '实盘训练账户', summary: '交割单：实盘训练账户', description: '从交割单分组推导当前持仓。', supported_scenes: ['scan', 'listen'] },
-  { option_key: 'stock_pool', label: '股池分组', scope_type: 'stock_pool', scope_id: 'watch_pool', scope_name: '观察池', summary: '股池：观察池', description: '适合候选池、观察池二次筛选与流转。', supported_scenes: ['scan', 'listen'] },
+  { option_key: 'trade_account', label: '持仓股/交易账户', scope_type: 'trade_account', summary: '交割单持仓', description: '从交割单分组推导当前持仓。', supported_scenes: ['scan', 'listen'] },
+  { option_key: 'stock_pool', label: '股池分组', scope_type: 'stock_pool', summary: '现有股池分组', description: '适合候选池、观察池二次筛选与流转。', supported_scenes: ['scan', 'listen'] },
   { option_key: 'all_market', label: '全市场排除 ST', scope_type: 'all_market', summary: '全市场 · 排除 ST · 默认最近三个月', description: '选股/回测可选时间段；模拟需要绑定交易账户。', supported_scenes: ['scan', 'listen', 'backtest', 'sim_trade'] },
   { option_key: 'custom_stock_list', label: '自定义股票列表', scope_type: 'custom_stock_list', summary: '当前任务自定义股票列表', description: '列表存储在当前任务下，类似旧市场监听股票列表。', supported_scenes: ['listen'] },
   { option_key: 'index', label: '指数', scope_type: 'index', scope_id: '000001.SH', scope_name: '上证指数', summary: '指数：上证指数', description: '用于指数变化与市场情绪监听。', supported_scenes: ['listen'] },
@@ -917,17 +948,19 @@ const taskForm = reactive<TaskDialogForm>({
 })
 
 const targetParams = reactive<TaskTargetParams>({
-  trade_review_group_id: 'training_account',
-  stock_pool_id: 'watch_pool',
-  stock_pool_name: '观察池',
+  trade_review_group_id: '',
+  stock_pool_id: '',
+  stock_pool_name: '',
   date_range: [],
   ts_codes_text: '',
   index_code: '000001.SH',
 })
 
 onMounted(async () => {
-  strategies.value = await listStrategyDefinitions()
-  tasks.value = await listStrategySceneTasks()
+  await Promise.all([
+    loadStrategyPageData(),
+    loadTaskResources(),
+  ])
 })
 
 const filteredStrategies = computed(() => {
@@ -949,17 +982,71 @@ const currentTaskStep = computed(() => taskStepItems[taskStepIndex.value])
 const taskScopeOptions = computed(() => taskScopeCatalog)
 const taskScheduleOptions = computed(() => taskScheduleCatalog)
 const taskActionOptions = computed(() => taskActionCatalog)
+const stockPoolOptions = computed(() => stockPools.value.map((pool) => ({
+  label: `${pool.name}（${pool.pool_type} · ${pool.stock_count}只）`,
+  value: pool.pool_id,
+})))
+const tradeReviewAccountOptions = computed(() => tradeReviewGroups.value.map((group) => ({
+  label: `${group.name}（${group.trade_record_count}笔成交）`,
+  value: group.group_id,
+})))
+const creatableTradeReviewAccountOptions = computed(() => [
+  { label: '创建新交割单账户', value: 'auto_create' },
+  ...tradeReviewAccountOptions.value,
+])
+const notificationChannelOptions = computed(() => [
+  { label: '系统默认（企业微信）', value: '' },
+  ...notificationChannels.value.map((channel) => ({
+    label: `${channel.name}（${channel.provider === 'dingtalk' ? '钉钉' : '企业微信'}）`,
+    value: channel.channel_id,
+  })),
+])
 const taskActionSummary = computed(() => {
   if (taskForm.actions.length === 0) return '未选择动作'
   return taskForm.actions
     .map((item) => `${item.trigger_signals.map(signalLabel).join('/')} -> ${STRATEGY_ACTION_LABELS[item.action_type]}`)
     .join('；')
 })
-const canAddTaskActionRule = computed(() => taskActionOptionsByScene[taskForm.scene_type].length > 0)
+const canAddTaskActionRule = computed(() => taskActionOptionsByScene[taskForm.scene_type].some((actionType) => !isTaskActionDisabled(actionType)))
 
 watch(() => taskForm.scene_type, (scene) => {
   normalizeTaskForm(scene)
 })
+
+async function loadStrategyPageData(): Promise<void> {
+  strategies.value = await listStrategyDefinitions()
+  tasks.value = await listStrategySceneTasks()
+}
+
+async function loadTaskResources(): Promise<void> {
+  resourceLoading.value = true
+  try {
+    const [poolResult, groupResult, channelResult] = await Promise.allSettled([
+      stockPickerApi.listPools(),
+      tradeReviewApi.listGroups(),
+      userApi.getNotificationChannels(),
+    ])
+
+    if (poolResult.status === 'fulfilled') {
+      stockPools.value = poolResult.value.items || []
+    }
+    if (groupResult.status === 'fulfilled') {
+      tradeReviewGroups.value = groupResult.value.items || []
+    }
+    if (channelResult.status === 'fulfilled') {
+      notificationChannels.value = channelResult.value || []
+    }
+
+    if (poolResult.status === 'rejected' || groupResult.status === 'rejected' || channelResult.status === 'rejected') {
+      ElMessage.warning('部分任务资源加载失败，创建任务时可稍后重试')
+    }
+
+    applyDefaultTargetParams()
+  }
+  finally {
+    resourceLoading.value = false
+  }
+}
 
 function handleCommand(command: string, strategyKey: string): void {
   if (command === 'view') {
@@ -1188,13 +1275,19 @@ function resetTaskForm(): void {
   }
   taskForm.notes = ''
   taskForm.actions = []
-  targetParams.trade_review_group_id = 'training_account'
-  targetParams.stock_pool_id = 'watch_pool'
-  targetParams.stock_pool_name = '观察池'
+  applyDefaultTargetParams()
+  taskStepIndex.value = 0
+}
+
+function applyDefaultTargetParams(): void {
+  const firstTradeGroup = tradeReviewGroups.value[0]
+  const firstStockPool = stockPools.value[0]
+  targetParams.trade_review_group_id = firstTradeGroup?.group_id || 'auto_create'
+  targetParams.stock_pool_id = firstStockPool?.pool_id || ''
+  targetParams.stock_pool_name = firstStockPool?.name || ''
   targetParams.date_range = []
   targetParams.ts_codes_text = ''
   targetParams.index_code = '000001.SH'
-  taskStepIndex.value = 0
 }
 
 function normalizeTaskForm(scene: StrategySceneType): void {
@@ -1285,9 +1378,14 @@ function normalizeTaskSchedule(): void {
 }
 
 function defaultTaskActions(scene: StrategySceneType): StrategyTaskActionInput[] {
-  if (scene === 'scan') return (['add_to_pool', 'temp_list'] as StrategyActionType[]).map(makeTaskAction)
-  if (scene === 'listen') return (['notify'] as StrategyActionType[]).map(makeTaskAction)
-  if (scene === 'backtest' || scene === 'sim_trade') return (['paper_trade'] as StrategyActionType[]).map(makeTaskAction)
+  const preferredActions: Record<StrategySceneType, StrategyActionType[]> = {
+    scan: ['add_to_pool', 'temp_list'],
+    listen: ['notify'],
+    backtest: ['paper_trade'],
+    sim_trade: ['paper_trade'],
+  }
+  const actions = preferredActions[scene].filter((actionType) => !isTaskActionDisabled(actionType))
+  if (actions.length > 0) return actions.map(makeTaskAction)
   return []
 }
 
@@ -1309,9 +1407,9 @@ function makeTaskAction(actionType: StrategyActionType): StrategyTaskActionInput
 }
 
 function defaultActionParams(actionType: StrategyActionType): Record<string, string | number | boolean | undefined> {
-  if (actionType === 'notify') return { channel_id: 'in_app', notify_level: 'normal', cooldown_minutes: 5 }
-  if (actionType === 'add_to_pool') return { target_pool_id: 'candidate_pool', duplicate_policy: 'skip' }
-  if (actionType === 'pool_transition') return { transition: 'watch_to_confirm', reason_tag: 'strategy_signal' }
+  if (actionType === 'notify') return { notification_channel_id: '', alert_frequency: 'daily_once' }
+  if (actionType === 'add_to_pool') return { target_pool_id: defaultStockPoolId(), duplicate_policy: 'skip' }
+  if (actionType === 'pool_transition') return { transition_mode: 'copy', target_pool_id: defaultStockPoolId() }
   if (actionType === 'temp_list') return { list_usage: 'manual_review', ttl_days: 1 }
   if (actionType === 'paper_trade') {
     return {
@@ -1338,7 +1436,7 @@ function isTaskScheduleDisabled(option: TaskScheduleOption): boolean {
 function isTaskActionDisabled(actionType: StrategyActionType): boolean {
   if (!taskActionOptionsByScene[taskForm.scene_type].includes(actionType)) return true
   if (actionType === 'notify') return taskForm.scene_type !== 'listen'
-  if (actionType === 'add_to_pool') return !isStockScope(taskForm.target_scope.scope_type)
+  if (actionType === 'add_to_pool') return !isStockScope(taskForm.target_scope.scope_type) || stockPools.value.length === 0
   if (actionType === 'pool_transition') return taskForm.target_scope.scope_type !== 'stock_pool'
   if (actionType === 'temp_list') return taskForm.schedule.mode !== 'once'
   if (actionType === 'paper_trade') return !['backtest', 'sim_trade'].includes(taskForm.scene_type)
@@ -1442,7 +1540,8 @@ function buildTargetSummary(option: TaskScopeOption, params: Record<string, unkn
   if (option.scope_type === 'stock_pool') return `股池：${params.scope_name || option.scope_name || ''}`
   if (option.scope_type === 'all_market') {
     const range = params.start_date && params.end_date ? `${params.start_date} 至 ${params.end_date}` : '默认最近三个月'
-    return `全市场 · 排除 ST · ${range}`
+    const tradeAccount = typeof params.trade_review_group_id === 'string' ? tradeAccountLabel(params.trade_review_group_id) : ''
+    return tradeAccount ? `全市场 · 排除 ST · ${range} · ${tradeAccount}` : `全市场 · 排除 ST · ${range}`
   }
   if (option.scope_type === 'custom_stock_list') {
     const count = Array.isArray(params.ts_codes) ? params.ts_codes.length : 0
@@ -1453,15 +1552,16 @@ function buildTargetSummary(option: TaskScopeOption, params: Record<string, unkn
 }
 
 function tradeAccountLabel(groupId: string): string {
-  if (groupId === 'simulation_watch') return '模拟观察账户'
   if (groupId === 'auto_create') return '创建新交割单账户'
-  return '实盘训练账户'
+  return tradeReviewGroups.value.find((group) => group.group_id === groupId)?.name || '未选择交割单账户'
 }
 
 function stockPoolLabel(poolId: string): string {
-  if (poolId === 'candidate_pool') return '候选池'
-  if (poolId === 'confirm_pool') return '确认池'
-  return '观察池'
+  return stockPools.value.find((pool) => pool.pool_id === poolId)?.name || '未选择股池'
+}
+
+function defaultStockPoolId(): string {
+  return stockPools.value[0]?.pool_id || ''
 }
 
 function indexLabel(indexCode: string): string {
@@ -1500,6 +1600,14 @@ function validateTaskStep(step = taskStepIndex.value): boolean {
     ElMessage.warning('请填写自定义股票列表')
     return false
   }
+  if (step === 2 && taskForm.target_scope.scope_type === 'trade_account' && (!targetParams.trade_review_group_id || targetParams.trade_review_group_id === 'auto_create')) {
+    ElMessage.warning('请选择一个已有交割单账户')
+    return false
+  }
+  if (step === 2 && taskForm.target_scope.scope_type === 'stock_pool' && !targetParams.stock_pool_id) {
+    ElMessage.warning('请选择股池分组')
+    return false
+  }
   if (step === 2 && ['backtest', 'sim_trade'].includes(taskForm.scene_type) && taskForm.target_scope.scope_type === 'all_market' && !targetParams.trade_review_group_id) {
     ElMessage.warning('回测/模拟任务需要选择交割单账户')
     return false
@@ -1519,6 +1627,14 @@ function validateTaskStep(step = taskStepIndex.value): boolean {
     }
     if (taskForm.actions.some((action) => action.trigger_signals.length === 0)) {
       ElMessage.warning('每个动作至少选择一个触发信号')
+      return false
+    }
+    if (taskForm.actions.some((action) => action.action_type === 'add_to_pool' && !action.params.target_pool_id)) {
+      ElMessage.warning('加入股池动作需要选择目标股池')
+      return false
+    }
+    if (taskForm.actions.some((action) => action.action_type === 'pool_transition' && action.params.transition_mode !== 'delete' && !action.params.target_pool_id)) {
+      ElMessage.warning('股池流转复制/移动时需要选择目标股池')
       return false
     }
   }
