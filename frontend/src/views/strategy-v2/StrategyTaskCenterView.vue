@@ -228,20 +228,20 @@
     <el-dialog v-model="createDialogVisible" :title="dialogTitle" width="860px" :close-on-click-modal="false">
       <div class="dialog-shell">
         <section class="form-panel">
-          <div class="wizard-steps">
-            <button
-              v-for="(step, index) in createStepItems"
-              :key="step.title"
-              type="button"
-              :class="['wizard-step', { active: createStepIndex === index, done: index < createStepIndex }]"
-              @click="jumpToCreateStep(index)"
-            >
-              <span>{{ index + 1 }}</span>
-              <div>
-                <strong>{{ step.title }}</strong>
-                <small>{{ step.description }}</small>
-              </div>
-            </button>
+          <div class="steps-shell">
+            <el-steps :active="createStepIndex" finish-status="success" align-center class="task-create-steps">
+              <el-step
+                v-for="step in createStepItems"
+                :key="step.title"
+                :title="step.title"
+                :description="step.description"
+              />
+            </el-steps>
+          </div>
+
+          <div class="step-panel-head">
+            <strong>{{ currentCreateStep.title }}</strong>
+            <p>{{ currentCreateStep.description }}</p>
           </div>
 
           <el-form label-position="top">
@@ -650,17 +650,6 @@ function nextCreateStep(): void {
 
 function prevCreateStep(): void {
   createStepIndex.value = Math.max(createStepIndex.value - 1, 0)
-}
-
-function jumpToCreateStep(index: number): void {
-  if (index <= createStepIndex.value) {
-    createStepIndex.value = index
-    return
-  }
-  for (let step = createStepIndex.value; step < index; step += 1) {
-    if (!validateCreateStep(step)) return
-  }
-  createStepIndex.value = index
 }
 
 async function submitCreateTask(): Promise<void> {
@@ -1185,53 +1174,48 @@ function sceneDetail(scene: StrategySceneType): string {
   gap: 20px;
 }
 
-.wizard-steps {
-  display: grid;
-  gap: 10px;
+.form-panel {
+  min-width: 0;
+}
+
+.steps-shell {
+  padding: 14px 16px 10px;
+  border-radius: 18px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.76);
+  margin-bottom: 16px;
+}
+
+.task-create-steps :deep(.el-step__title) {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.task-create-steps :deep(.el-step__description) {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.step-panel-head {
   margin-bottom: 18px;
 }
 
-.wizard-step {
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: 18px;
-  border: 1px solid var(--line-soft);
-  background: rgba(255, 255, 255, 0.74);
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 12px;
-  text-align: left;
-}
-
-.wizard-step.active {
-  border-color: var(--line-strong);
-  background: linear-gradient(180deg, rgba(47, 95, 208, 0.08), rgba(255, 255, 255, 0.86));
-}
-
-.wizard-step.done span {
-  background: rgba(22, 163, 74, 0.14);
-  color: #18884b;
-}
-
-.wizard-step span {
-  width: 34px;
-  height: 34px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  background: rgba(47, 95, 208, 0.12);
-  color: var(--accent);
-  font-weight: 700;
-}
-
-.wizard-step strong {
+.step-panel-head strong {
   display: block;
+  font-size: 18px;
+  color: #0f172a;
 }
 
-.wizard-step small,
+.step-panel-head p,
 .wizard-side-card p,
 .review-row span {
   color: var(--ink-soft);
+}
+
+.step-panel-head p {
+  margin: 6px 0 0;
+  line-height: 1.6;
 }
 
 .action-panel {
