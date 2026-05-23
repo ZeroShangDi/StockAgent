@@ -19,6 +19,10 @@ export const strategyV2Api = {
     return api.get<ListResponse<StrategySceneTask>>('/strategy-v2/tasks').then((response) => response.items)
   },
 
+  getTask(taskId: string): Promise<StrategySceneTask> {
+    return api.get(`/strategy-v2/tasks/${taskId}`)
+  },
+
   createTask(payload: CreateStrategySceneTaskInput): Promise<StrategySceneTask> {
     return api.post('/strategy-v2/tasks', payload)
   },
@@ -30,6 +34,10 @@ export async function listStrategyDefinitions(): Promise<StrategyDefinition[]> {
 
 export async function listStrategySceneTasks(): Promise<StrategySceneTask[]> {
   return strategyV2Api.listTasks()
+}
+
+export async function getStrategySceneTask(taskId: string): Promise<StrategySceneTask> {
+  return strategyV2Api.getTask(taskId)
 }
 
 export async function createStrategySceneTask(input: CreateStrategySceneTaskInput): Promise<StrategySceneTask> {

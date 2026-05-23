@@ -55,22 +55,25 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="140" align="right">
+        <el-table-column label="操作" width="240" align="right">
           <template #default="{ row }">
-            <el-dropdown trigger="click" @command="(command) => handleCommand(command, row.strategy_key)">
-              <el-button size="small">
-                操作
-                <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="view">查看</el-dropdown-item>
-                  <el-dropdown-item command="edit">编辑</el-dropdown-item>
-                  <el-dropdown-item command="delete">删除</el-dropdown-item>
-                  <el-dropdown-item command="tasks">查看在运行任务</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+            <div class="table-action-list">
+              <el-button size="small" type="primary" link @click="openViewDialog(row.strategy_key)">查看</el-button>
+              <el-button size="small" type="primary" link @click="openTaskDialogForStrategy(row.strategy_key)">创建任务</el-button>
+              <el-button size="small" type="primary" link @click="openStrategyTasks(row.strategy_key)">任务列表</el-button>
+              <el-dropdown trigger="click" @command="(command) => handleCommand(command, row.strategy_key)">
+                <el-button size="small" link>
+                  更多
+                  <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                    <el-dropdown-item command="delete">删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -1060,19 +1063,18 @@ function handleCommand(command: string, strategyKey: string): void {
     return
   }
 
-  if (command === 'tasks') {
-    router.push({
-      name: 'StrategyTaskCenterV2',
-      query: {
-        strategy: strategyKey,
-      },
-    })
-    return
-  }
-
   if (command === 'delete') {
     void deleteStrategy(strategyKey)
   }
+}
+
+function openStrategyTasks(strategyKey: string): void {
+  router.push({
+    name: 'StrategyTaskCenterV2',
+    query: {
+      strategy: strategyKey,
+    },
+  })
 }
 
 function openCreateDialog(): void {
@@ -1254,6 +1256,17 @@ function createRelatedTask(): void {
   resetTaskForm()
   taskForm.strategy_key = selectedStrategy.value.strategy_key
   taskForm.scene_type = selectedStrategy.value.supported_scenes[0] || 'listen'
+  normalizeTaskForm(taskForm.scene_type)
+  taskDialogVisible.value = true
+}
+
+function openTaskDialogForStrategy(strategyKey: string): void {
+  const strategy = findStrategy(strategyKey)
+  if (!strategy) return
+  selectedStrategy.value = cloneStrategy(strategy)
+  resetTaskForm()
+  taskForm.strategy_key = strategy.strategy_key
+  taskForm.scene_type = strategy.supported_scenes[0] || 'listen'
   normalizeTaskForm(taskForm.scene_type)
   taskDialogVisible.value = true
 }
@@ -1780,7 +1793,7 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  justify-content: flex-start;
+  justify-content: center;
 }
 
 .full-scene-list.align-start {
@@ -1814,12 +1827,15 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 }
 
 .scene-mini-button {
-  width: 26px;
-  height: 26px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #fff;
-  color: #334155;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #d6e0ec;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  line-height: 22px;
   cursor: pointer;
 }
 
@@ -1827,6 +1843,14 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
   border-color: #409eff;
   color: #409eff;
   background: #f8fbff;
+}
+
+.table-action-list {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  white-space: nowrap;
 }
 
 .dialog-footer {

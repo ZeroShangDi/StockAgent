@@ -384,7 +384,7 @@ function toggleFocusMode(): void {
   }
 
   .main-content {
-    padding: 0;
+    padding: 20px;
   }
 }
 
@@ -626,7 +626,7 @@ function toggleFocusMode(): void {
 }
 
 .main-content {
-  padding: 0;
+  padding: 20px;
   flex: 1;
   overflow-x: hidden;
   background: var(--bg-base);

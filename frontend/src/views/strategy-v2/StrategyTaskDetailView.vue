@@ -1,264 +1,126 @@
 <template>
-  <div v-if="task" class="task-detail-page">
-    <section class="hero-card">
-      <div>
-        <p class="eyebrow">Task Detail V2</p>
-        <h1>{{ task.name }}</h1>
-        <p class="description">
-          {{ sceneLabels[task.scene_type] }} · {{ task.strategy_name }} · {{ task.target_scope_summary }}
-        </p>
-      </div>
-      <div class="hero-actions">
-        <el-button @click="router.push({ name: 'StrategyTaskCenterV2', query: { scene: task.scene_type } })">返回任务台</el-button>
-        <el-button plain @click="editTask">编辑任务</el-button>
-        <el-button :type="task.status === 'active' ? 'warning' : 'success'" plain @click="toggleTaskStatus">
-          {{ task.status === 'active' ? '暂停任务' : '启用任务' }}
-        </el-button>
-        <el-button type="primary" plain @click="runNow">立即运行</el-button>
-        <el-button v-if="latestRun" type="primary" @click="openLatestRun">查看最近运行</el-button>
-      </div>
+  <div class="task-detail-page">
+    <section class="detail-toolbar">
+      <el-button size="small" @click="router.push({ name: 'StrategyTaskCenterV2', query: task ? { scene: task.scene_type } : {} })">
+        返回任务列表
+      </el-button>
+      <el-button size="small" @click="loadTask">刷新</el-button>
     </section>
 
-    <section class="top-strip">
-      <article class="strip-card">
-        <span>任务状态</span>
-        <strong>{{ statusLabels[task.status] }}</strong>
-      </article>
-      <article class="strip-card">
-        <span>最近信号数</span>
-        <strong>{{ task.last_signal_count }}</strong>
-      </article>
-      <article class="strip-card">
-        <span>调度方式</span>
-        <strong>{{ task.schedule_label }}</strong>
-      </article>
-      <article class="strip-card emphasis" v-if="latestRun">
-        <span>最近运行</span>
-        <strong>{{ latestRun.title }}</strong>
-      </article>
-    </section>
+    <el-skeleton v-if="loading" :rows="8" animated />
 
-    <section class="workspace-shell">
-      <main class="operations-column">
-        <section class="console-panel">
-          <div class="section-title-row">
-            <div>
-              <span class="section-kicker">运行视角</span>
-              <h2>当前任务不只是配置，而是一个持续运行的场景容器</h2>
-            </div>
-            <el-tag effect="plain" round>{{ sceneLabels[task.scene_type] }}</el-tag>
-          </div>
+    <el-empty v-else-if="!task" description="任务不存在或没有权限访问" />
 
-          <div class="status-grid">
-            <article class="status-card">
-              <span>策略</span>
-              <strong>{{ task.strategy_name }}</strong>
-            </article>
-            <article class="status-card">
-              <span>目标范围</span>
-              <strong>{{ task.target_scope_summary }}</strong>
-            </article>
-            <article class="status-card">
-              <span>动作数量</span>
-              <strong>{{ task.actions.length }}</strong>
-            </article>
-          </div>
-
-          <div class="run-health-grid">
-            <article class="mini-metric">
-              <span>累计运行</span>
-              <strong>{{ runs.length }}</strong>
-            </article>
-            <article class="mini-metric positive">
-              <span>成功率</span>
-              <strong>{{ runSuccessRate }}</strong>
-            </article>
-            <article class="mini-metric warning">
-              <span>最近有效信号</span>
-              <strong>{{ latestEffectiveSignalCount }}</strong>
-            </article>
-          </div>
-
-          <div v-if="latestRun" class="run-brief">
-            <div class="run-brief-head">
-              <div>
-                <span class="section-kicker">最近运行摘要</span>
-                <h3>{{ latestRun.title }}</h3>
-              </div>
-              <el-tag :type="runStatusTagType(latestRun.run_status)" effect="plain" round>
-                {{ runStatusLabel(latestRun.run_status) }}
+    <template v-else>
+      <section class="summary-card">
+        <div class="summary-main">
+          <div>
+            <div class="title-line">
+              <h1>{{ task.name }}</h1>
+              <el-tag :type="statusTagType(task.status)" effect="plain" round>
+                {{ statusLabel(task.status) }}
               </el-tag>
             </div>
-            <p>{{ latestRun.summary }}</p>
-            <div class="metric-list">
-              <article v-for="metric in latestRun.summary_metrics" :key="metric.label" class="mini-metric" :class="metric.tone || 'default'">
-                <span>{{ metric.label }}</span>
-                <strong>{{ metric.value }}</strong>
-              </article>
-            </div>
-            <div v-if="latestRun.next_action_hint" class="next-action-card">
-              <strong>后续建议</strong>
-              <p>{{ latestRun.next_action_hint }}</p>
-            </div>
+            <p>{{ task.notes || '暂无任务说明' }}</p>
           </div>
-
-          <div v-else class="empty-state-card">
-            <strong>这个任务还没有运行记录</strong>
-            <p>先手动运行一轮，确认信号、动作和结果去向是否符合预期，再决定是否长期启用。</p>
+          <div class="summary-actions">
+            <el-button size="small" type="primary" plain @click="router.push({ name: 'StrategyCenterV2', query: { strategy: task.strategy_key } })">
+              查看策略
+            </el-button>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <section class="console-panel">
-          <div class="section-title-row compact">
-            <div>
-              <span class="section-kicker">运行历史</span>
-              <h3>最近运行记录</h3>
-            </div>
-            <span class="panel-tip">{{ runs.length }} 条</span>
+      <section class="metric-grid">
+        <article class="metric-card">
+          <span>场景</span>
+          <strong>{{ sceneLabel(task.scene_type) }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>策略</span>
+          <strong>{{ task.strategy_name }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>调度</span>
+          <strong>{{ task.schedule_label || task.schedule?.label || '-' }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>最近信号</span>
+          <strong>{{ task.last_signal_count || 0 }}</strong>
+        </article>
+      </section>
+
+      <section class="detail-grid">
+        <article class="detail-card span-2">
+          <div class="card-head">
+            <h2>目标范围</h2>
           </div>
-
-          <el-table v-if="runs.length > 0" :data="runs" stripe>
-            <el-table-column prop="title" label="运行标题" min-width="180" />
-            <el-table-column prop="run_status" label="状态" width="120">
-              <template #default="{ row }">
-                {{ runStatusLabel(row.run_status) }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="started_at" label="开始时间" width="160" />
-            <el-table-column label="信号" width="110">
-              <template #default="{ row }">
-                {{ row.signal_breakdown.positive + row.signal_breakdown.negative }}
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="120" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="openRun(row.run_id)">查看</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-empty v-else description="当前还没有运行历史，适合先手动运行一轮。" />
-        </section>
-
-        <section v-if="latestRunItems.length > 0" class="console-panel">
-          <div class="section-title-row compact">
-            <div>
-              <span class="section-kicker">最新明细预览</span>
-              <h3>本轮最值得复核的对象</h3>
-            </div>
+          <div class="scope-summary">
+            <strong>{{ task.target_scope_summary || task.target_scope?.summary || '-' }}</strong>
+            <pre v-if="task.target_scope">{{ formatJson(task.target_scope) }}</pre>
           </div>
+        </article>
 
-          <div class="item-grid">
-            <article v-for="item in latestRunItems" :key="item.item_id" class="item-card">
-              <div class="item-head">
-                <div>
-                  <strong>{{ item.entity_name }}</strong>
-                  <span>{{ item.entity_key }}</span>
-                </div>
-                <span :class="['signal-pill', signalClass(item.signal)]">{{ signalLabel(item.signal) }}</span>
-              </div>
-              <p>{{ item.reason }}</p>
-              <div class="item-meta">
-                <span>强度 {{ Math.round(item.score * 100) }}%</span>
-                <span>{{ item.action_result }}</span>
-              </div>
-            </article>
+        <article class="detail-card">
+          <div class="card-head">
+            <h2>策略参数</h2>
           </div>
-        </section>
-
-        <section v-if="focusCards.length > 0" class="console-panel">
-          <div class="section-title-row compact">
-            <div>
-              <span class="section-kicker">场景焦点</span>
-              <h3>{{ focusSectionTitle }}</h3>
-            </div>
-          </div>
-
-          <div class="focus-grid">
-            <article v-for="card in focusCards" :key="card.title" class="focus-card">
-              <span>{{ card.kicker }}</span>
-              <strong>{{ card.title }}</strong>
-              <p>{{ card.description }}</p>
-            </article>
-          </div>
-        </section>
-      </main>
-
-      <aside class="inspector-column">
-        <section class="console-panel">
-          <div class="section-title-row compact">
-            <div>
-              <span class="section-kicker">任务定义</span>
-              <h3>配置快照</h3>
-            </div>
-          </div>
-
-          <div class="config-list">
-            <div class="config-row">
-              <span>创建时间</span>
-              <strong>{{ task.created_at }}</strong>
-            </div>
-            <div class="config-row">
-              <span>最后更新</span>
-              <strong>{{ task.updated_at }}</strong>
-            </div>
-            <div class="config-row">
-              <span>任务说明</span>
-              <strong>{{ task.notes || '暂无说明' }}</strong>
-            </div>
-          </div>
-        </section>
-
-        <section class="console-panel">
-          <div class="section-title-row compact">
-            <div>
-              <span class="section-kicker">参数快照</span>
-              <h3>当前任务层默认值</h3>
-            </div>
-          </div>
-          <div class="param-list">
-            <article v-for="item in paramsEntries" :key="item.key" class="param-chip">
+          <div v-if="paramEntries.length > 0" class="key-value-list">
+            <div v-for="item in paramEntries" :key="item.key" class="key-value-row">
               <span>{{ item.key }}</span>
               <strong>{{ item.value }}</strong>
-            </article>
-          </div>
-        </section>
-
-        <section class="console-panel">
-          <div class="section-title-row compact">
-            <div>
-              <span class="section-kicker">动作链</span>
-              <h3>信号触发后将发生什么</h3>
             </div>
           </div>
-          <div class="action-list">
-            <article v-for="action in task.actions" :key="action.action_id" class="action-card">
-              <strong>{{ action.label }}</strong>
-              <p>{{ action.summary }}</p>
-            </article>
-          </div>
-        </section>
+          <el-empty v-else description="使用策略默认参数" :image-size="64" />
+        </article>
 
-        <section class="console-panel">
-          <div class="section-title-row compact">
-            <div>
-              <span class="section-kicker">结果去向</span>
-              <h3>这个任务下一步会流到哪里</h3>
+        <article class="detail-card">
+          <div class="card-head">
+            <h2>运行信息</h2>
+          </div>
+          <div class="key-value-list">
+            <div class="key-value-row">
+              <span>最近运行</span>
+              <strong>{{ task.last_run_status ? runStatusLabel(task.last_run_status) : '未运行' }}</strong>
+            </div>
+            <div class="key-value-row">
+              <span>创建时间</span>
+              <strong>{{ formatDateTime(task.created_at) }}</strong>
+            </div>
+            <div class="key-value-row">
+              <span>更新时间</span>
+              <strong>{{ formatDateTime(task.updated_at) }}</strong>
             </div>
           </div>
+        </article>
 
-          <div class="destination-list">
-            <article v-for="item in destinationCards" :key="item.title" class="destination-card">
-              <span>{{ item.kicker }}</span>
-              <strong>{{ item.title }}</strong>
-              <p>{{ item.description }}</p>
-              <el-button v-if="item.routeName" size="small" @click="openRoute(item.routeName)">{{ item.actionLabel }}</el-button>
-            </article>
+        <article class="detail-card span-2">
+          <div class="card-head">
+            <h2>动作规则</h2>
           </div>
-        </section>
-      </aside>
-    </section>
+          <el-table v-if="task.actions.length > 0" :data="task.actions" size="small" stripe>
+            <el-table-column label="动作" min-width="140">
+              <template #default="{ row }">
+                {{ row.label || actionLabel(row.action_type) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="触发信号" width="140">
+              <template #default="{ row }">
+                {{ Array.isArray(row.trigger_signals) ? row.trigger_signals.join(' / ') : '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="启用" width="90">
+              <template #default="{ row }">
+                {{ row.enabled ? '是' : '否' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="说明" min-width="220" prop="summary" show-overflow-tooltip />
+          </el-table>
+          <el-empty v-else description="当前任务没有动作规则" :image-size="64" />
+        </article>
+      </section>
+    </template>
   </div>
-  <el-empty v-else description="任务不存在或尚未初始化" />
 </template>
 
 <script setup lang="ts">
@@ -266,232 +128,78 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
+import { getStrategySceneTask, listStrategySceneTasks } from '@/api/modules/strategy-v2'
 import {
-  getRunItems,
-  getStrategySceneTask,
-  listTaskRuns,
-  runStrategySceneTask,
+  STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
   STRATEGY_TASK_STATUS_LABELS,
-  updateStrategySceneTaskStatus,
 } from '@/mocks/strategyV2'
-import type { StrategySignalValue, StrategySceneTask, StrategyTaskRun, StrategyTaskRunItem, StrategyRunStatus, StrategyTaskStatus } from '@/types/strategy-v2'
+import type {
+  StrategyActionType,
+  StrategyRunStatus,
+  StrategySceneTask,
+  StrategySceneType,
+  StrategyTaskStatus,
+} from '@/types/strategy-v2'
 
 const route = useRoute()
 const router = useRouter()
 
 const task = ref<StrategySceneTask | null>(null)
-const runs = ref<StrategyTaskRun[]>([])
-const latestRunItems = ref<StrategyTaskRunItem[]>([])
+const loading = ref(false)
 
-const sceneLabels = STRATEGY_SCENE_LABELS
-const statusLabels = STRATEGY_TASK_STATUS_LABELS
-
-const paramsEntries = computed(() => {
+const paramEntries = computed(() => {
   if (!task.value) return []
   return Object.entries(task.value.params || {}).map(([key, value]) => ({
     key,
-    value: String(value),
+    value: formatValue(value),
   }))
 })
 
-const latestRun = computed(() => runs.value[0] || null)
-const runSuccessRate = computed(() => {
-  if (runs.value.length === 0) return '0%'
-  const okCount = runs.value.filter((item) => item.run_status === 'success' || item.run_status === 'partial_success').length
-  return `${Math.round((okCount / runs.value.length) * 100)}%`
-})
-const latestEffectiveSignalCount = computed(() => {
-  if (!latestRun.value) return '0'
-  return String(latestRun.value.signal_breakdown.positive + latestRun.value.signal_breakdown.negative)
-})
-const skippedItems = computed(() => latestRunItems.value.filter((item) => item.action_result.includes('无动作') || item.action_result.includes('跳过')))
-const negativeItems = computed(() => latestRunItems.value.filter((item) => item.signal === -1))
-const focusSectionTitle = computed(() => {
-  if (!task.value) return '当前场景重点'
-  if (task.value.scene_type === 'scan') return '候选去留与人工复核'
-  if (task.value.scene_type === 'listen') return '触发、冷却与流转结果'
-  if (task.value.scene_type === 'backtest') return '交割单写入与回放摘要'
-  return '持仓变化与风险结果'
-})
-const focusCards = computed(() => {
-  if (!task.value || !latestRun.value) return []
-  if (task.value.scene_type === 'scan') {
-    return [
-      {
-        kicker: '候选数量',
-        title: `${latestRun.value.signal_breakdown.positive} 个正向候选`,
-        description: '优先把高强度候选送进股池，再决定哪些保留在临时列表中继续观察。',
-      },
-      {
-        kicker: '人工复核',
-        title: `${skippedItems.value.length} 个待继续确认`,
-        description: '扫描任务的重点不是立即交易，而是把不确定但有价值的对象先承接住。',
-      },
-    ]
-  }
-  if (task.value.scene_type === 'listen') {
-    return [
-      {
-        kicker: '触发结果',
-        title: `${latestRun.value.signal_breakdown.positive + latestRun.value.signal_breakdown.negative} 个有效触发`,
-        description: '监听任务要重点核对已通知、已流转以及被冷却机制拦下的对象。',
-      },
-      {
-        kicker: '跳过与冷却',
-        title: `${skippedItems.value.length} 个无动作或跳过`,
-        description: '这些对象最适合检查频率控制、动作条件或池内流转规则是否过严。',
-      },
-    ]
-  }
-  if (task.value.scene_type === 'backtest') {
-    return [
-      {
-        kicker: '回放结果',
-        title: latestRun.value.related_trade_review_group_name || '等待交割单结果',
-        description: '回测任务最终价值在于把结果送进交割单分析，而不是停留在本页摘要。',
-      },
-      {
-        kicker: '中性样本',
-        title: `${skippedItems.value.length} 个未触发保持样本`,
-        description: '这类未触发样本适合后面做分组对照，判断策略是否过于宽松或严格。',
-      },
-    ]
-  }
-  return [
-    {
-      kicker: '风险对象',
-      title: `${negativeItems.value.length} 个负向或预警对象`,
-      description: '模拟交易任务要优先看预警对象和模拟卖出结果，再决定是否要同步复盘。',
-    },
-    {
-      kicker: '结果落点',
-      title: latestRun.value.related_trade_review_group_name || '模拟结果待分析',
-      description: '持仓演进的价值在于把每日动作沉淀到分析链路里，便于后续复盘归因。',
-    },
-  ]
-})
-const destinationCards = computed(() => {
-  if (!task.value) return []
-  if (task.value.scene_type === 'scan') {
-    return [
-      {
-        kicker: '候选承接',
-        title: '进入现有股池',
-        description: '选股结果先承接到股池，再做流转、复盘和人工确认。',
-        routeName: 'StockPools',
-        actionLabel: '打开股池',
-      },
-      {
-        kicker: '运行复核',
-        title: '查看本轮候选',
-        description: '先到运行结果里看强度、原因和是否值得继续观察。',
-        routeName: latestRun.value ? 'StrategyRunDetailV2' : '',
-        actionLabel: '查看最近运行',
-      },
-    ]
-  }
-  if (task.value.scene_type === 'listen') {
-    return [
-      {
-        kicker: '触发留痕',
-        title: '回看最近信号',
-        description: '重点复核已通知、已流转和被冷却跳过的对象。',
-        routeName: latestRun.value ? 'StrategyRunDetailV2' : '',
-        actionLabel: '打开运行结果',
-      },
-      {
-        kicker: '业务落点',
-        title: '检查池内流转',
-        description: '监听结果最终要落到池内变化或提醒动作，而不是停留在任务本身。',
-        routeName: 'StockPools',
-        actionLabel: '查看股池',
-      },
-    ]
-  }
-  return [
-    {
-      kicker: '分析闭环',
-      title: '进入交割单分析',
-      description: '回测和模拟交易的价值在于进入交割单分析页继续看收益与模式归因。',
-      routeName: 'TradeReview',
-      actionLabel: '打开交割单',
-    },
-    {
-      kicker: '结果复核',
-      title: '查看最新运行',
-      description: '先确认模拟成交、风险信号和状态写回是否符合预期。',
-      routeName: latestRun.value ? 'StrategyRunDetailV2' : '',
-      actionLabel: '查看运行结果',
-    },
-  ]
-})
-
 onMounted(async () => {
-  await loadData()
+  await loadTask()
 })
 
-async function loadData(): Promise<void> {
-  const taskId = String(route.params.taskId || '')
-  const taskValue = await getStrategySceneTask(taskId)
-  task.value = taskValue || null
-  runs.value = await listTaskRuns(taskId)
-  if (runs.value[0]) {
-    latestRunItems.value = await getRunItems(runs.value[0].run_id)
-  }
-}
-
-async function runNow(): Promise<void> {
-  if (!task.value) return
-  const run = await runStrategySceneTask(task.value.task_id)
-  if (!run) {
-    ElMessage.error('任务运行失败')
+async function loadTask(): Promise<void> {
+  const taskId = String(route.params.taskId || '').trim()
+  if (!taskId) {
+    task.value = null
     return
   }
-  ElMessage.success('已生成新的运行记录')
-  await loadData()
-  router.push({ name: 'StrategyRunDetailV2', params: { runId: run.run_id } })
-}
 
-async function toggleTaskStatus(): Promise<void> {
-  if (!task.value) return
-  const nextStatus: StrategyTaskStatus = task.value.status === 'active' ? 'paused' : 'active'
-  const updated = await updateStrategySceneTaskStatus(task.value.task_id, nextStatus)
-  if (!updated) {
-    ElMessage.error('任务状态更新失败')
-    return
+  loading.value = true
+  try {
+    task.value = await getStrategySceneTask(taskId)
   }
-  task.value = updated
-  ElMessage.success(nextStatus === 'active' ? '任务已启用' : '任务已暂停')
-}
-
-function openLatestRun(): void {
-  if (!latestRun.value) return
-  router.push({ name: 'StrategyRunDetailV2', params: { runId: latestRun.value.run_id } })
-}
-
-function openRun(runId: string): void {
-  router.push({ name: 'StrategyRunDetailV2', params: { runId } })
-}
-
-function openRoute(routeName: string): void {
-  if (!routeName) return
-  if (routeName === 'StrategyRunDetailV2' && latestRun.value) {
-    router.push({ name: routeName, params: { runId: latestRun.value.run_id } })
-    return
+  catch (error) {
+    try {
+      const tasks = await listStrategySceneTasks()
+      task.value = tasks.find((item) => item.task_id === taskId) || null
+      if (!task.value) {
+        ElMessage.error('任务详情加载失败')
+      }
+    }
+    catch (fallbackError) {
+      console.error(error, fallbackError)
+      task.value = null
+      ElMessage.error('任务详情加载失败')
+    }
   }
-  router.push({ name: routeName })
+  finally {
+    loading.value = false
+  }
 }
 
-function editTask(): void {
-  if (!task.value) return
-  router.push({
-    name: 'StrategyTaskCenterV2',
-    query: {
-      scene: task.value.scene_type,
-      editTask: task.value.task_id,
-    },
-  })
+function sceneLabel(scene: StrategySceneType): string {
+  return STRATEGY_SCENE_LABELS[scene]
+}
+
+function statusLabel(status: StrategyTaskStatus): string {
+  return STRATEGY_TASK_STATUS_LABELS[status]
+}
+
+function actionLabel(action: StrategyActionType): string {
+  return STRATEGY_ACTION_LABELS[action]
 }
 
 function runStatusLabel(status: StrategyRunStatus): string {
@@ -501,359 +209,189 @@ function runStatusLabel(status: StrategyRunStatus): string {
   return '运行中'
 }
 
-function runStatusTagType(status: StrategyRunStatus): 'success' | 'warning' | 'danger' | 'info' {
-  if (status === 'success') return 'success'
-  if (status === 'partial_success') return 'warning'
-  if (status === 'failed') return 'danger'
-  return 'info'
+function statusTagType(status: StrategyTaskStatus): 'success' | 'warning' | 'info' | 'primary' {
+  if (status === 'active') return 'success'
+  if (status === 'paused') return 'warning'
+  if (status === 'draft') return 'info'
+  return 'primary'
 }
 
-function signalLabel(value: StrategySignalValue): string {
-  if (value > 0) return '1'
-  if (value < 0) return '-1'
-  return '0'
+function formatDateTime(value?: string): string {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
-function signalClass(value: StrategySignalValue): string {
-  if (value > 0) return 'positive'
-  if (value < 0) return 'negative'
-  return 'neutral'
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '-'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function formatJson(value: unknown): string {
+  return JSON.stringify(value, null, 2)
 }
 </script>
 
 <style scoped>
 .task-detail-page {
-  --surface-1: linear-gradient(180deg, rgba(252, 253, 255, 0.98), rgba(246, 248, 252, 0.95));
-  --line-soft: rgba(15, 23, 42, 0.08);
-  --line-strong: rgba(42, 82, 190, 0.22);
-  --accent: #2f5fd0;
-  --ink-soft: #5b6473;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-}
-
-.hero-card,
-.strip-card,
-.console-panel,
-.item-card,
-.status-card,
-.mini-metric {
-  border: 1px solid var(--line-soft);
-  background: var(--surface-1);
-  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.07);
-}
-
-.hero-card {
-  border-radius: 28px;
-  padding: 28px;
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.eyebrow,
-.section-kicker {
-  margin: 0 0 10px;
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #6274b7;
-}
-
-.hero-card h1 {
-  margin: 0;
-  font-size: 34px;
-}
-
-.description,
-.run-brief p,
-.action-card p,
-.item-card p,
-.next-action-card p {
-  line-height: 1.7;
-  color: var(--ink-soft);
-}
-
-.hero-actions {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.top-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
-.strip-card {
-  border-radius: 20px;
-  padding: 16px 18px;
+.detail-toolbar,
+.summary-card,
+.metric-card,
+.detail-card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
 }
 
-.strip-card.emphasis {
-  background: linear-gradient(180deg, rgba(47, 95, 208, 0.08), rgba(255, 255, 255, 0.9));
-}
-
-.strip-card span,
-.status-card span,
-.mini-metric span,
-.config-row span,
-.param-chip span,
-.item-head span,
-.item-meta {
-  display: block;
-  color: var(--ink-soft);
-  font-size: 12px;
-}
-
-.strip-card strong,
-.status-card strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 24px;
-}
-
-.workspace-shell {
-  display: grid;
-  grid-template-columns: 1.15fr 0.85fr;
-  gap: 18px;
-}
-
-.operations-column,
-.inspector-column {
+.detail-toolbar {
   display: flex;
-  flex-direction: column;
-  gap: 18px;
+  justify-content: space-between;
+  padding: 12px;
 }
 
-.console-panel {
-  border-radius: 28px;
-  padding: 20px;
+.summary-card {
+  padding: 18px;
 }
 
-.section-title-row,
-.run-brief-head,
-.item-head {
+.summary-main,
+.title-line,
+.card-head {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.section-title-row h2,
-.section-title-row h3,
-.run-brief-head h3 {
+.title-line {
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.title-line h1,
+.card-head h2 {
   margin: 0;
+  color: #0f172a;
 }
 
-.section-title-row h2 {
-  font-size: 24px;
+.title-line h1 {
+  font-size: 22px;
 }
 
-.section-title-row h3,
-.run-brief-head h3 {
-  font-size: 20px;
+.card-head h2 {
+  font-size: 16px;
 }
 
-.section-title-row.compact .panel-tip {
-  color: var(--ink-soft);
-  font-size: 12px;
-}
-
-.status-grid,
-.metric-list,
-.run-health-grid,
-.param-list,
-.item-grid {
-  display: grid;
-  gap: 12px;
-}
-
-.status-grid,
-.metric-list,
-.run-health-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 16px;
-}
-
-.status-card,
-.mini-metric,
-.param-chip,
-.action-card,
-.item-card {
-  border-radius: 18px;
-  padding: 14px;
-}
-
-.run-brief {
-  margin-top: 18px;
-}
-
-.mini-metric.positive strong {
-  color: #16a34a;
-}
-
-.mini-metric.negative strong {
-  color: #dc2626;
-}
-
-.mini-metric.warning strong {
-  color: #d97706;
-}
-
-.mini-metric strong,
-.param-chip strong {
-  display: block;
-  margin-top: 6px;
-}
-
-.next-action-card {
-  margin-top: 14px;
-  border-radius: 18px;
-  border: 1px solid var(--line-strong);
-  background: rgba(47, 95, 208, 0.08);
-  padding: 14px 16px;
-}
-
-.empty-state-card {
-  margin-top: 18px;
-  border-radius: 18px;
-  border: 1px dashed var(--line-strong);
-  background: rgba(255, 255, 255, 0.8);
-  padding: 16px;
-}
-
-.empty-state-card strong {
-  display: block;
-  margin-bottom: 8px;
-}
-
-.empty-state-card p {
-  margin: 0;
-}
-
-.config-list,
-.action-list,
-.destination-list {
-  display: grid;
-  gap: 12px;
-}
-
-.focus-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.config-row {
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--line-soft);
-}
-
-.config-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.config-row strong {
-  display: block;
-  margin-top: 6px;
-  line-height: 1.6;
-}
-
-.param-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.item-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.destination-card {
-  border-radius: 18px;
-  border: 1px solid var(--line-soft);
-  background: rgba(255, 255, 255, 0.76);
-  padding: 14px;
-}
-
-.focus-card span,
-.destination-card span {
-  display: block;
-  color: var(--ink-soft);
-  font-size: 12px;
-}
-
-.focus-card strong,
-.destination-card strong {
-  display: block;
-  margin: 6px 0 8px;
-}
-
-.focus-card p,
-.destination-card p {
-  margin: 0 0 12px;
-  color: var(--ink-soft);
+.summary-card p {
+  margin: 8px 0 0;
+  color: #64748b;
   line-height: 1.7;
 }
 
-.focus-card {
-  border-radius: 18px;
-  border: 1px solid var(--line-soft);
-  background: rgba(255, 255, 255, 0.76);
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-card,
+.detail-card {
   padding: 14px;
 }
 
-.item-head strong {
+.metric-card span,
+.key-value-row span {
   display: block;
+  color: #64748b;
+  font-size: 12px;
 }
 
-.item-meta {
+.metric-card strong {
+  display: block;
+  margin-top: 6px;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.span-2 {
+  grid-column: 1 / -1;
+}
+
+.scope-summary {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.scope-summary pre {
+  max-height: 240px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.key-value-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.key-value-row {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f7;
 }
 
-.signal-pill {
-  min-width: 34px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 700;
+.key-value-row:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
 }
 
-.signal-pill.positive {
-  background: rgba(34, 197, 94, 0.14);
-  color: #1f9f57;
+.key-value-row strong {
+  color: #0f172a;
+  text-align: right;
+  word-break: break-all;
 }
 
-.signal-pill.neutral {
-  background: rgba(148, 163, 184, 0.18);
-  color: #526072;
-}
+@media (max-width: 1080px) {
+  .summary-main,
+  .detail-toolbar {
+    flex-direction: column;
+  }
 
-.signal-pill.negative {
-  background: rgba(239, 68, 68, 0.14);
-  color: #d14343;
-}
-
-@media (max-width: 1200px) {
-  .top-strip,
-  .workspace-shell,
-  .status-grid,
-  .metric-list,
-  .param-list,
-  .item-grid,
-  .focus-grid {
+  .metric-grid,
+  .detail-grid {
     grid-template-columns: 1fr;
   }
 
-  .hero-card,
-  .section-title-row,
-  .run-brief-head {
-    flex-direction: column;
+  .span-2 {
+    grid-column: auto;
   }
 }
 </style>

@@ -53,6 +53,21 @@ async def list_strategy_v2_tasks(user_id: str = Depends(get_current_user_id)) ->
     return {"items": items}
 
 
+@router.get("/tasks/{task_id}", response_model=StrategyV2SceneTaskResponse)
+async def get_strategy_v2_task(
+    task_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> StrategyV2SceneTaskResponse:
+    task = await mongo_manager.find_one(
+        TASK_COLLECTION,
+        {"task_id": task_id, "user_id": user_id},
+        projection={"_id": 0},
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return StrategyV2SceneTaskResponse(**task)
+
+
 @router.post("/tasks", response_model=StrategyV2SceneTaskResponse)
 async def create_strategy_v2_task(
     body: StrategyV2CreateTaskRequest,
