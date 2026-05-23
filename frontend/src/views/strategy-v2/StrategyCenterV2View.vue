@@ -277,15 +277,15 @@
       </template>
     </el-dialog>
 
-    <el-drawer
-      v-model="taskDrawerVisible"
+    <el-dialog
+      v-model="taskDialogVisible"
       title="创建任务"
-      size="560px"
       append-to-body
-      class="task-create-drawer"
+      width="720px"
+      class="task-create-dialog"
       :close-on-click-modal="false"
     >
-      <div class="task-drawer-shell">
+      <div class="task-dialog-shell">
         <el-steps :active="taskStepIndex" finish-status="success" align-center class="task-steps">
           <el-step
             v-for="step in taskStepItems"
@@ -311,7 +311,7 @@
               </el-form-item>
               <el-form-item label="场景类型">
                 <el-select v-model="taskForm.scene_type" style="width: 100%">
-                  <el-option v-for="scene in drawerSceneOptions" :key="scene.value" :label="scene.label" :value="scene.value" />
+                  <el-option v-for="scene in taskSceneOptions" :key="scene.value" :label="scene.label" :value="scene.value" />
                 </el-select>
               </el-form-item>
             </template>
@@ -403,14 +403,14 @@
       </div>
 
       <template #footer>
-        <div class="drawer-footer">
-          <el-button @click="taskDrawerVisible = false">取消</el-button>
+        <div class="dialog-footer">
+          <el-button @click="taskDialogVisible = false">取消</el-button>
           <el-button v-if="taskStepIndex > 0" @click="prevTaskStep">上一步</el-button>
           <el-button v-if="taskStepIndex < taskStepItems.length - 1" type="primary" @click="nextTaskStep">下一步</el-button>
-          <el-button v-else type="primary" :loading="taskSubmitting" @click="submitTaskDrawer">创建任务</el-button>
+          <el-button v-else type="primary" :loading="taskSubmitting" @click="submitTaskDialog">创建任务</el-button>
         </div>
       </template>
-    </el-drawer>
+    </el-dialog>
   </div>
 </template>
 
@@ -461,7 +461,7 @@ const keyword = ref('')
 const sceneFilter = ref<'all' | StrategySceneType>('all')
 const formDialogVisible = ref(false)
 const viewDialogVisible = ref(false)
-const taskDrawerVisible = ref(false)
+const taskDialogVisible = ref(false)
 const formDialogMode = ref<'create' | 'edit'>('create')
 const editingStrategyKey = ref('')
 const viewActiveTab = ref<'overview' | 'params' | 'tasks'>('overview')
@@ -571,7 +571,7 @@ const selectedRelatedTasks = computed(() => {
   if (!selectedStrategy.value) return []
   return tasks.value.filter((item) => item.strategy_key === selectedStrategy.value?.strategy_key)
 })
-const drawerSceneOptions = computed(() => {
+const taskSceneOptions = computed(() => {
   if (!selectedStrategy.value) return []
   return sceneOptions.filter((item) => selectedStrategy.value?.supported_scenes.includes(item.value))
 })
@@ -797,7 +797,7 @@ function createRelatedTask(): void {
   taskForm.strategy_key = selectedStrategy.value.strategy_key
   taskForm.scene_type = selectedStrategy.value.supported_scenes[0] || 'listen'
   normalizeTaskForm(taskForm.scene_type)
-  taskDrawerVisible.value = true
+  taskDialogVisible.value = true
 }
 
 function resetTaskForm(): void {
@@ -880,7 +880,7 @@ function prevTaskStep(): void {
   taskStepIndex.value = Math.max(taskStepIndex.value - 1, 0)
 }
 
-async function submitTaskDrawer(): Promise<void> {
+async function submitTaskDialog(): Promise<void> {
   if (!selectedStrategy.value) return
   if (!validateTaskStep(0) || !validateTaskStep(1) || !validateTaskStep(2)) return
 
@@ -896,7 +896,7 @@ async function submitTaskDrawer(): Promise<void> {
       actions: [...taskForm.actions],
     })
     tasks.value = await listStrategySceneTasks()
-    taskDrawerVisible.value = false
+    taskDialogVisible.value = false
     taskStepIndex.value = 0
     ElMessage.success(`任务“${task.name}”已创建`)
     viewActiveTab.value = 'tasks'
@@ -1185,11 +1185,10 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
   color: #64748b;
 }
 
-.task-drawer-shell {
+.task-dialog-shell {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding-right: 4px;
 }
 
 .task-steps {
@@ -1270,12 +1269,6 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
   font-size: 13px;
   line-height: 1.5;
   color: #0f172a;
-}
-
-.drawer-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
 }
 
 @media (max-width: 768px) {
