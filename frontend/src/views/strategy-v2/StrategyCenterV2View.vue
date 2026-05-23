@@ -109,18 +109,9 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="viewDialogVisible" title="查看策略" width="760px" class="strategy-view-dialog">
+    <el-dialog v-model="viewDialogVisible" :title="selectedStrategy?.name || '查看策略'" width="760px" class="strategy-view-dialog">
       <template v-if="selectedStrategy">
         <div class="strategy-dialog-shell">
-          <div class="strategy-dialog-summary">
-            <strong>{{ selectedStrategy.name }}</strong>
-            <div class="summary-meta">
-              <span>{{ selectedStrategy.supports_state ? '支持跨日记忆' : '无跨日记忆' }}</span>
-              <span>v{{ selectedStrategy.version }}</span>
-              <span>{{ selectedStrategy.impl_type }}</span>
-            </div>
-          </div>
-
           <el-tabs v-model="viewActiveTab" class="strategy-detail-tabs">
             <el-tab-pane label="主要信息" name="overview">
               <section class="tab-section">
@@ -134,6 +125,10 @@
                 </div>
 
                 <div class="overview-grid">
+                  <div class="detail-block span-2">
+                    <span>策略名称</span>
+                    <p>{{ selectedStrategy.name }}</p>
+                  </div>
                   <div class="detail-block span-2">
                     <span>策略描述</span>
                     <p>{{ selectedStrategy.description }}</p>
@@ -696,28 +691,6 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.strategy-dialog-summary {
-  padding: 10px 12px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 8px;
-  background: #fff;
-}
-
-.strategy-dialog-summary strong {
-  display: block;
-  font-size: 16px;
-  color: #0f172a;
-}
-
-.summary-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 8px;
-  font-size: 12px;
-  color: #64748b;
 }
 
 .tab-section {
