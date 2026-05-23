@@ -16,8 +16,11 @@ export type StrategyActionType =
 
 export type StrategyTargetScopeType =
   | 'all_market'
+  | 'watchlist'
   | 'stock_list'
+  | 'custom_stock_list'
   | 'stock_pool'
+  | 'trade_account'
   | 'position_group'
   | 'index'
   | 'event'
@@ -25,6 +28,7 @@ export type StrategyTargetScopeType =
 export type StrategyScheduleMode =
   | 'once'
   | 'manual'
+  | 'scheduled'
   | 'trading_interval'
   | 'daily_time'
   | 'custom'
@@ -81,6 +85,7 @@ export interface StrategyTargetScope {
   index_codes?: string[]
   event_keywords?: string[]
   filters?: Record<string, unknown>
+  params?: Record<string, unknown>
   summary?: string
 }
 
@@ -91,6 +96,7 @@ export interface StrategyScheduleConfig {
   run_once_at?: string
   interval_seconds?: number
   times?: string[]
+  slot?: string
   trading_day_only?: boolean
 }
 

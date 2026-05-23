@@ -396,12 +396,77 @@
                     :disabled="isTaskScopeDisabled(option)"
                   >
                     <div class="task-option-line">
-                      <span>{{ sceneLabel(option.scene_type) }} · {{ option.label }}</span>
-                      <small>{{ option.summary }}；{{ option.description }}</small>
+                      <span>{{ option.label }}</span>
+                      <small>{{ taskScopeOptionHint(option) }}</small>
                     </div>
                   </el-option>
                 </el-select>
               </el-form-item>
+              <el-row v-if="taskForm.target_scope.scope_type === 'trade_account'" :gutter="12">
+                <el-col :span="12">
+                  <el-form-item label="交割单">
+                    <el-select v-model="targetParams.trade_review_group_id" style="width: 100%" @change="normalizeTaskScope">
+                      <el-option label="实盘训练账户" value="training_account" />
+                      <el-option label="模拟观察账户" value="simulation_watch" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row v-else-if="taskForm.target_scope.scope_type === 'stock_pool'" :gutter="12">
+                <el-col :span="12">
+                  <el-form-item label="股池分组">
+                    <el-select v-model="targetParams.stock_pool_id" style="width: 100%" @change="normalizeTaskScope">
+                      <el-option label="候选池" value="candidate_pool" />
+                      <el-option label="观察池" value="watch_pool" />
+                      <el-option label="确认池" value="confirm_pool" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row v-else-if="taskForm.target_scope.scope_type === 'all_market'" :gutter="12">
+                <el-col v-if="['scan', 'backtest'].includes(taskForm.scene_type)" :span="12">
+                  <el-form-item label="时间段">
+                    <el-date-picker
+                      v-model="targetParams.date_range"
+                      type="daterange"
+                      value-format="YYYY-MM-DD"
+                      start-placeholder="开始日期"
+                      end-placeholder="结束日期"
+                      style="width: 100%"
+                      @change="normalizeTaskScope"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col v-if="['backtest', 'sim_trade'].includes(taskForm.scene_type)" :span="12">
+                  <el-form-item label="交割单账户">
+                    <el-select v-model="targetParams.trade_review_group_id" style="width: 100%" @change="normalizeTaskScope">
+                      <el-option label="创建新交割单账户" value="auto_create" />
+                      <el-option label="实盘训练账户" value="training_account" />
+                      <el-option label="模拟观察账户" value="simulation_watch" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-form-item v-else-if="taskForm.target_scope.scope_type === 'custom_stock_list'" label="股票列表">
+                <el-input
+                  v-model="targetParams.ts_codes_text"
+                  type="textarea"
+                  :rows="4"
+                  placeholder="每行一个股票代码，例如 000001.SZ"
+                  @change="normalizeTaskScope"
+                />
+              </el-form-item>
+              <el-row v-else-if="taskForm.target_scope.scope_type === 'index'" :gutter="12">
+                <el-col :span="12">
+                  <el-form-item label="指数">
+                    <el-select v-model="targetParams.index_code" style="width: 100%" @change="normalizeTaskScope">
+                      <el-option label="上证指数" value="000001.SH" />
+                      <el-option label="深证成指" value="399001.SZ" />
+                      <el-option label="创业板指" value="399006.SZ" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
               <el-form-item label="调度方式">
                 <el-select v-model="taskForm.schedule_option_key" style="width: 100%" @change="normalizeTaskSchedule">
                   <el-option
@@ -412,8 +477,8 @@
                     :disabled="isTaskScheduleDisabled(option)"
                   >
                     <div class="task-option-line">
-                      <span>{{ sceneLabel(option.scene_type) }} · {{ option.label }}</span>
-                      <small>{{ option.description }}</small>
+                      <span>{{ option.label }}</span>
+                      <small>{{ taskScheduleOptionHint(option) }}</small>
                     </div>
                   </el-option>
                 </el-select>
@@ -426,7 +491,7 @@
                   <strong>动作规则</strong>
                   <span>每条规则表示：策略返回值命中后，执行一个动作。</span>
                 </div>
-                <el-button size="small" type="primary" plain @click="addTaskActionRule">新增规则</el-button>
+                <el-button size="small" type="primary" plain :disabled="!canAddTaskActionRule" @click="addTaskActionRule">新增规则</el-button>
               </div>
 
               <div v-if="taskForm.actions.length > 0" class="task-action-rule-list">
@@ -576,8 +641,10 @@
                       <el-col :span="12">
                         <el-form-item label="结果分组">
                           <el-select v-model="action.params.trade_review_group_id" style="width: 100%">
+                            <el-option label="使用目标范围中的交割单账户" value="use_scope_account" />
                             <el-option label="自动新建交割单分组" value="auto_create" />
-                            <el-option label="实盘训练账户-模拟交易" value="sim_trade_group" />
+                            <el-option label="实盘训练账户" value="training_account" />
+                            <el-option label="模拟观察账户" value="simulation_watch" />
                           </el-select>
                         </el-form-item>
                       </el-col>
@@ -590,33 +657,21 @@
                           </el-select>
                         </el-form-item>
                       </el-col>
+                      <el-col :span="12">
+                        <el-form-item label="写入方式">
+                          <el-select v-model="action.params.write_mode" style="width: 100%">
+                            <el-option label="回测完成后一次性生成" value="backtest_final" />
+                            <el-option label="模拟实盘每日更新" value="sim_daily_update" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
                     </el-row>
                   </template>
 
-                  <template v-else-if="action.action_type === 'persist_result'">
-                    <el-row :gutter="12">
-                      <el-col :span="12">
-                        <el-form-item label="入库内容">
-                          <el-select v-model="action.params.persist_mode" style="width: 100%">
-                            <el-option label="信号事件 + 运行明细" value="signal_and_items" />
-                            <el-option label="仅运行摘要" value="summary_only" />
-                          </el-select>
-                        </el-form-item>
-                      </el-col>
-                      <el-col :span="12">
-                        <el-form-item label="数据用途">
-                          <el-select v-model="action.params.dataset_usage" style="width: 100%">
-                            <el-option label="任务审计" value="audit" />
-                            <el-option label="后续分析" value="analysis" />
-                          </el-select>
-                        </el-form-item>
-                      </el-col>
-                    </el-row>
-                  </template>
                 </article>
               </div>
               <el-empty v-else description="还没有动作规则" :image-size="72">
-                <el-button type="primary" plain @click="addTaskActionRule">新增规则</el-button>
+                <el-button type="primary" plain :disabled="!canAddTaskActionRule" @click="addTaskActionRule">新增规则</el-button>
               </el-empty>
             </template>
 
@@ -708,6 +763,15 @@ interface TaskDialogForm {
   actions: StrategyTaskActionInput[]
 }
 
+interface TaskTargetParams {
+  trade_review_group_id: string
+  stock_pool_id: string
+  stock_pool_name: string
+  date_range: string[]
+  ts_codes_text: string
+  index_code: string
+}
+
 interface TaskScopeOptionBase {
   label: string
   scope_type: StrategyTargetScopeType
@@ -715,11 +779,12 @@ interface TaskScopeOptionBase {
   description: string
   scope_id?: string
   scope_name?: string
+  supported_scenes: StrategySceneType[]
+  disabled?: boolean
 }
 
 interface TaskScopeOption extends TaskScopeOptionBase {
   option_key: string
-  scene_type: StrategySceneType
 }
 
 interface TaskScheduleOptionBase {
@@ -728,12 +793,13 @@ interface TaskScheduleOptionBase {
   description: string
   interval_seconds?: number
   times?: string[]
+  slot?: string
   trading_day_only?: boolean
+  supported_scenes: StrategySceneType[]
 }
 
 interface TaskScheduleOption extends TaskScheduleOptionBase {
   option_key: string
-  scene_type: StrategySceneType
 }
 
 const router = useRouter()
@@ -789,62 +855,44 @@ const taskStepItems = [
   { title: '确认创建', description: '确认当前任务配置。' },
 ]
 
-const taskScopeOptionsByScene: Record<StrategySceneType, TaskScopeOptionBase[]> = {
-  scan: [
-    { label: '全市场 · 排除 ST', scope_type: 'all_market', summary: '全市场 · 排除 ST · 最近 120 日有交易', description: '适合做日内候选扫描。' },
-    { label: '候选池回看区间', scope_type: 'stock_pool', scope_id: 'candidate_pool', scope_name: '候选池', summary: '候选池 · 最近 20 个交易日回看', description: '适合训练时段筛选与复盘。' },
-  ],
-  listen: [
-    { label: '观察池 + 自选股', scope_type: 'stock_pool', scope_id: 'watch_pool', scope_name: '观察池', summary: '观察池 + 自选股 · 共 63 只', description: '盘中监听最常用范围。' },
-    { label: '持仓组', scope_type: 'position_group', scope_id: 'training_account', scope_name: '实盘训练账户', summary: '持仓组：实盘训练账户', description: '适合盈亏、止盈止损与持仓异动监听。' },
-    { label: '指数与市场宽度', scope_type: 'index', scope_id: 'market_breadth', scope_name: '指数与市场宽度', summary: '指数组 + 市场涨跌家数', description: '适合指数和市场情绪监听。' },
-    { label: '事件监听', scope_type: 'event', scope_id: 'stock_event', scope_name: '个股事件源', summary: '事件源：个股公告 / 新闻 / 异动消息', description: '预留给事件类监听。' },
-  ],
-  backtest: [
-    { label: '训练样本 A', scope_type: 'stock_list', scope_id: 'training_sample_a', scope_name: '训练样本 A', summary: '交割单分组：训练样本 A · 2025Q4 - 2026Q1', description: '历史样本分组回放。' },
-    { label: '候选模式回放', scope_type: 'stock_pool', scope_id: 'candidate_pool', scope_name: '候选池', summary: '候选池样本 · 最近 60 个交易日', description: '适合检验候选模式表现。' },
-  ],
-  sim_trade: [
-    { label: '实盘训练账户', scope_type: 'position_group', scope_id: 'training_account', scope_name: '实盘训练账户', summary: '持仓组：实盘训练账户', description: '按每日数据持续更新模拟持仓。' },
-    { label: '模拟观察账户', scope_type: 'position_group', scope_id: 'simulation_watch', scope_name: '模拟观察账户', summary: '持仓组：模拟观察账户', description: '适合较轻量的策略跟踪。' },
-  ],
-}
+const taskScopeCatalog: TaskScopeOption[] = [
+  { option_key: 'watchlist', label: '自选股', scope_type: 'watchlist', summary: '当前用户自选股', description: '适合从熟悉标的中筛选或监听。', supported_scenes: ['scan', 'listen'] },
+  { option_key: 'trade_account', label: '持仓股/交易账户', scope_type: 'trade_account', scope_id: 'training_account', scope_name: '实盘训练账户', summary: '交割单：实盘训练账户', description: '从交割单分组推导当前持仓。', supported_scenes: ['scan', 'listen'] },
+  { option_key: 'stock_pool', label: '股池分组', scope_type: 'stock_pool', scope_id: 'watch_pool', scope_name: '观察池', summary: '股池：观察池', description: '适合候选池、观察池二次筛选与流转。', supported_scenes: ['scan', 'listen'] },
+  { option_key: 'all_market', label: '全市场排除 ST', scope_type: 'all_market', summary: '全市场 · 排除 ST · 默认最近三个月', description: '选股/回测可选时间段；模拟需要绑定交易账户。', supported_scenes: ['scan', 'listen', 'backtest', 'sim_trade'] },
+  { option_key: 'custom_stock_list', label: '自定义股票列表', scope_type: 'custom_stock_list', summary: '当前任务自定义股票列表', description: '列表存储在当前任务下，类似旧市场监听股票列表。', supported_scenes: ['listen'] },
+  { option_key: 'index', label: '指数', scope_type: 'index', scope_id: '000001.SH', scope_name: '上证指数', summary: '指数：上证指数', description: '用于指数变化与市场情绪监听。', supported_scenes: ['listen'] },
+  { option_key: 'event', label: '事件', scope_type: 'event', summary: '事件源：预留', description: '本期只保留，不开放创建。', supported_scenes: [], disabled: true },
+]
 
-const taskScheduleOptionsByScene: Record<StrategySceneType, TaskScheduleOptionBase[]> = {
-  scan: [
-    { label: '交易日分时扫描', mode: 'daily_time', times: ['09:45', '10:30', '13:45'], trading_day_only: true, description: '兼顾上午与下午。' },
-    { label: '收盘后补扫', mode: 'daily_time', times: ['15:10'], trading_day_only: true, description: '适合盘后统一整理候选。' },
-    { label: '一次性运行', mode: 'once', description: '保存后手动运行一次。' },
-  ],
-  listen: [
-    { label: '每 1 分钟轮询', mode: 'trading_interval', interval_seconds: 60, trading_day_only: true, description: '适合高频异动与风控监听。' },
-    { label: '每 5 分钟轮询', mode: 'trading_interval', interval_seconds: 300, trading_day_only: true, description: '适合低频市场情绪监听。' },
-    { label: '一次性运行', mode: 'once', description: '保存后手动运行一次。' },
-  ],
-  backtest: [
-    { label: '手动运行', mode: 'manual', description: '适合调参数后逐次验证。' },
-    { label: '每日批量回放', mode: 'daily_time', times: ['20:30'], description: '适合夜间统一跑一批样本。' },
-  ],
-  sim_trade: [
-    { label: '收盘后更新', mode: 'daily_time', times: ['15:10'], trading_day_only: true, description: '适合每日准实盘更新。' },
-    { label: '收盘后 + 异常补轮', mode: 'custom', times: ['15:10'], trading_day_only: true, description: '适合带异常提醒的模拟链路。' },
-  ],
-}
+const taskScheduleCatalog: TaskScheduleOption[] = [
+  { option_key: 'once', label: '一次性运行', mode: 'once', description: '适合选股临时筛选和回测执行。', supported_scenes: ['scan', 'backtest'] },
+  { option_key: 'manual', label: '手动运行', mode: 'manual', description: '只保存任务，由用户手动触发。', supported_scenes: ['scan', 'listen', 'backtest', 'sim_trade'] },
+  { option_key: 'pre_market_0900', label: '盘前 9:00', mode: 'scheduled', slot: 'pre_market_0900', times: ['09:00'], trading_day_only: true, description: '交易日前置扫描。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+  { option_key: 'call_auction_0925', label: '竞价 9:25', mode: 'scheduled', slot: 'call_auction_0925', times: ['09:25'], trading_day_only: true, description: '集合竞价阶段。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+  { option_key: 'morning_turn_1000', label: '上午变盘 10:00', mode: 'scheduled', slot: 'morning_turn_1000', times: ['10:00'], trading_day_only: true, description: '上午行情初步确认。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+  { option_key: 'intraday_1m', label: '盘中轮询 1 分钟', mode: 'scheduled', slot: 'intraday_1m', interval_seconds: 60, trading_day_only: true, description: '高频盘中监听。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+  { option_key: 'intraday_5m', label: '盘中轮询 5 分钟', mode: 'scheduled', slot: 'intraday_5m', interval_seconds: 300, trading_day_only: true, description: '常规盘中监听。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+  { option_key: 'intraday_30m', label: '盘中轮询 30 分钟', mode: 'scheduled', slot: 'intraday_30m', interval_seconds: 1800, trading_day_only: true, description: '低频盘中检查。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+  { option_key: 'midday_close_1130', label: '中午收盘 11:30', mode: 'scheduled', slot: 'midday_close_1130', times: ['11:30'], trading_day_only: true, description: '午间复盘。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+  { option_key: 'afternoon_turn_1400', label: '下午变盘 14:00', mode: 'scheduled', slot: 'afternoon_turn_1400', times: ['14:00'], trading_day_only: true, description: '尾盘前确认。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+  { option_key: 'post_market_1505', label: '盘后 15:05', mode: 'scheduled', slot: 'post_market_1505', times: ['15:05'], trading_day_only: true, description: '收盘后整理。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+  { option_key: 'weekly_sat_1200', label: '每周六 12:00', mode: 'scheduled', slot: 'weekly_sat_1200', times: ['12:00'], description: '周末复盘、训练或批处理。', supported_scenes: ['scan', 'listen', 'sim_trade'] },
+]
 
 const taskActionOptionsByScene: Record<StrategySceneType, StrategyActionType[]> = {
-  scan: ['add_to_pool', 'temp_list', 'notify', 'pool_transition', 'persist_result'],
-  listen: ['notify', 'pool_transition', 'add_to_pool', 'temp_list', 'persist_result'],
-  backtest: ['paper_trade', 'persist_result', 'notify'],
-  sim_trade: ['paper_trade', 'notify', 'persist_result'],
+  scan: ['add_to_pool', 'temp_list'],
+  listen: ['notify', 'add_to_pool', 'pool_transition'],
+  backtest: ['paper_trade'],
+  sim_trade: ['paper_trade'],
 }
 
 const taskActionCatalog: Array<{ value: StrategyActionType; label: string; description: string }> = [
   { value: 'notify', label: STRATEGY_ACTION_LABELS.notify, description: '发送提醒，用于监听和风险提示。' },
   { value: 'add_to_pool', label: STRATEGY_ACTION_LABELS.add_to_pool, description: '把候选结果送进现有股池。' },
   { value: 'pool_transition', label: STRATEGY_ACTION_LABELS.pool_transition, description: '在多个股池之间自动流转。' },
-  { value: 'temp_list', label: STRATEGY_ACTION_LABELS.temp_list, description: '保留临时结果供人工筛选。' },
-  { value: 'paper_trade', label: STRATEGY_ACTION_LABELS.paper_trade, description: '写入回测或模拟交易结果。' },
-  { value: 'persist_result', label: STRATEGY_ACTION_LABELS.persist_result, description: '把信号事件和运行明细写入库。' },
+  { value: 'temp_list', label: STRATEGY_ACTION_LABELS.temp_list, description: '一次性运行后生成临时候选池，一天后删除。' },
+  { value: 'paper_trade', label: STRATEGY_ACTION_LABELS.paper_trade, description: '写入模拟交易成交和持仓结果。' },
 ]
 
 const taskForm = reactive<TaskDialogForm>({
@@ -864,6 +912,15 @@ const taskForm = reactive<TaskDialogForm>({
   },
   notes: '',
   actions: [],
+})
+
+const targetParams = reactive<TaskTargetParams>({
+  trade_review_group_id: 'training_account',
+  stock_pool_id: 'watch_pool',
+  stock_pool_name: '观察池',
+  date_range: [],
+  ts_codes_text: '',
+  index_code: '000001.SH',
 })
 
 onMounted(async () => {
@@ -887,26 +944,8 @@ const selectedRelatedTasks = computed(() => {
   return tasks.value.filter((item) => item.strategy_key === selectedStrategy.value?.strategy_key)
 })
 const currentTaskStep = computed(() => taskStepItems[taskStepIndex.value])
-const allTaskScopeOptions = computed<TaskScopeOption[]>(() => {
-  return sceneOptions.flatMap((scene) => {
-    return taskScopeOptionsByScene[scene.value].map((option, index) => ({
-      ...option,
-      scene_type: scene.value,
-      option_key: `${scene.value}:${option.scope_type}:${option.scope_id || index}`,
-    }))
-  })
-})
-const allTaskScheduleOptions = computed<TaskScheduleOption[]>(() => {
-  return sceneOptions.flatMap((scene) => {
-    return taskScheduleOptionsByScene[scene.value].map((option, index) => ({
-      ...option,
-      scene_type: scene.value,
-      option_key: `${scene.value}:${option.mode}:${option.times?.join('-') || option.interval_seconds || index}`,
-    }))
-  })
-})
-const taskScopeOptions = computed(() => allTaskScopeOptions.value)
-const taskScheduleOptions = computed(() => allTaskScheduleOptions.value)
+const taskScopeOptions = computed(() => taskScopeCatalog)
+const taskScheduleOptions = computed(() => taskScheduleCatalog)
 const taskActionOptions = computed(() => taskActionCatalog)
 const taskActionSummary = computed(() => {
   if (taskForm.actions.length === 0) return '未选择动作'
@@ -914,6 +953,7 @@ const taskActionSummary = computed(() => {
     .map((item) => `${item.trigger_signals.map(signalLabel).join('/')} -> ${STRATEGY_ACTION_LABELS[item.action_type]}`)
     .join('；')
 })
+const canAddTaskActionRule = computed(() => taskActionOptionsByScene[taskForm.scene_type].length > 0)
 
 watch(() => taskForm.scene_type, (scene) => {
   normalizeTaskForm(scene)
@@ -1146,6 +1186,12 @@ function resetTaskForm(): void {
   }
   taskForm.notes = ''
   taskForm.actions = []
+  targetParams.trade_review_group_id = 'training_account'
+  targetParams.stock_pool_id = 'watch_pool'
+  targetParams.stock_pool_name = '观察池'
+  targetParams.date_range = []
+  targetParams.ts_codes_text = ''
+  targetParams.index_code = '000001.SH'
   taskStepIndex.value = 0
 }
 
@@ -1159,8 +1205,8 @@ function normalizeTaskForm(scene: StrategySceneType): void {
     taskForm.scene_type = strategy.supported_scenes[0] || 'listen'
   }
 
-  const allowedScopeKeys = allTaskScopeOptions.value
-    .filter((item) => item.scene_type === taskForm.scene_type)
+  const allowedScopeKeys = taskScopeCatalog
+    .filter((item) => !item.disabled && item.supported_scenes.includes(taskForm.scene_type))
     .map((item) => item.option_key)
   if (!taskForm.target_scope_option_key || !allowedScopeKeys.includes(taskForm.target_scope_option_key)) {
     taskForm.target_scope_option_key = allowedScopeKeys[0] || ''
@@ -1169,8 +1215,8 @@ function normalizeTaskForm(scene: StrategySceneType): void {
     taskForm.target_scope = buildTargetScope(taskForm.scene_type, taskForm.target_scope_option_key)
   }
 
-  const allowedScheduleKeys = allTaskScheduleOptions.value
-    .filter((item) => item.scene_type === taskForm.scene_type)
+  const allowedScheduleKeys = taskScheduleCatalog
+    .filter((item) => item.supported_scenes.includes(taskForm.scene_type))
     .map((item) => item.option_key)
   if (!taskForm.schedule_option_key || !allowedScheduleKeys.includes(taskForm.schedule_option_key)) {
     taskForm.schedule_option_key = allowedScheduleKeys[0] || ''
@@ -1190,15 +1236,26 @@ function normalizeTaskForm(scene: StrategySceneType): void {
 }
 
 function buildTargetScope(scene: StrategySceneType, optionKey?: string): StrategyTargetScope {
-  const option = allTaskScopeOptions.value.find((item) => item.scene_type === scene && item.option_key === optionKey)
-    || allTaskScopeOptions.value.find((item) => item.scene_type === scene)
-    || allTaskScopeOptions.value[0]
+  const option = taskScopeCatalog.find((item) => item.option_key === optionKey && item.supported_scenes.includes(scene))
+    || taskScopeCatalog.find((item) => item.supported_scenes.includes(scene) && !item.disabled)
+    || taskScopeCatalog[0]
+  const params = buildTargetParams(option.scope_type, scene)
   return {
     scope_type: option.scope_type,
-    scope_id: option.scope_id,
-    scope_name: option.scope_name,
-    summary: option.summary,
-    filters: option.scope_type === 'all_market' ? { exclude_st: true, recent_trade_days: 120 } : undefined,
+    scope_id: params.scope_id || option.scope_id,
+    scope_name: params.scope_name || option.scope_name,
+    ts_codes: params.ts_codes,
+    index_codes: params.index_codes,
+    summary: buildTargetSummary(option, params),
+    filters: option.scope_type === 'all_market'
+      ? {
+          exclude_st: true,
+          start_date: params.start_date,
+          end_date: params.end_date,
+          recent_months: params.start_date && params.end_date ? undefined : 3,
+        }
+      : undefined,
+    params,
   }
 }
 
@@ -1207,15 +1264,16 @@ function normalizeTaskScope(): void {
 }
 
 function buildSchedule(scene: StrategySceneType, optionKey?: string): StrategyScheduleConfig {
-  const option = allTaskScheduleOptions.value.find((item) => item.scene_type === scene && item.option_key === optionKey)
-    || allTaskScheduleOptions.value.find((item) => item.scene_type === scene)
-    || allTaskScheduleOptions.value[0]
+  const option = taskScheduleCatalog.find((item) => item.option_key === optionKey && item.supported_scenes.includes(scene))
+    || taskScheduleCatalog.find((item) => item.supported_scenes.includes(scene))
+    || taskScheduleCatalog[0]
   return {
     mode: option.mode,
     label: option.label,
     timezone: 'Asia/Shanghai',
     interval_seconds: option.interval_seconds,
     times: option.times,
+    slot: option.slot,
     trading_day_only: option.trading_day_only,
   }
 }
@@ -1226,8 +1284,9 @@ function normalizeTaskSchedule(): void {
 
 function defaultTaskActions(scene: StrategySceneType): StrategyTaskActionInput[] {
   if (scene === 'scan') return (['add_to_pool', 'temp_list'] as StrategyActionType[]).map(makeTaskAction)
-  if (scene === 'listen') return (['notify', 'pool_transition'] as StrategyActionType[]).map(makeTaskAction)
-  return (['paper_trade'] as StrategyActionType[]).map(makeTaskAction)
+  if (scene === 'listen') return (['notify'] as StrategyActionType[]).map(makeTaskAction)
+  if (scene === 'backtest' || scene === 'sim_trade') return (['paper_trade'] as StrategyActionType[]).map(makeTaskAction)
+  return []
 }
 
 function makeTaskAction(actionType: StrategyActionType): StrategyTaskActionInput {
@@ -1252,7 +1311,13 @@ function defaultActionParams(actionType: StrategyActionType): Record<string, str
   if (actionType === 'add_to_pool') return { target_pool_id: 'candidate_pool', duplicate_policy: 'skip' }
   if (actionType === 'pool_transition') return { transition: 'watch_to_confirm', reason_tag: 'strategy_signal' }
   if (actionType === 'temp_list') return { list_usage: 'manual_review', ttl_days: 1 }
-  if (actionType === 'paper_trade') return { trade_review_group_id: 'auto_create', order_side: 'follow_signal' }
+  if (actionType === 'paper_trade') {
+    return {
+      trade_review_group_id: 'use_scope_account',
+      order_side: 'follow_signal',
+      write_mode: taskForm.scene_type === 'backtest' ? 'backtest_final' : 'sim_daily_update',
+    }
+  }
   return { persist_mode: 'signal_and_items', dataset_usage: 'audit' }
 }
 
@@ -1261,22 +1326,29 @@ function isTaskSceneDisabled(scene: StrategySceneType): boolean {
 }
 
 function isTaskScopeDisabled(option: TaskScopeOption): boolean {
-  return option.scene_type !== taskForm.scene_type
+  return Boolean(option.disabled) || !option.supported_scenes.includes(taskForm.scene_type)
 }
 
 function isTaskScheduleDisabled(option: TaskScheduleOption): boolean {
-  return option.scene_type !== taskForm.scene_type
+  return !option.supported_scenes.includes(taskForm.scene_type)
 }
 
 function isTaskActionDisabled(actionType: StrategyActionType): boolean {
-  return !taskActionOptionsByScene[taskForm.scene_type].includes(actionType)
+  if (!taskActionOptionsByScene[taskForm.scene_type].includes(actionType)) return true
+  if (actionType === 'notify') return taskForm.scene_type !== 'listen'
+  if (actionType === 'add_to_pool') return !isStockScope(taskForm.target_scope.scope_type)
+  if (actionType === 'pool_transition') return taskForm.target_scope.scope_type !== 'stock_pool'
+  if (actionType === 'temp_list') return taskForm.schedule.mode !== 'once'
+  if (actionType === 'paper_trade') return !['backtest', 'sim_trade'].includes(taskForm.scene_type)
+  return true
 }
 
 function firstAllowedActionType(scene = taskForm.scene_type): StrategyActionType {
-  return taskActionOptionsByScene[scene][0] || 'notify'
+  return taskActionOptionsByScene[scene].find((actionType) => !isTaskActionDisabled(actionType)) || taskActionOptionsByScene[scene][0] || 'notify'
 }
 
 function addTaskActionRule(): void {
+  if (!canAddTaskActionRule.value) return
   taskForm.actions.push(makeTaskAction(firstAllowedActionType()))
 }
 
@@ -1300,6 +1372,100 @@ function signalLabel(signal: StrategySignalValue): string {
   if (signal === 1) return '1 买入/正向'
   if (signal === -1) return '-1 卖出/反向'
   return '0 观察/无动作'
+}
+
+function taskScopeOptionHint(option: TaskScopeOption): string {
+  if (isTaskScopeDisabled(option)) return `不可选：${option.description}`
+  return `${option.summary}；${option.description}`
+}
+
+function taskScheduleOptionHint(option: TaskScheduleOption): string {
+  if (isTaskScheduleDisabled(option)) return `不可选：${option.description}`
+  return option.description
+}
+
+function isStockScope(scopeType: StrategyTargetScopeType): boolean {
+  return ['watchlist', 'trade_account', 'stock_pool', 'all_market', 'custom_stock_list', 'stock_list', 'position_group'].includes(scopeType)
+}
+
+function buildTargetParams(scopeType: StrategyTargetScopeType, scene: StrategySceneType): Record<string, unknown> & {
+  scope_id?: string
+  scope_name?: string
+  ts_codes?: string[]
+  index_codes?: string[]
+  start_date?: string
+  end_date?: string
+} {
+  if (scopeType === 'trade_account') {
+    return {
+      scope_id: targetParams.trade_review_group_id,
+      scope_name: tradeAccountLabel(targetParams.trade_review_group_id),
+      trade_review_group_id: targetParams.trade_review_group_id,
+    }
+  }
+  if (scopeType === 'stock_pool') {
+    return {
+      scope_id: targetParams.stock_pool_id,
+      scope_name: stockPoolLabel(targetParams.stock_pool_id),
+      stock_pool_id: targetParams.stock_pool_id,
+    }
+  }
+  if (scopeType === 'all_market') {
+    return {
+      start_date: targetParams.date_range[0],
+      end_date: targetParams.date_range[1],
+      exclude_st: true,
+      ...(['backtest', 'sim_trade'].includes(scene) ? { trade_review_group_id: targetParams.trade_review_group_id } : {}),
+    }
+  }
+  if (scopeType === 'custom_stock_list') {
+    const tsCodes = targetParams.ts_codes_text
+      .split(/\s|,|，/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    return { ts_codes: tsCodes }
+  }
+  if (scopeType === 'index') {
+    return {
+      scope_id: targetParams.index_code,
+      scope_name: indexLabel(targetParams.index_code),
+      index_codes: [targetParams.index_code],
+    }
+  }
+  return {}
+}
+
+function buildTargetSummary(option: TaskScopeOption, params: Record<string, unknown>): string {
+  if (option.scope_type === 'trade_account') return `交割单：${params.scope_name || option.scope_name || ''}`
+  if (option.scope_type === 'stock_pool') return `股池：${params.scope_name || option.scope_name || ''}`
+  if (option.scope_type === 'all_market') {
+    const range = params.start_date && params.end_date ? `${params.start_date} 至 ${params.end_date}` : '默认最近三个月'
+    return `全市场 · 排除 ST · ${range}`
+  }
+  if (option.scope_type === 'custom_stock_list') {
+    const count = Array.isArray(params.ts_codes) ? params.ts_codes.length : 0
+    return `自定义股票列表 · ${count} 只`
+  }
+  if (option.scope_type === 'index') return `指数：${params.scope_name || '上证指数'}`
+  return option.summary
+}
+
+function tradeAccountLabel(groupId: string): string {
+  if (groupId === 'simulation_watch') return '模拟观察账户'
+  if (groupId === 'auto_create') return '创建新交割单账户'
+  return '实盘训练账户'
+}
+
+function stockPoolLabel(poolId: string): string {
+  if (poolId === 'candidate_pool') return '候选池'
+  if (poolId === 'confirm_pool') return '确认池'
+  return '观察池'
+}
+
+function indexLabel(indexCode: string): string {
+  if (indexCode === '399001.SZ') return '深证成指'
+  if (indexCode === '399006.SZ') return '创业板指'
+  return '上证指数'
 }
 
 function taskParamValue(key: string): string | number | boolean {
@@ -1328,12 +1494,20 @@ function validateTaskStep(step = taskStepIndex.value): boolean {
     ElMessage.warning('请选择目标范围')
     return false
   }
+  if (step === 2 && taskForm.target_scope.scope_type === 'custom_stock_list' && !targetParams.ts_codes_text.trim()) {
+    ElMessage.warning('请填写自定义股票列表')
+    return false
+  }
+  if (step === 2 && ['backtest', 'sim_trade'].includes(taskForm.scene_type) && taskForm.target_scope.scope_type === 'all_market' && !targetParams.trade_review_group_id) {
+    ElMessage.warning('回测/模拟任务需要选择交割单账户')
+    return false
+  }
   if (step === 3) {
     if (!taskForm.schedule?.label) {
       ElMessage.warning('请选择调度方式')
       return false
     }
-    if (taskForm.actions.length === 0) {
+    if (taskForm.scene_type !== 'backtest' && taskForm.actions.length === 0) {
       ElMessage.warning('请至少选择一个动作')
       return false
     }
