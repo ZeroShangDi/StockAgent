@@ -429,6 +429,12 @@ import type {
   StrategyTaskStatus,
 } from '@/types/strategy-v2'
 
+type LegacyTaskForm = Omit<CreateStrategySceneTaskInput, 'actions' | 'schedule' | 'target_scope' | 'params' | 'schedule_label' | 'target_scope_summary'> & {
+  target_scope_summary: string
+  schedule_label: string
+  actions: StrategyActionType[]
+}
+
 const route = useRoute()
 const router = useRouter()
 
@@ -523,7 +529,7 @@ const actionOptions: Array<{ value: StrategyActionType; label: string; descripti
   { value: 'paper_trade', label: STRATEGY_ACTION_LABELS.paper_trade, description: '写入回测或模拟交易结果。' },
 ]
 
-const taskForm = reactive<CreateStrategySceneTaskInput>({
+const taskForm = reactive<LegacyTaskForm>({
   name: '',
   scene_type: 'listen',
   strategy_key: '',

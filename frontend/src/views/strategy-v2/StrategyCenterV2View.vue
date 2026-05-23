@@ -309,65 +309,315 @@
               <el-form-item label="任务名称">
                 <el-input v-model="taskForm.name" placeholder="例如：5日线低吸候选入池" />
               </el-form-item>
-              <el-form-item label="场景类型">
-                <el-select v-model="taskForm.scene_type" style="width: 100%">
-                  <el-option v-for="scene in taskSceneOptions" :key="scene.value" :label="scene.label" :value="scene.value" />
-                </el-select>
-              </el-form-item>
-            </template>
-
-            <template v-else-if="taskStepIndex === 1">
-              <el-form-item label="目标范围">
-                <el-select v-model="taskForm.target_scope_summary" style="width: 100%">
-                  <el-option
-                    v-for="option in taskScopeOptions"
-                    :key="option.value"
-                    :label="option.label"
-                    :value="option.value"
-                  >
-                    <div class="task-option-line">
-                      <span>{{ option.label }}</span>
-                      <small>{{ option.description }}</small>
-                    </div>
-                  </el-option>
-                </el-select>
-              </el-form-item>
               <el-form-item label="任务说明">
                 <el-input
                   v-model="taskForm.notes"
                   type="textarea"
                   :rows="4"
-                  placeholder="说明这个任务在链路中的职责，例如盘中监听、候选入池、历史回放。"
+                  placeholder="说明这个任务在链路里的职责。"
                 />
               </el-form-item>
             </template>
 
+            <template v-else-if="taskStepIndex === 1">
+              <el-form-item label="覆盖策略默认参数">
+                <el-switch v-model="overrideStrategyParams" active-text="覆盖" inactive-text="使用默认" />
+              </el-form-item>
+              <el-table
+                v-if="overrideStrategyParams && selectedStrategy && selectedStrategy.param_schema.length > 0"
+                :data="selectedStrategy.param_schema"
+                size="small"
+                stripe
+                class="param-table"
+              >
+                <el-table-column label="参数" min-width="170">
+                  <template #default="{ row }">
+                    <div class="param-name-cell">
+                      <strong>{{ row.label }}</strong>
+                      <small>{{ row.description }}</small>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="当前任务值" width="220">
+                  <template #default="{ row }">
+                    <el-select
+                      v-if="row.type === 'select' && row.options"
+                      :model-value="String(taskParamValue(row.key))"
+                      style="width: 100%"
+                      @update:model-value="(value) => updateTaskParam(row.key, value)"
+                    >
+                      <el-option
+                        v-for="option in row.options"
+                        :key="String(option.value)"
+                        :label="option.label"
+                        :value="option.value"
+                      />
+                    </el-select>
+                    <el-switch
+                      v-else-if="row.type === 'boolean'"
+                      :model-value="Boolean(taskParamValue(row.key))"
+                      @update:model-value="(value) => updateTaskParam(row.key, value)"
+                    />
+                    <el-input
+                      v-else
+                      :model-value="String(taskParamValue(row.key))"
+                      @update:model-value="(value) => updateTaskParam(row.key, castParamValue(row.type, value))"
+                    />
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-empty v-else description="当前任务使用策略默认参数" :image-size="72" />
+            </template>
+
             <template v-else-if="taskStepIndex === 2">
-              <el-form-item label="调度方式">
-                <el-select v-model="taskForm.schedule_label" style="width: 100%">
+              <el-form-item label="场景类型">
+                <el-select v-model="taskForm.scene_type" style="width: 100%">
                   <el-option
-                    v-for="option in taskScheduleOptions"
-                    :key="option.value"
-                    :label="option.label"
-                    :value="option.value"
+                    v-for="scene in sceneOptions"
+                    :key="scene.value"
+                    :label="scene.label"
+                    :value="scene.value"
+                    :disabled="isTaskSceneDisabled(scene.value)"
                   >
                     <div class="task-option-line">
-                      <span>{{ option.label }}</span>
+                      <span>{{ scene.label }}</span>
+                      <small>{{ isTaskSceneDisabled(scene.value) ? '当前策略不支持该场景' : '当前策略支持该场景' }}</small>
+                    </div>
+                  </el-option>
+                </el-select>
+              </el-form-item>
+              <el-form-item label="目标范围">
+                <el-select v-model="taskForm.target_scope_option_key" style="width: 100%" @change="normalizeTaskScope">
+                  <el-option
+                    v-for="option in taskScopeOptions"
+                    :key="option.option_key"
+                    :label="option.label"
+                    :value="option.option_key"
+                    :disabled="isTaskScopeDisabled(option)"
+                  >
+                    <div class="task-option-line">
+                      <span>{{ sceneLabel(option.scene_type) }} · {{ option.label }}</span>
+                      <small>{{ option.summary }}；{{ option.description }}</small>
+                    </div>
+                  </el-option>
+                </el-select>
+              </el-form-item>
+              <el-form-item label="调度方式">
+                <el-select v-model="taskForm.schedule_option_key" style="width: 100%" @change="normalizeTaskSchedule">
+                  <el-option
+                    v-for="option in taskScheduleOptions"
+                    :key="option.option_key"
+                    :label="option.label"
+                    :value="option.option_key"
+                    :disabled="isTaskScheduleDisabled(option)"
+                  >
+                    <div class="task-option-line">
+                      <span>{{ sceneLabel(option.scene_type) }} · {{ option.label }}</span>
                       <small>{{ option.description }}</small>
                     </div>
                   </el-option>
                 </el-select>
               </el-form-item>
-              <el-form-item label="动作">
-                <el-checkbox-group v-model="taskForm.actions" class="task-action-grid">
-                  <el-checkbox v-for="item in taskActionOptions" :key="item.value" :label="item.value">
-                    <div class="task-action-option">
-                      <strong>{{ item.label }}</strong>
-                      <small>{{ item.description }}</small>
-                    </div>
-                  </el-checkbox>
-                </el-checkbox-group>
-              </el-form-item>
+            </template>
+
+            <template v-else-if="taskStepIndex === 3">
+              <div class="task-action-rule-toolbar">
+                <div>
+                  <strong>动作规则</strong>
+                  <span>每条规则表示：策略返回值命中后，执行一个动作。</span>
+                </div>
+                <el-button size="small" type="primary" plain @click="addTaskActionRule">新增规则</el-button>
+              </div>
+
+              <div v-if="taskForm.actions.length > 0" class="task-action-rule-list">
+                <article v-for="(action, index) in taskForm.actions" :key="`action-${index}`" class="task-action-rule">
+                  <div class="task-action-rule-head">
+                    <strong>规则 {{ index + 1 }}</strong>
+                    <el-button v-if="taskForm.actions.length > 1" link type="danger" @click="removeTaskActionRule(index)">
+                      删除
+                    </el-button>
+                  </div>
+
+                  <el-row :gutter="12">
+                    <el-col :span="8">
+                      <el-form-item label="策略返回值">
+                        <el-select v-model="action.trigger_signals" multiple collapse-tags style="width: 100%">
+                          <el-option :label="signalLabel(1)" :value="1" />
+                          <el-option :label="signalLabel(0)" :value="0" />
+                          <el-option :label="signalLabel(-1)" :value="-1" />
+                        </el-select>
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="8">
+                      <el-form-item label="动作类型">
+                        <el-select
+                          :model-value="action.action_type"
+                          style="width: 100%"
+                          @update:model-value="(value) => handleTaskActionTypeChange(action, value)"
+                        >
+                          <el-option
+                            v-for="item in taskActionOptions"
+                            :key="item.value"
+                            :label="item.label"
+                            :value="item.value"
+                            :disabled="isTaskActionDisabled(item.value)"
+                          >
+                            <div class="task-option-line">
+                              <span>{{ item.label }}</span>
+                              <small>{{ item.description }}</small>
+                            </div>
+                          </el-option>
+                        </el-select>
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="8">
+                      <el-form-item label="启用">
+                        <el-switch v-model="action.enabled" active-text="启用" inactive-text="停用" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+
+                  <template v-if="action.action_type === 'notify'">
+                    <el-row :gutter="12">
+                      <el-col :span="8">
+                        <el-form-item label="通知渠道">
+                          <el-select v-model="action.params.channel_id" style="width: 100%">
+                            <el-option label="站内通知" value="in_app" />
+                            <el-option label="企业微信" value="wechat_work" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                      <el-col :span="8">
+                        <el-form-item label="通知级别">
+                          <el-select v-model="action.params.notify_level" style="width: 100%">
+                            <el-option label="普通" value="normal" />
+                            <el-option label="重要" value="important" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                      <el-col :span="8">
+                        <el-form-item label="冷却时间">
+                          <el-select v-model="action.params.cooldown_minutes" style="width: 100%">
+                            <el-option label="不限制" :value="0" />
+                            <el-option label="5 分钟" :value="5" />
+                            <el-option label="30 分钟" :value="30" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                  </template>
+
+                  <template v-else-if="action.action_type === 'add_to_pool'">
+                    <el-row :gutter="12">
+                      <el-col :span="12">
+                        <el-form-item label="目标股池">
+                          <el-select v-model="action.params.target_pool_id" style="width: 100%">
+                            <el-option label="候选池" value="candidate_pool" />
+                            <el-option label="观察池" value="watch_pool" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                      <el-col :span="12">
+                        <el-form-item label="重复处理">
+                          <el-select v-model="action.params.duplicate_policy" style="width: 100%">
+                            <el-option label="已存在则跳过" value="skip" />
+                            <el-option label="已存在则刷新入池原因" value="refresh_reason" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                  </template>
+
+                  <template v-else-if="action.action_type === 'pool_transition'">
+                    <el-row :gutter="12">
+                      <el-col :span="12">
+                        <el-form-item label="流转方向">
+                          <el-select v-model="action.params.transition" style="width: 100%">
+                            <el-option label="观察池 -> 确认池" value="watch_to_confirm" />
+                            <el-option label="候选池 -> 淘汰池" value="candidate_to_rejected" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                      <el-col :span="12">
+                        <el-form-item label="流转原因">
+                          <el-select v-model="action.params.reason_tag" style="width: 100%">
+                            <el-option label="策略信号触发" value="strategy_signal" />
+                            <el-option label="风险条件触发" value="risk_signal" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                  </template>
+
+                  <template v-else-if="action.action_type === 'temp_list'">
+                    <el-row :gutter="12">
+                      <el-col :span="12">
+                        <el-form-item label="清单用途">
+                          <el-select v-model="action.params.list_usage" style="width: 100%">
+                            <el-option label="人工复筛" value="manual_review" />
+                            <el-option label="交易计划候选" value="trade_plan" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                      <el-col :span="12">
+                        <el-form-item label="临时清单保留">
+                          <el-select v-model="action.params.ttl_days" style="width: 100%">
+                            <el-option label="当日有效" :value="1" />
+                            <el-option label="保留 3 天" :value="3" />
+                            <el-option label="保留 7 天" :value="7" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                  </template>
+
+                  <template v-else-if="action.action_type === 'paper_trade'">
+                    <el-row :gutter="12">
+                      <el-col :span="12">
+                        <el-form-item label="结果分组">
+                          <el-select v-model="action.params.trade_review_group_id" style="width: 100%">
+                            <el-option label="自动新建交割单分组" value="auto_create" />
+                            <el-option label="实盘训练账户-模拟交易" value="sim_trade_group" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                      <el-col :span="12">
+                        <el-form-item label="成交方向">
+                          <el-select v-model="action.params.order_side" style="width: 100%">
+                            <el-option label="跟随策略信号" value="follow_signal" />
+                            <el-option label="只记录买入计划" value="buy_plan" />
+                            <el-option label="只记录卖出计划" value="sell_plan" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                  </template>
+
+                  <template v-else-if="action.action_type === 'persist_result'">
+                    <el-row :gutter="12">
+                      <el-col :span="12">
+                        <el-form-item label="入库内容">
+                          <el-select v-model="action.params.persist_mode" style="width: 100%">
+                            <el-option label="信号事件 + 运行明细" value="signal_and_items" />
+                            <el-option label="仅运行摘要" value="summary_only" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                      <el-col :span="12">
+                        <el-form-item label="数据用途">
+                          <el-select v-model="action.params.dataset_usage" style="width: 100%">
+                            <el-option label="任务审计" value="audit" />
+                            <el-option label="后续分析" value="analysis" />
+                          </el-select>
+                        </el-form-item>
+                      </el-col>
+                    </el-row>
+                  </template>
+                </article>
+              </div>
+              <el-empty v-else description="还没有动作规则" :image-size="72">
+                <el-button type="primary" plain @click="addTaskActionRule">新增规则</el-button>
+              </el-empty>
             </template>
 
             <template v-else>
@@ -381,16 +631,20 @@
                   <strong>{{ taskForm.name || '未填写' }}</strong>
                 </article>
                 <article class="task-review-row">
+                  <span>参数覆盖</span>
+                  <strong>{{ overrideStrategyParams ? '已覆盖当前任务参数' : '使用策略默认参数' }}</strong>
+                </article>
+                <article class="task-review-row">
                   <span>场景类型</span>
                   <strong>{{ sceneLabel(taskForm.scene_type) }}</strong>
                 </article>
                 <article class="task-review-row">
                   <span>目标范围</span>
-                  <strong>{{ taskForm.target_scope_summary || '未选择' }}</strong>
+                  <strong>{{ taskForm.target_scope.summary || '未选择' }}</strong>
                 </article>
                 <article class="task-review-row">
                   <span>调度方式</span>
-                  <strong>{{ taskForm.schedule_label || '未选择' }}</strong>
+                  <strong>{{ taskForm.schedule.label || '未选择' }}</strong>
                 </article>
                 <article class="task-review-row">
                   <span>动作</span>
@@ -429,12 +683,58 @@ import {
   listStrategySceneTasks,
 } from '@/mocks/strategyV2'
 import type {
-  CreateStrategySceneTaskInput,
   StrategyActionType,
   StrategyDefinition,
+  StrategyScheduleConfig,
+  StrategyScheduleMode,
   StrategySceneTask,
   StrategySceneType,
+  StrategySignalValue,
+  StrategyTargetScope,
+  StrategyTargetScopeType,
+  StrategyTaskActionInput,
 } from '@/types/strategy-v2'
+
+interface TaskDialogForm {
+  name: string
+  scene_type: StrategySceneType
+  strategy_key: string
+  target_scope_option_key: string
+  target_scope: StrategyTargetScope
+  params: Record<string, unknown>
+  schedule_option_key: string
+  schedule: StrategyScheduleConfig
+  notes: string
+  actions: StrategyTaskActionInput[]
+}
+
+interface TaskScopeOptionBase {
+  label: string
+  scope_type: StrategyTargetScopeType
+  summary: string
+  description: string
+  scope_id?: string
+  scope_name?: string
+}
+
+interface TaskScopeOption extends TaskScopeOptionBase {
+  option_key: string
+  scene_type: StrategySceneType
+}
+
+interface TaskScheduleOptionBase {
+  label: string
+  mode: StrategyScheduleMode
+  description: string
+  interval_seconds?: number
+  times?: string[]
+  trading_day_only?: boolean
+}
+
+interface TaskScheduleOption extends TaskScheduleOptionBase {
+  option_key: string
+  scene_type: StrategySceneType
+}
 
 const router = useRouter()
 
@@ -467,6 +767,7 @@ const editingStrategyKey = ref('')
 const viewActiveTab = ref<'overview' | 'params' | 'tasks'>('overview')
 const taskStepIndex = ref(0)
 const taskSubmitting = ref(false)
+const overrideStrategyParams = ref(false)
 
 const formState = reactive<{
   name: string
@@ -481,56 +782,60 @@ const formState = reactive<{
 })
 
 const taskStepItems = [
-  { title: '基础信息', description: '先确定任务名和使用场景。' },
-  { title: '目标范围', description: '选择这个任务要处理的对象范围。' },
-  { title: '调度动作', description: '选择运行节奏和触发后的动作。' },
-  { title: '确认创建', description: '最后确认生成的数据。' },
+  { title: '基础信息', description: '任务名、说明和绑定策略。' },
+  { title: '策略参数', description: '可跳过，也可覆盖默认参数。' },
+  { title: '场景信息', description: '场景类型、目标范围和调度方式。' },
+  { title: '调度动作', description: '按策略返回值配置动作。' },
+  { title: '确认创建', description: '确认当前任务配置。' },
 ]
 
-const taskScopeOptionsByScene: Record<StrategySceneType, Array<{ label: string; value: string; description: string }>> = {
+const taskScopeOptionsByScene: Record<StrategySceneType, TaskScopeOptionBase[]> = {
   scan: [
-    { label: '全市场 · 排除 ST', value: '全市场 · 排除 ST · 最近 120 日有交易', description: '适合做日内候选扫描。' },
-    { label: '候选池回看区间', value: '候选池 · 最近 20 个交易日回看', description: '适合训练时段筛选与复盘。' },
+    { label: '全市场 · 排除 ST', scope_type: 'all_market', summary: '全市场 · 排除 ST · 最近 120 日有交易', description: '适合做日内候选扫描。' },
+    { label: '候选池回看区间', scope_type: 'stock_pool', scope_id: 'candidate_pool', scope_name: '候选池', summary: '候选池 · 最近 20 个交易日回看', description: '适合训练时段筛选与复盘。' },
   ],
   listen: [
-    { label: '观察池 + 自选股', value: '观察池 + 自选股 · 共 63 只', description: '盘中监听最常用范围。' },
-    { label: '持仓组', value: '持仓组：实盘训练账户', description: '适合盈亏、止盈止损与持仓异动监听。' },
-    { label: '指数与市场宽度', value: '指数组 + 市场涨跌家数', description: '适合指数和市场情绪监听。' },
+    { label: '观察池 + 自选股', scope_type: 'stock_pool', scope_id: 'watch_pool', scope_name: '观察池', summary: '观察池 + 自选股 · 共 63 只', description: '盘中监听最常用范围。' },
+    { label: '持仓组', scope_type: 'position_group', scope_id: 'training_account', scope_name: '实盘训练账户', summary: '持仓组：实盘训练账户', description: '适合盈亏、止盈止损与持仓异动监听。' },
+    { label: '指数与市场宽度', scope_type: 'index', scope_id: 'market_breadth', scope_name: '指数与市场宽度', summary: '指数组 + 市场涨跌家数', description: '适合指数和市场情绪监听。' },
+    { label: '事件监听', scope_type: 'event', scope_id: 'stock_event', scope_name: '个股事件源', summary: '事件源：个股公告 / 新闻 / 异动消息', description: '预留给事件类监听。' },
   ],
   backtest: [
-    { label: '训练样本 A', value: '交割单分组：训练样本 A · 2025Q4 - 2026Q1', description: '历史样本分组回放。' },
-    { label: '候选模式回放', value: '候选池样本 · 最近 60 个交易日', description: '适合检验候选模式表现。' },
+    { label: '训练样本 A', scope_type: 'stock_list', scope_id: 'training_sample_a', scope_name: '训练样本 A', summary: '交割单分组：训练样本 A · 2025Q4 - 2026Q1', description: '历史样本分组回放。' },
+    { label: '候选模式回放', scope_type: 'stock_pool', scope_id: 'candidate_pool', scope_name: '候选池', summary: '候选池样本 · 最近 60 个交易日', description: '适合检验候选模式表现。' },
   ],
   sim_trade: [
-    { label: '实盘训练账户', value: '持仓组：实盘训练账户', description: '按每日数据持续更新模拟持仓。' },
-    { label: '模拟观察账户', value: '持仓组：模拟观察账户', description: '适合较轻量的策略跟踪。' },
+    { label: '实盘训练账户', scope_type: 'position_group', scope_id: 'training_account', scope_name: '实盘训练账户', summary: '持仓组：实盘训练账户', description: '按每日数据持续更新模拟持仓。' },
+    { label: '模拟观察账户', scope_type: 'position_group', scope_id: 'simulation_watch', scope_name: '模拟观察账户', summary: '持仓组：模拟观察账户', description: '适合较轻量的策略跟踪。' },
   ],
 }
 
-const taskScheduleOptionsByScene: Record<StrategySceneType, Array<{ label: string; value: string; description: string }>> = {
+const taskScheduleOptionsByScene: Record<StrategySceneType, TaskScheduleOptionBase[]> = {
   scan: [
-    { label: '交易日分时扫描', value: '交易日 09:45 / 10:30 / 13:45', description: '兼顾上午与下午。' },
-    { label: '收盘后补扫', value: '交易日 15:10 收盘后补扫', description: '适合盘后统一整理候选。' },
+    { label: '交易日分时扫描', mode: 'daily_time', times: ['09:45', '10:30', '13:45'], trading_day_only: true, description: '兼顾上午与下午。' },
+    { label: '收盘后补扫', mode: 'daily_time', times: ['15:10'], trading_day_only: true, description: '适合盘后统一整理候选。' },
+    { label: '一次性运行', mode: 'once', description: '保存后手动运行一次。' },
   ],
   listen: [
-    { label: '每 1 分钟轮询', value: '交易时段每 1 分钟轮询', description: '适合高频异动与风控监听。' },
-    { label: '每 5 分钟轮询', value: '交易时段每 5 分钟轮询', description: '适合低频市场情绪监听。' },
+    { label: '每 1 分钟轮询', mode: 'trading_interval', interval_seconds: 60, trading_day_only: true, description: '适合高频异动与风控监听。' },
+    { label: '每 5 分钟轮询', mode: 'trading_interval', interval_seconds: 300, trading_day_only: true, description: '适合低频市场情绪监听。' },
+    { label: '一次性运行', mode: 'once', description: '保存后手动运行一次。' },
   ],
   backtest: [
-    { label: '手动运行', value: '手动运行', description: '适合调参数后逐次验证。' },
-    { label: '每日批量回放', value: '每日 20:30 批量回放', description: '适合夜间统一跑一批样本。' },
+    { label: '手动运行', mode: 'manual', description: '适合调参数后逐次验证。' },
+    { label: '每日批量回放', mode: 'daily_time', times: ['20:30'], description: '适合夜间统一跑一批样本。' },
   ],
   sim_trade: [
-    { label: '收盘后更新', value: '交易日收盘后自动更新', description: '适合每日准实盘更新。' },
-    { label: '收盘后 + 异常补轮', value: '交易日收盘后 + 盘中异常补轮', description: '适合带异常提醒的模拟链路。' },
+    { label: '收盘后更新', mode: 'daily_time', times: ['15:10'], trading_day_only: true, description: '适合每日准实盘更新。' },
+    { label: '收盘后 + 异常补轮', mode: 'custom', times: ['15:10'], trading_day_only: true, description: '适合带异常提醒的模拟链路。' },
   ],
 }
 
 const taskActionOptionsByScene: Record<StrategySceneType, StrategyActionType[]> = {
-  scan: ['add_to_pool', 'temp_list', 'notify', 'pool_transition'],
-  listen: ['notify', 'pool_transition', 'add_to_pool', 'temp_list'],
-  backtest: ['paper_trade', 'notify'],
-  sim_trade: ['paper_trade', 'notify'],
+  scan: ['add_to_pool', 'temp_list', 'notify', 'pool_transition', 'persist_result'],
+  listen: ['notify', 'pool_transition', 'add_to_pool', 'temp_list', 'persist_result'],
+  backtest: ['paper_trade', 'persist_result', 'notify'],
+  sim_trade: ['paper_trade', 'notify', 'persist_result'],
 }
 
 const taskActionCatalog: Array<{ value: StrategyActionType; label: string; description: string }> = [
@@ -539,16 +844,26 @@ const taskActionCatalog: Array<{ value: StrategyActionType; label: string; descr
   { value: 'pool_transition', label: STRATEGY_ACTION_LABELS.pool_transition, description: '在多个股池之间自动流转。' },
   { value: 'temp_list', label: STRATEGY_ACTION_LABELS.temp_list, description: '保留临时结果供人工筛选。' },
   { value: 'paper_trade', label: STRATEGY_ACTION_LABELS.paper_trade, description: '写入回测或模拟交易结果。' },
+  { value: 'persist_result', label: STRATEGY_ACTION_LABELS.persist_result, description: '把信号事件和运行明细写入库。' },
 ]
 
-const taskForm = reactive<CreateStrategySceneTaskInput>({
+const taskForm = reactive<TaskDialogForm>({
   name: '',
   scene_type: 'listen',
   strategy_key: '',
-  target_scope_summary: '',
-  schedule_label: '',
+  target_scope_option_key: '',
+  target_scope: {
+    scope_type: 'stock_pool',
+    summary: '',
+  },
+  params: {},
+  schedule_option_key: '',
+  schedule: {
+    mode: 'once',
+    label: '',
+  },
   notes: '',
-  actions: ['notify'],
+  actions: [],
 })
 
 onMounted(async () => {
@@ -571,20 +886,33 @@ const selectedRelatedTasks = computed(() => {
   if (!selectedStrategy.value) return []
   return tasks.value.filter((item) => item.strategy_key === selectedStrategy.value?.strategy_key)
 })
-const taskSceneOptions = computed(() => {
-  if (!selectedStrategy.value) return []
-  return sceneOptions.filter((item) => selectedStrategy.value?.supported_scenes.includes(item.value))
-})
 const currentTaskStep = computed(() => taskStepItems[taskStepIndex.value])
-const taskScopeOptions = computed(() => taskScopeOptionsByScene[taskForm.scene_type])
-const taskScheduleOptions = computed(() => taskScheduleOptionsByScene[taskForm.scene_type])
-const taskActionOptions = computed(() => {
-  const allowed = new Set(taskActionOptionsByScene[taskForm.scene_type])
-  return taskActionCatalog.filter((item) => allowed.has(item.value))
+const allTaskScopeOptions = computed<TaskScopeOption[]>(() => {
+  return sceneOptions.flatMap((scene) => {
+    return taskScopeOptionsByScene[scene.value].map((option, index) => ({
+      ...option,
+      scene_type: scene.value,
+      option_key: `${scene.value}:${option.scope_type}:${option.scope_id || index}`,
+    }))
+  })
 })
+const allTaskScheduleOptions = computed<TaskScheduleOption[]>(() => {
+  return sceneOptions.flatMap((scene) => {
+    return taskScheduleOptionsByScene[scene.value].map((option, index) => ({
+      ...option,
+      scene_type: scene.value,
+      option_key: `${scene.value}:${option.mode}:${option.times?.join('-') || option.interval_seconds || index}`,
+    }))
+  })
+})
+const taskScopeOptions = computed(() => allTaskScopeOptions.value)
+const taskScheduleOptions = computed(() => allTaskScheduleOptions.value)
+const taskActionOptions = computed(() => taskActionCatalog)
 const taskActionSummary = computed(() => {
   if (taskForm.actions.length === 0) return '未选择动作'
-  return taskForm.actions.map((item) => STRATEGY_ACTION_LABELS[item]).join(' / ')
+  return taskForm.actions
+    .map((item) => `${item.trigger_signals.map(signalLabel).join('/')} -> ${STRATEGY_ACTION_LABELS[item.action_type]}`)
+    .join('；')
 })
 
 watch(() => taskForm.scene_type, (scene) => {
@@ -801,13 +1129,23 @@ function createRelatedTask(): void {
 }
 
 function resetTaskForm(): void {
+  overrideStrategyParams.value = false
   taskForm.name = ''
   taskForm.scene_type = 'listen'
   taskForm.strategy_key = ''
-  taskForm.target_scope_summary = ''
-  taskForm.schedule_label = ''
+  taskForm.target_scope_option_key = ''
+  taskForm.target_scope = {
+    scope_type: 'stock_pool',
+    summary: '',
+  }
+  taskForm.params = {}
+  taskForm.schedule_option_key = ''
+  taskForm.schedule = {
+    mode: 'once',
+    label: '',
+  }
   taskForm.notes = ''
-  taskForm.actions = ['notify']
+  taskForm.actions = []
   taskStepIndex.value = 0
 }
 
@@ -821,18 +1159,28 @@ function normalizeTaskForm(scene: StrategySceneType): void {
     taskForm.scene_type = strategy.supported_scenes[0] || 'listen'
   }
 
-  const allowedScopes = taskScopeOptionsByScene[taskForm.scene_type].map((item) => item.value)
-  if (!allowedScopes.includes(taskForm.target_scope_summary)) {
-    taskForm.target_scope_summary = taskScopeOptionsByScene[taskForm.scene_type][0]?.value || ''
+  const allowedScopeKeys = allTaskScopeOptions.value
+    .filter((item) => item.scene_type === taskForm.scene_type)
+    .map((item) => item.option_key)
+  if (!taskForm.target_scope_option_key || !allowedScopeKeys.includes(taskForm.target_scope_option_key)) {
+    taskForm.target_scope_option_key = allowedScopeKeys[0] || ''
+  }
+  if (taskForm.target_scope_option_key) {
+    taskForm.target_scope = buildTargetScope(taskForm.scene_type, taskForm.target_scope_option_key)
   }
 
-  const allowedSchedules = taskScheduleOptionsByScene[taskForm.scene_type].map((item) => item.value)
-  if (!allowedSchedules.includes(taskForm.schedule_label)) {
-    taskForm.schedule_label = taskScheduleOptionsByScene[taskForm.scene_type][0]?.value || ''
+  const allowedScheduleKeys = allTaskScheduleOptions.value
+    .filter((item) => item.scene_type === taskForm.scene_type)
+    .map((item) => item.option_key)
+  if (!taskForm.schedule_option_key || !allowedScheduleKeys.includes(taskForm.schedule_option_key)) {
+    taskForm.schedule_option_key = allowedScheduleKeys[0] || ''
+  }
+  if (taskForm.schedule_option_key) {
+    taskForm.schedule = buildSchedule(taskForm.scene_type, taskForm.schedule_option_key)
   }
 
   const allowedActions = new Set(taskActionOptionsByScene[taskForm.scene_type])
-  const nextActions = taskForm.actions.filter((item) => allowedActions.has(item))
+  const nextActions = taskForm.actions.filter((item) => allowedActions.has(item.action_type))
   if (nextActions.length === 0) {
     taskForm.actions = defaultTaskActions(taskForm.scene_type)
   }
@@ -841,10 +1189,132 @@ function normalizeTaskForm(scene: StrategySceneType): void {
   }
 }
 
-function defaultTaskActions(scene: StrategySceneType): StrategyActionType[] {
-  if (scene === 'scan') return ['add_to_pool', 'temp_list']
-  if (scene === 'listen') return ['notify', 'pool_transition']
-  return ['paper_trade']
+function buildTargetScope(scene: StrategySceneType, optionKey?: string): StrategyTargetScope {
+  const option = allTaskScopeOptions.value.find((item) => item.scene_type === scene && item.option_key === optionKey)
+    || allTaskScopeOptions.value.find((item) => item.scene_type === scene)
+    || allTaskScopeOptions.value[0]
+  return {
+    scope_type: option.scope_type,
+    scope_id: option.scope_id,
+    scope_name: option.scope_name,
+    summary: option.summary,
+    filters: option.scope_type === 'all_market' ? { exclude_st: true, recent_trade_days: 120 } : undefined,
+  }
+}
+
+function normalizeTaskScope(): void {
+  taskForm.target_scope = buildTargetScope(taskForm.scene_type, taskForm.target_scope_option_key)
+}
+
+function buildSchedule(scene: StrategySceneType, optionKey?: string): StrategyScheduleConfig {
+  const option = allTaskScheduleOptions.value.find((item) => item.scene_type === scene && item.option_key === optionKey)
+    || allTaskScheduleOptions.value.find((item) => item.scene_type === scene)
+    || allTaskScheduleOptions.value[0]
+  return {
+    mode: option.mode,
+    label: option.label,
+    timezone: 'Asia/Shanghai',
+    interval_seconds: option.interval_seconds,
+    times: option.times,
+    trading_day_only: option.trading_day_only,
+  }
+}
+
+function normalizeTaskSchedule(): void {
+  taskForm.schedule = buildSchedule(taskForm.scene_type, taskForm.schedule_option_key)
+}
+
+function defaultTaskActions(scene: StrategySceneType): StrategyTaskActionInput[] {
+  if (scene === 'scan') return (['add_to_pool', 'temp_list'] as StrategyActionType[]).map(makeTaskAction)
+  if (scene === 'listen') return (['notify', 'pool_transition'] as StrategyActionType[]).map(makeTaskAction)
+  return (['paper_trade'] as StrategyActionType[]).map(makeTaskAction)
+}
+
+function makeTaskAction(actionType: StrategyActionType): StrategyTaskActionInput {
+  const signalMap: Record<StrategyActionType, StrategySignalValue[]> = {
+    notify: [1, -1],
+    add_to_pool: [1],
+    pool_transition: [1, -1],
+    temp_list: [1],
+    paper_trade: [1, -1],
+    persist_result: [1, 0, -1],
+  }
+  return {
+    action_type: actionType,
+    enabled: true,
+    trigger_signals: signalMap[actionType],
+    params: defaultActionParams(actionType),
+  }
+}
+
+function defaultActionParams(actionType: StrategyActionType): Record<string, string | number | boolean | undefined> {
+  if (actionType === 'notify') return { channel_id: 'in_app', notify_level: 'normal', cooldown_minutes: 5 }
+  if (actionType === 'add_to_pool') return { target_pool_id: 'candidate_pool', duplicate_policy: 'skip' }
+  if (actionType === 'pool_transition') return { transition: 'watch_to_confirm', reason_tag: 'strategy_signal' }
+  if (actionType === 'temp_list') return { list_usage: 'manual_review', ttl_days: 1 }
+  if (actionType === 'paper_trade') return { trade_review_group_id: 'auto_create', order_side: 'follow_signal' }
+  return { persist_mode: 'signal_and_items', dataset_usage: 'audit' }
+}
+
+function isTaskSceneDisabled(scene: StrategySceneType): boolean {
+  return !selectedStrategy.value?.supported_scenes.includes(scene)
+}
+
+function isTaskScopeDisabled(option: TaskScopeOption): boolean {
+  return option.scene_type !== taskForm.scene_type
+}
+
+function isTaskScheduleDisabled(option: TaskScheduleOption): boolean {
+  return option.scene_type !== taskForm.scene_type
+}
+
+function isTaskActionDisabled(actionType: StrategyActionType): boolean {
+  return !taskActionOptionsByScene[taskForm.scene_type].includes(actionType)
+}
+
+function firstAllowedActionType(scene = taskForm.scene_type): StrategyActionType {
+  return taskActionOptionsByScene[scene][0] || 'notify'
+}
+
+function addTaskActionRule(): void {
+  taskForm.actions.push(makeTaskAction(firstAllowedActionType()))
+}
+
+function removeTaskActionRule(index: number): void {
+  taskForm.actions.splice(index, 1)
+}
+
+function updateTaskActionType(action: StrategyTaskActionInput, actionType: StrategyActionType): void {
+  action.action_type = actionType
+  action.params = defaultActionParams(actionType)
+  if (action.trigger_signals.length === 0) {
+    action.trigger_signals = makeTaskAction(actionType).trigger_signals
+  }
+}
+
+function handleTaskActionTypeChange(action: StrategyTaskActionInput, value: string | number | boolean): void {
+  updateTaskActionType(action, value as StrategyActionType)
+}
+
+function signalLabel(signal: StrategySignalValue): string {
+  if (signal === 1) return '1 买入/正向'
+  if (signal === -1) return '-1 卖出/反向'
+  return '0 观察/无动作'
+}
+
+function taskParamValue(key: string): string | number | boolean {
+  if (taskForm.params && key in taskForm.params) {
+    return taskForm.params[key] as string | number | boolean
+  }
+  const param = selectedStrategy.value?.param_schema.find((item) => item.key === key)
+  return param?.default ?? ''
+}
+
+function updateTaskParam(key: string, value: string | number | boolean): void {
+  taskForm.params = {
+    ...(taskForm.params || {}),
+    [key]: value,
+  }
 }
 
 function validateTaskStep(step = taskStepIndex.value): boolean {
@@ -854,17 +1324,25 @@ function validateTaskStep(step = taskStepIndex.value): boolean {
       return false
     }
   }
-  if (step === 1 && !taskForm.target_scope_summary) {
+  if (step === 2 && !taskForm.target_scope?.summary) {
     ElMessage.warning('请选择目标范围')
     return false
   }
-  if (step === 2) {
-    if (!taskForm.schedule_label) {
+  if (step === 3) {
+    if (!taskForm.schedule?.label) {
       ElMessage.warning('请选择调度方式')
       return false
     }
     if (taskForm.actions.length === 0) {
       ElMessage.warning('请至少选择一个动作')
+      return false
+    }
+    if (taskForm.actions.some((action) => isTaskActionDisabled(action.action_type))) {
+      ElMessage.warning('当前场景下存在不可用动作')
+      return false
+    }
+    if (taskForm.actions.some((action) => action.trigger_signals.length === 0)) {
+      ElMessage.warning('每个动作至少选择一个触发信号')
       return false
     }
   }
@@ -882,7 +1360,7 @@ function prevTaskStep(): void {
 
 async function submitTaskDialog(): Promise<void> {
   if (!selectedStrategy.value) return
-  if (!validateTaskStep(0) || !validateTaskStep(1) || !validateTaskStep(2)) return
+  if (!validateTaskStep(0) || !validateTaskStep(2) || !validateTaskStep(3)) return
 
   taskSubmitting.value = true
   try {
@@ -890,8 +1368,9 @@ async function submitTaskDialog(): Promise<void> {
       name: taskForm.name.trim(),
       scene_type: taskForm.scene_type,
       strategy_key: selectedStrategy.value.strategy_key,
-      target_scope_summary: taskForm.target_scope_summary,
-      schedule_label: taskForm.schedule_label,
+      target_scope: taskForm.target_scope,
+      params: overrideStrategyParams.value ? taskForm.params : {},
+      schedule: taskForm.schedule,
       notes: taskForm.notes?.trim(),
       actions: [...taskForm.actions],
     })
@@ -1219,27 +1698,66 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
   color: #64748b;
 }
 
-.task-option-line,
-.task-action-option {
+.task-option-line {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.task-option-line span,
-.task-action-option strong {
+.task-option-line span {
   color: #0f172a;
 }
 
-.task-option-line small,
-.task-action-option small {
+.task-option-line small {
   color: #64748b;
   line-height: 1.5;
 }
 
-.task-action-grid {
-  display: grid;
+.task-action-rule-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 12px;
+  margin-bottom: 12px;
+}
+
+.task-action-rule-toolbar strong {
+  display: block;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.task-action-rule-toolbar span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.task-action-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-action-rule {
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.task-action-rule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.task-action-rule-head strong {
+  color: #0f172a;
+  font-size: 14px;
 }
 
 .task-review-list {
@@ -1312,6 +1830,15 @@ function taskStatusLabel(status: StrategySceneTask['status']): string {
 
   .detail-pair-row strong {
     text-align: left;
+  }
+
+  .task-action-rule-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .task-action-rule-toolbar :deep(.el-button) {
+    width: 100%;
   }
 
   .task-review-row {

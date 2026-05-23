@@ -6,7 +6,9 @@ import type {
   StrategyDefinition,
   StrategySceneTask,
   StrategySceneType,
+  StrategySignalValue,
   StrategyTaskAction,
+  StrategyTaskActionInput,
   StrategyTaskRun,
   StrategyTaskRunItem,
   StrategyTaskStatus,
@@ -34,6 +36,7 @@ export const STRATEGY_ACTION_LABELS: Record<StrategyActionType, string> = {
   pool_transition: '股池流转',
   temp_list: '临时清单',
   paper_trade: '模拟成交',
+  persist_result: '数据入库',
 }
 
 const strategyDefinitions: StrategyDefinition[] = [
@@ -333,14 +336,47 @@ const runItemStore: Record<string, StrategyTaskRunItem[]> = {
   ],
 }
 
-function makeAction(actionType: StrategyActionType, label: string, summary: string): StrategyTaskAction {
+function makeAction(
+  actionType: StrategyActionType,
+  label: string,
+  summary: string,
+  params?: Record<string, unknown>,
+  triggerSignals?: StrategySignalValue[],
+): StrategyTaskAction {
   return {
     action_id: generateCompactId().slice(0, 12),
     action_type: actionType,
     label,
     enabled: true,
     summary,
+    params,
+    trigger_signals: triggerSignals,
   }
+}
+
+function normalizeActionInput(input: StrategyActionType | StrategyTaskActionInput): StrategyTaskAction {
+  if (typeof input === 'string') {
+    return makeAction(input, STRATEGY_ACTION_LABELS[input], `由任务层执行 ${STRATEGY_ACTION_LABELS[input]}`)
+  }
+
+  return makeAction(
+    input.action_type,
+    input.label || STRATEGY_ACTION_LABELS[input.action_type],
+    buildActionSummary(input),
+    input.params,
+    input.trigger_signals,
+  )
+}
+
+function buildActionSummary(input: StrategyTaskActionInput): string {
+  const signalText = input.trigger_signals.length > 0
+    ? `信号 ${input.trigger_signals.join('/')}`
+    : '全部信号'
+  return `${signalText} 时执行 ${STRATEGY_ACTION_LABELS[input.action_type]}`
+}
+
+function defaultStrategyParams(strategy?: StrategyDefinition): Record<string, unknown> {
+  return Object.fromEntries((strategy?.param_schema || []).map((item) => [item.key, item.default]))
 }
 
 function makeRunItem(
@@ -506,6 +542,8 @@ export async function getRunItems(runId: string): Promise<StrategyTaskRunItem[]>
 
 export async function createStrategySceneTask(input: CreateStrategySceneTaskInput): Promise<StrategySceneTask> {
   const strategy = strategyDefinitions.find((item) => item.strategy_key === input.strategy_key)
+  const targetScopeSummary = input.target_scope?.summary || input.target_scope_summary || ''
+  const scheduleLabel = input.schedule?.label || input.schedule_label || ''
   const task: StrategySceneTask = {
     task_id: `task_${generateCompactId().slice(0, 10)}`,
     user_id: CURRENT_USER_ID,
@@ -513,12 +551,15 @@ export async function createStrategySceneTask(input: CreateStrategySceneTaskInpu
     scene_type: input.scene_type,
     strategy_key: input.strategy_key,
     strategy_name: strategy?.name || input.strategy_key,
-    target_scope_summary: input.target_scope_summary,
-    params: Object.fromEntries((strategy?.param_schema || []).map((item) => [item.key, item.default])),
-    actions: input.actions.map((actionType) =>
-      makeAction(actionType, STRATEGY_ACTION_LABELS[actionType], `由任务层执行 ${STRATEGY_ACTION_LABELS[actionType]}`),
-    ),
-    schedule_label: input.schedule_label,
+    target_scope_summary: targetScopeSummary,
+    target_scope: input.target_scope,
+    params: {
+      ...defaultStrategyParams(strategy),
+      ...(input.params || {}),
+    },
+    actions: input.actions.map(normalizeActionInput),
+    schedule_label: scheduleLabel,
+    schedule: input.schedule,
     status: input.scene_type === 'backtest' ? 'draft' : 'active',
     tags: [STRATEGY_SCENE_LABELS[input.scene_type], ...(strategy?.tags.slice(0, 2) || [])],
     notes: input.notes?.trim() || '',
@@ -535,19 +576,24 @@ export async function updateStrategySceneTask(taskId: string, input: CreateStrat
   if (!task) return undefined
 
   const strategy = strategyDefinitions.find((item) => item.strategy_key === input.strategy_key)
+  const targetScopeSummary = input.target_scope?.summary || input.target_scope_summary || ''
+  const scheduleLabel = input.schedule?.label || input.schedule_label || ''
 
   task.name = input.name.trim()
   task.scene_type = input.scene_type
   task.strategy_key = input.strategy_key
   task.strategy_name = strategy?.name || input.strategy_key
-  task.target_scope_summary = input.target_scope_summary.trim()
-  task.schedule_label = input.schedule_label.trim()
+  task.target_scope_summary = targetScopeSummary.trim()
+  task.target_scope = input.target_scope
+  task.schedule_label = scheduleLabel.trim()
+  task.schedule = input.schedule
   task.notes = input.notes?.trim() || ''
-  task.actions = input.actions.map((actionType) =>
-    makeAction(actionType, STRATEGY_ACTION_LABELS[actionType], `由任务层执行 ${STRATEGY_ACTION_LABELS[actionType]}`),
-  )
+  task.actions = input.actions.map(normalizeActionInput)
   task.tags = [STRATEGY_SCENE_LABELS[input.scene_type], ...(strategy?.tags.slice(0, 2) || [])]
-  task.params = Object.fromEntries((strategy?.param_schema || []).map((item) => [item.key, item.default]))
+  task.params = {
+    ...defaultStrategyParams(strategy),
+    ...(input.params || {}),
+  }
   task.updated_at = nowString()
 
   return clone(task)

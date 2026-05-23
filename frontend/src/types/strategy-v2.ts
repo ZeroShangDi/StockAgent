@@ -12,6 +12,22 @@ export type StrategyActionType =
   | 'pool_transition'
   | 'temp_list'
   | 'paper_trade'
+  | 'persist_result'
+
+export type StrategyTargetScopeType =
+  | 'all_market'
+  | 'stock_list'
+  | 'stock_pool'
+  | 'position_group'
+  | 'index'
+  | 'event'
+
+export type StrategyScheduleMode =
+  | 'once'
+  | 'manual'
+  | 'trading_interval'
+  | 'daily_time'
+  | 'custom'
 
 export interface StrategyParamOption {
   label: string
@@ -54,6 +70,36 @@ export interface StrategyTaskAction {
   enabled: boolean
   summary: string
   params?: Record<string, unknown>
+  trigger_signals?: StrategySignalValue[]
+}
+
+export interface StrategyTargetScope {
+  scope_type: StrategyTargetScopeType
+  scope_id?: string
+  scope_name?: string
+  ts_codes?: string[]
+  index_codes?: string[]
+  event_keywords?: string[]
+  filters?: Record<string, unknown>
+  summary?: string
+}
+
+export interface StrategyScheduleConfig {
+  mode: StrategyScheduleMode
+  label: string
+  timezone?: string
+  run_once_at?: string
+  interval_seconds?: number
+  times?: string[]
+  trading_day_only?: boolean
+}
+
+export interface StrategyTaskActionInput {
+  action_type: StrategyActionType
+  enabled: boolean
+  trigger_signals: StrategySignalValue[]
+  params: Record<string, string | number | boolean | undefined>
+  label?: string
 }
 
 export interface StrategySceneTask {
@@ -64,9 +110,11 @@ export interface StrategySceneTask {
   strategy_key: string
   strategy_name: string
   target_scope_summary: string
+  target_scope?: StrategyTargetScope
   params: Record<string, unknown>
   actions: StrategyTaskAction[]
   schedule_label: string
+  schedule?: StrategyScheduleConfig
   status: StrategyTaskStatus
   tags: string[]
   notes?: string
@@ -123,8 +171,11 @@ export interface CreateStrategySceneTaskInput {
   name: string
   scene_type: StrategySceneType
   strategy_key: string
-  target_scope_summary: string
-  schedule_label: string
+  target_scope?: StrategyTargetScope
+  target_scope_summary?: string
+  params?: Record<string, unknown>
+  schedule?: StrategyScheduleConfig
+  schedule_label?: string
   notes?: string
-  actions: StrategyActionType[]
+  actions: Array<StrategyActionType | StrategyTaskActionInput>
 }
