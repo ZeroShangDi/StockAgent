@@ -488,7 +488,7 @@
                   v-model="targetParams.ts_codes_text"
                   type="textarea"
                   :rows="4"
-                  placeholder="每行一个股票代码，例如 000001.SZ"
+                  placeholder="可先留空，后续从自选股、股池或个股详情加入；也可每行一个股票代码，例如 000001.SZ"
                   @change="normalizeTaskScope"
                 />
               </el-form-item>
@@ -1647,7 +1647,7 @@ function validateTaskStep(step = taskStepIndex.value): boolean {
     ElMessage.warning('请选择目标范围')
     return false
   }
-  if (step === 2 && taskForm.target_scope.scope_type === 'custom_stock_list' && !targetParams.ts_codes_text.trim()) {
+  if (step === 2 && taskForm.scene_type !== 'listen' && taskForm.target_scope.scope_type === 'custom_stock_list' && !targetParams.ts_codes_text.trim()) {
     ElMessage.warning('请填写自定义股票列表')
     return false
   }
