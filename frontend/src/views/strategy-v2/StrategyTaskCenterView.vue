@@ -257,7 +257,7 @@
               <el-form-item label="策略">
                 <el-select v-model="taskForm.strategy_key" style="width: 100%">
                   <el-option
-                    v-for="strategy in strategyOptions"
+                    v-for="strategy in availableStrategies"
                     :key="strategy.strategy_key"
                     :label="strategy.name"
                     :value="strategy.strategy_key"
@@ -273,7 +273,19 @@
 
             <template v-else-if="createStepIndex === 1">
               <el-form-item label="目标范围">
-                <el-input v-model="taskForm.target_scope_summary" placeholder="例如：观察池 + 自选股 / 全市场 · 排除 ST" />
+                <el-select v-model="taskForm.target_scope_summary" style="width: 100%">
+                  <el-option
+                    v-for="option in scopeOptionsForScene"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  >
+                    <div class="option-panel">
+                      <span>{{ option.label }}</span>
+                      <small>{{ option.description }}</small>
+                    </div>
+                  </el-option>
+                </el-select>
               </el-form-item>
               <el-form-item label="任务说明">
                 <el-input
@@ -287,7 +299,19 @@
 
             <template v-else-if="createStepIndex === 2">
               <el-form-item label="调度方式">
-                <el-input v-model="taskForm.schedule_label" placeholder="例如：交易时段每 1 分钟轮询" />
+                <el-select v-model="taskForm.schedule_label" style="width: 100%">
+                  <el-option
+                    v-for="option in scheduleOptionsForScene"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  >
+                    <div class="option-panel">
+                      <span>{{ option.label }}</span>
+                      <small>{{ option.description }}</small>
+                    </div>
+                  </el-option>
+                </el-select>
               </el-form-item>
               <div class="schedule-hints">
                 <article class="hint-card">
@@ -303,7 +327,7 @@
 
             <template v-else-if="createStepIndex === 3">
               <el-checkbox-group v-model="taskForm.actions" class="action-grid">
-                <el-checkbox v-for="item in actionOptions" :key="item.value" :label="item.value">
+                <el-checkbox v-for="item in actionOptionsForScene" :key="item.value" :label="item.value">
                   <div class="action-option">
                     <strong>{{ item.label }}</strong>
                     <small>{{ item.description }}</small>
@@ -437,6 +461,52 @@ const sceneTabs = [
   { label: STRATEGY_SCENE_LABELS.sim_trade, value: 'sim_trade' as const },
 ]
 
+const scopeOptionsByScene: Record<StrategySceneType, Array<{ label: string; value: string; description: string }>> = {
+  scan: [
+    { label: '全市场 · 排除 ST', value: '全市场 · 排除 ST · 最近 120 日有交易', description: '适合做日内候选扫描，保留基础流动性约束。' },
+    { label: '候选池回看区间', value: '候选池 · 最近 20 个交易日回看', description: '适合做训练时段筛选和模式复盘。' },
+  ],
+  listen: [
+    { label: '观察池 + 自选股', value: '观察池 + 自选股 · 共 63 只', description: '盘中监听最常用范围，兼顾候选与重点标的。' },
+    { label: '持仓组', value: '持仓组：实盘训练账户', description: '适合盈亏、止盈止损与持仓异动监听。' },
+    { label: '指数与市场宽度', value: '指数组 + 市场涨跌家数', description: '适合情绪、指数和市场宽度类监听。' },
+  ],
+  backtest: [
+    { label: '训练样本 A', value: '交割单分组：训练样本 A · 2025Q4 - 2026Q1', description: '以历史样本分组做回放验证。' },
+    { label: '候选模式回放', value: '候选池样本 · 最近 60 个交易日', description: '适合检验候选策略的历史表现。' },
+  ],
+  sim_trade: [
+    { label: '实盘训练账户', value: '持仓组：实盘训练账户', description: '按每日数据持续更新模拟持仓与成交。' },
+    { label: '模拟观察账户', value: '持仓组：模拟观察账户', description: '适合做较轻量的策略跟踪与风险提示。' },
+  ],
+}
+
+const scheduleOptionsByScene: Record<StrategySceneType, Array<{ label: string; value: string; description: string }>> = {
+  scan: [
+    { label: '交易日分时扫描', value: '交易日 09:45 / 10:30 / 13:45', description: '适合日内候选生成，兼顾上午与下午。' },
+    { label: '收盘后补扫', value: '交易日 15:10 收盘后补扫', description: '适合盘后统一整理候选结果。' },
+  ],
+  listen: [
+    { label: '每 1 分钟轮询', value: '交易时段每 1 分钟轮询', description: '适合高频异动与持仓风控监听。' },
+    { label: '每 5 分钟轮询', value: '交易时段每 5 分钟轮询', description: '适合指数、市场宽度等低频监听。' },
+  ],
+  backtest: [
+    { label: '手动运行', value: '手动运行', description: '适合逐次调整参数后重新验证。' },
+    { label: '每日批量回放', value: '每日 20:30 批量回放', description: '适合夜间统一跑一批历史样本。' },
+  ],
+  sim_trade: [
+    { label: '收盘后更新', value: '交易日收盘后自动更新', description: '适合每日准实盘更新持仓与交易结果。' },
+    { label: '收盘后 + 异常补轮', value: '交易日收盘后 + 盘中异常补轮', description: '适合带盘中异常提醒的模拟链路。' },
+  ],
+}
+
+const actionOptionsByScene: Record<StrategySceneType, StrategyActionType[]> = {
+  scan: ['add_to_pool', 'temp_list', 'notify', 'pool_transition'],
+  listen: ['notify', 'pool_transition', 'add_to_pool', 'temp_list'],
+  backtest: ['paper_trade', 'notify'],
+  sim_trade: ['paper_trade', 'notify'],
+}
+
 const createStepItems = [
   { title: '选择策略', description: '先定任务名、场景和策略。' },
   { title: '定义范围', description: '明确扫描或监听的目标范围。' },
@@ -486,6 +556,15 @@ const selectedTaskLatestRun = computed(() => {
   if (!selectedTask.value) return null
   return latestRunByTask.value.get(selectedTask.value.task_id) || null
 })
+const availableStrategies = computed(() => {
+  return strategyOptions.value.filter((item) => item.supported_scenes.includes(taskForm.scene_type))
+})
+const scopeOptionsForScene = computed(() => scopeOptionsByScene[taskForm.scene_type])
+const scheduleOptionsForScene = computed(() => scheduleOptionsByScene[taskForm.scene_type])
+const actionOptionsForScene = computed(() => {
+  const allowed = new Set(actionOptionsByScene[taskForm.scene_type])
+  return actionOptions.filter((item) => allowed.has(item.value))
+})
 
 const activeTaskCount = computed(() => tasks.value.filter((item) => item.status === 'active').length)
 const recentRunCount = computed(() => tasks.value.filter((item) => !!item.last_run_id).length)
@@ -533,6 +612,10 @@ watch(filteredTasks, (value) => {
   }
 }, { immediate: true })
 
+watch(() => taskForm.scene_type, (scene) => {
+  normalizeTaskFormByScene(scene)
+})
+
 async function refreshPage(): Promise<void> {
   tasks.value = await listStrategySceneTasks()
   allRuns.value = await listTaskRuns()
@@ -569,7 +652,7 @@ function openCreateDialog(preset?: { scene?: string; strategy?: string }): void 
   editingTaskId.value = ''
   taskForm.name = ''
   taskForm.scene_type = (preset?.scene as StrategySceneType) || activeScene.value
-  taskForm.strategy_key = preset?.strategy || taskForm.strategy_key || strategyOptions.value[0]?.strategy_key || ''
+  taskForm.strategy_key = resolveStrategyKeyForScene(taskForm.scene_type, preset?.strategy || taskForm.strategy_key)
   taskForm.target_scope_summary = defaultScope(taskForm.scene_type)
   taskForm.schedule_label = defaultSchedule(taskForm.scene_type)
   taskForm.notes = ''
@@ -593,28 +676,49 @@ function openEditDialog(taskId: string): void {
   taskForm.schedule_label = task.schedule_label
   taskForm.notes = task.notes || ''
   taskForm.actions = task.actions.map((item) => item.action_type)
+  normalizeTaskFormByScene(taskForm.scene_type)
   createStepIndex.value = 0
   createDialogVisible.value = true
 }
 
 function defaultScope(scene: StrategySceneType): string {
-  if (scene === 'scan') return '全市场 · 排除 ST'
-  if (scene === 'listen') return '观察池 + 自选股'
-  if (scene === 'backtest') return '训练样本分组 + 指定回放区间'
-  return '持仓组：实盘训练账户'
+  return scopeOptionsByScene[scene][0]?.value || ''
 }
 
 function defaultSchedule(scene: StrategySceneType): string {
-  if (scene === 'scan') return '交易日 09:45 / 10:30 / 13:45'
-  if (scene === 'listen') return '交易时段每 1 分钟轮询'
-  if (scene === 'backtest') return '手动运行'
-  return '交易日收盘后自动更新'
+  return scheduleOptionsByScene[scene][0]?.value || ''
 }
 
 function defaultActions(scene: StrategySceneType): StrategyActionType[] {
   if (scene === 'scan') return ['add_to_pool', 'temp_list']
   if (scene === 'listen') return ['notify', 'pool_transition']
   return ['paper_trade']
+}
+
+function resolveStrategyKeyForScene(scene: StrategySceneType, preferred?: string): string {
+  const sceneStrategies = strategyOptions.value.filter((item) => item.supported_scenes.includes(scene))
+  if (preferred && sceneStrategies.some((item) => item.strategy_key === preferred)) {
+    return preferred
+  }
+  return sceneStrategies[0]?.strategy_key || ''
+}
+
+function normalizeTaskFormByScene(scene: StrategySceneType): void {
+  taskForm.strategy_key = resolveStrategyKeyForScene(scene, taskForm.strategy_key)
+
+  const allowedScopes = scopeOptionsByScene[scene].map((item) => item.value)
+  if (!allowedScopes.includes(taskForm.target_scope_summary)) {
+    taskForm.target_scope_summary = defaultScope(scene)
+  }
+
+  const allowedSchedules = scheduleOptionsByScene[scene].map((item) => item.value)
+  if (!allowedSchedules.includes(taskForm.schedule_label)) {
+    taskForm.schedule_label = defaultSchedule(scene)
+  }
+
+  const allowedActions = new Set(actionOptionsByScene[scene])
+  const filteredActions = taskForm.actions.filter((item) => allowedActions.has(item))
+  taskForm.actions = filteredActions.length > 0 ? filteredActions : defaultActions(scene)
 }
 
 function validateCreateStep(stepIndex = createStepIndex.value): boolean {
