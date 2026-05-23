@@ -7,7 +7,7 @@ task creation dictionary.
 
 from __future__ import annotations
 
-from typing import Iterable, List
+from typing import Any, Iterable, List
 
 from common.models.strategy_v2 import (
     StrategyV2ActionType,
@@ -71,28 +71,108 @@ STOCK_SCOPES = {
     StrategyV2TargetScopeType.CUSTOM_STOCK_LIST,
 }
 
+BUILTIN_STRATEGY_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "strategy_key": "ma5_buy",
+        "name": "5日线低吸",
+        "description": "股价回落到均线附近后，等待重新企稳并输出正向信号，适合做候选入池与低吸观察。",
+        "impl_type": "builtin_code",
+        "supported_scenes": ["scan", "listen", "backtest", "sim_trade"],
+        "supports_state": True,
+        "version": 2,
+        "tags": ["均线", "低吸", "企稳"],
+        "param_schema": [
+            {"key": "ma_period", "label": "均线周期", "type": "number", "default": 5, "description": "用于计算企稳参考的均线周期。"},
+            {"key": "touch_range", "label": "接触阈值(%)", "type": "float", "default": 2, "description": "价格接近均线的允许偏差范围。"},
+            {"key": "stable_periods", "label": "企稳轮数", "type": "number", "default": 2, "description": "连续站稳的最小轮数。"},
+        ],
+        "sample_outputs": [
+            {"signal": 1, "title": "回落后重新站稳", "summary": "适合进入候选池，后续在股池中继续筛。"},
+            {"signal": 0, "title": "仍在震荡观察", "summary": "条件未充分，不触发动作。"},
+            {"signal": -1, "title": "跌破均线失效", "summary": "观察条件被破坏，可移出当前观察路径。"},
+        ],
+    },
+    {
+        "strategy_key": "price_change",
+        "name": "涨跌幅阈值",
+        "description": "监控单只股票或一个范围在盘中达到指定涨跌幅阈值后的触发情况。",
+        "impl_type": "builtin_code",
+        "supported_scenes": ["listen", "scan", "backtest"],
+        "supports_state": True,
+        "version": 2,
+        "tags": ["阈值", "异动", "盘中"],
+        "param_schema": [
+            {
+                "key": "direction",
+                "label": "方向",
+                "type": "select",
+                "default": "both",
+                "description": "决定监控上涨、下跌还是双向异动。",
+                "options": [
+                    {"label": "双向", "value": "both"},
+                    {"label": "向上", "value": "up"},
+                    {"label": "向下", "value": "down"},
+                ],
+            },
+            {"key": "threshold", "label": "阈值(%)", "type": "float", "default": 5, "description": "触发信号的涨跌幅阈值。"},
+        ],
+        "sample_outputs": [
+            {"signal": 1, "title": "向上突破阈值", "summary": "适合发通知，或推动从信号池流转到确认池。"},
+            {"signal": 0, "title": "未触发", "summary": "没有明显异动，维持观察。"},
+            {"signal": -1, "title": "向下触发阈值", "summary": "可用于风险提醒或候选剔除。"},
+        ],
+    },
+    {
+        "strategy_key": "fixed_stop_loss",
+        "name": "固定止损",
+        "description": "以参考价和止损比例为核心，适合持仓组或模拟交易任务做风险提醒。",
+        "impl_type": "builtin_code",
+        "supported_scenes": ["listen", "sim_trade", "backtest"],
+        "supports_state": True,
+        "version": 2,
+        "tags": ["止损", "持仓", "风控"],
+        "param_schema": [
+            {"key": "reference_price", "label": "参考价", "type": "float", "default": 10.2, "description": "止损线的基准价格。"},
+            {"key": "stop_loss_pct", "label": "止损比例(%)", "type": "float", "default": 8, "description": "参考价向下的止损幅度。"},
+        ],
+        "sample_outputs": [
+            {"signal": 1, "title": "止损触发", "summary": "任务层通常会执行通知或模拟卖出。"},
+            {"signal": 0, "title": "持仓正常", "summary": "还未触发止损。"},
+            {"signal": -1, "title": "跌势恶化", "summary": "可作为更强的负向风险信号。"},
+        ],
+    },
+    {
+        "strategy_key": "breadth_pulse",
+        "name": "市场涨跌比脉冲",
+        "description": "观察指数与涨跌家数结构，适合做市场情绪监听和训练时段筛选。",
+        "impl_type": "builtin_code",
+        "supported_scenes": ["listen", "scan"],
+        "supports_state": False,
+        "version": 1,
+        "tags": ["情绪", "市场", "宽度"],
+        "param_schema": [
+            {"key": "up_down_ratio", "label": "涨跌比阈值", "type": "float", "default": 2.2, "description": "市场偏强所需的涨跌家数比。"},
+            {"key": "limit_up_threshold", "label": "涨停家数", "type": "number", "default": 55, "description": "辅助确认市场强度。"},
+        ],
+        "sample_outputs": [
+            {"signal": 1, "title": "市场宽度强化", "summary": "适合推动强势模式池的自动加仓观察。"},
+            {"signal": 0, "title": "市场中性", "summary": "等待进一步确认。"},
+            {"signal": -1, "title": "市场退潮", "summary": "用于提醒缩容或降低进攻性。"},
+        ],
+    },
+]
+
 BUILTIN_STRATEGY_SCENES: dict[str, set[StrategyV2SceneType]] = {
-    "ma5_buy": {
-        StrategyV2SceneType.SCAN,
-        StrategyV2SceneType.LISTEN,
-        StrategyV2SceneType.BACKTEST,
-        StrategyV2SceneType.SIM_TRADE,
-    },
-    "price_change": {
-        StrategyV2SceneType.SCAN,
-        StrategyV2SceneType.LISTEN,
-        StrategyV2SceneType.BACKTEST,
-    },
-    "fixed_stop_loss": {
-        StrategyV2SceneType.LISTEN,
-        StrategyV2SceneType.BACKTEST,
-        StrategyV2SceneType.SIM_TRADE,
-    },
-    "breadth_pulse": {
-        StrategyV2SceneType.SCAN,
-        StrategyV2SceneType.LISTEN,
-    },
+    item["strategy_key"]: {StrategyV2SceneType(scene) for scene in item["supported_scenes"]}
+    for item in BUILTIN_STRATEGY_DEFINITIONS
 }
+
+
+def get_strategy_definition(strategy_key: str) -> dict[str, Any] | None:
+    for item in BUILTIN_STRATEGY_DEFINITIONS:
+        if item["strategy_key"] == strategy_key:
+            return item
+    return None
 
 
 def _supports_scene(items: Iterable[StrategyV2SceneType]) -> List[StrategyV2SceneType]:

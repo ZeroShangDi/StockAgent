@@ -74,11 +74,13 @@ class StrategyV2ScheduleConfig(BaseModel):
 
 
 class StrategyV2TaskAction(BaseModel):
+    action_id: Optional[str] = None
     action_type: StrategyV2ActionType
     enabled: bool = True
     trigger_signals: List[int] = Field(default_factory=list)
     params: Dict[str, Any] = Field(default_factory=dict)
     label: Optional[str] = None
+    summary: Optional[str] = None
 
 
 class StrategyV2CreateTaskRequest(BaseModel):
@@ -95,9 +97,14 @@ class StrategyV2CreateTaskRequest(BaseModel):
 class StrategyV2SceneTaskResponse(StrategyV2CreateTaskRequest):
     task_id: str
     user_id: str
+    strategy_name: str
     status: StrategyV2TaskStatus
     target_scope_summary: str
     schedule_label: str
+    tags: List[str] = Field(default_factory=list)
+    last_signal_count: int = 0
+    last_run_id: Optional[str] = None
+    last_run_status: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

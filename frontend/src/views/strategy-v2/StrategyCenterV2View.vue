@@ -731,11 +731,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   createStrategySceneTask,
+  listStrategyDefinitions,
+  listStrategySceneTasks,
+} from '@/api/modules/strategy-v2'
+import {
   STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
   STRATEGY_TASK_STATUS_LABELS,
-  listStrategyDefinitions,
-  listStrategySceneTasks,
 } from '@/mocks/strategyV2'
 import type {
   StrategyActionType,
