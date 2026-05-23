@@ -141,11 +141,57 @@
             </el-tag>
           </div>
         </div>
+
+        <div class="detail-block">
+          <span>参数信息</span>
+          <div v-if="selectedStrategy.param_schema.length > 0" class="param-detail-list">
+            <article v-for="param in selectedStrategy.param_schema" :key="param.key" class="param-detail-card">
+              <div class="param-detail-head">
+                <div>
+                  <strong>{{ param.label }}</strong>
+                  <small>{{ param.key }} · {{ paramTypeLabel(param.type) }}</small>
+                </div>
+              </div>
+
+              <p>{{ param.description }}</p>
+
+              <div class="param-edit-row">
+                <span>默认值</span>
+                <el-select
+                  v-if="param.type === 'select' && param.options"
+                  :model-value="String(param.default)"
+                  style="width: 220px"
+                  @update:model-value="(value) => updateViewParamDefault(param.key, value)"
+                >
+                  <el-option
+                    v-for="option in param.options"
+                    :key="String(option.value)"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+                <el-switch
+                  v-else-if="param.type === 'boolean'"
+                  :model-value="Boolean(param.default)"
+                  @update:model-value="(value) => updateViewParamDefault(param.key, value)"
+                />
+                <el-input
+                  v-else
+                  :model-value="String(param.default)"
+                  style="width: 220px"
+                  @update:model-value="(value) => updateViewParamDefault(param.key, castParamValue(param.type, value))"
+                />
+              </div>
+            </article>
+          </div>
+          <el-empty v-else description="当前没有参数信息" :image-size="72" />
+        </div>
       </template>
 
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="viewDialogVisible = false">关闭</el-button>
+          <el-button v-if="selectedStrategy" type="success" plain @click="saveViewStrategy">保存参数</el-button>
           <el-button v-if="selectedStrategy" type="primary" @click="openEditDialog(selectedStrategy.strategy_key)">编辑</el-button>
         </div>
       </template>
@@ -357,6 +403,42 @@ function sceneLabel(scene: StrategySceneType): string {
 function sceneShortLabel(scene: StrategySceneType): string {
   return sceneShortLabelMap[scene]
 }
+
+function paramTypeLabel(type: StrategyDefinition['param_schema'][number]['type']): string {
+  if (type === 'number') return '整数'
+  if (type === 'float') return '浮点'
+  if (type === 'boolean') return '布尔'
+  if (type === 'select') return '枚举'
+  return '字符串'
+}
+
+function castParamValue(type: StrategyDefinition['param_schema'][number]['type'], value: string): string | number | boolean {
+  if (type === 'number') return Number.parseInt(value || '0', 10)
+  if (type === 'float') return Number.parseFloat(value || '0')
+  return value
+}
+
+function updateViewParamDefault(key: string, value: string | number | boolean): void {
+  if (!selectedStrategy.value) return
+  selectedStrategy.value.param_schema = selectedStrategy.value.param_schema.map((item) => {
+    if (item.key !== key) return item
+    return {
+      ...item,
+      default: value,
+    }
+  })
+}
+
+function saveViewStrategy(): void {
+  if (!selectedStrategy.value) return
+
+  strategies.value = strategies.value.map((item) => {
+    if (item.strategy_key !== selectedStrategy.value?.strategy_key) return item
+    return cloneStrategy(selectedStrategy.value)
+  })
+
+  ElMessage.success('策略参数已保存')
+}
 </script>
 
 <style scoped>
@@ -458,6 +540,53 @@ function sceneShortLabel(scene: StrategySceneType): string {
   gap: 16px;
 }
 
+.param-detail-list {
+  display: grid;
+  gap: 12px;
+}
+
+.param-detail-card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.param-detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.param-detail-head strong {
+  display: block;
+}
+
+.param-detail-head small {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+}
+
+.param-detail-card p {
+  margin: 10px 0 0;
+  color: #475569;
+  line-height: 1.7;
+}
+
+.param-edit-row {
+  margin-top: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.param-edit-row span {
+  margin: 0;
+}
+
 @media (max-width: 768px) {
   .page-toolbar {
     justify-content: stretch;
@@ -469,6 +598,11 @@ function sceneShortLabel(scene: StrategySceneType): string {
 
   .detail-inline-grid {
     grid-template-columns: 1fr;
+  }
+
+  .param-edit-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>
