@@ -263,6 +263,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/system/AutomationOverviewView.vue'),
         meta: { title: '自动任务总览' },
       },
+      {
+        path: 'usage-guide',
+        name: 'UsageGuide',
+        component: () => import('@/views/system/UsageGuideView.vue'),
+        meta: { title: '使用说明' },
+      },
     ],
   },
   

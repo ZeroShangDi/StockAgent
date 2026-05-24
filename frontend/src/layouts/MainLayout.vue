@@ -66,6 +66,7 @@ const activeMenu = computed(() => {
   if (path.startsWith('/analysis')) return '/analysis'
   if (path.startsWith('/assistant')) return '/assistant'
   if (path.startsWith('/automation-overview')) return '/automation-overview'
+  if (path.startsWith('/usage-guide')) return '/usage-guide'
   if (path.startsWith('/strategies-v2')) return '/strategies-v2'
   if (path.startsWith('/strategy-tasks') || path.startsWith('/strategy-runs')) return '/strategy-tasks'
   if (path.startsWith('/stock-picker')) return '/stock-picker'
@@ -86,37 +87,68 @@ const isFocusMode = computed(() => focusModeEnabled.value || route.matched.some(
 
 const menuSections = [
   {
-    key: 'customized',
-    title: '新增与改造',
+    key: 'market-data',
+    title: '市场与数据',
     items: [
       { path: '/market-weather', icon: Sunny, title: '市场晴雨表' },
       { path: '/stock-statistics', icon: Histogram, title: '股票统计' },
-      { path: '/assistant', icon: ChatDotRound, title: '智能工作台' },
-      { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
-      { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
-      { path: '/watchlist', icon: Star, title: '自选股' },
-      { path: '/strategies-v2', icon: DataAnalysis, title: '策略中心 V2' },
-      { path: '/strategy-tasks', icon: TrendCharts, title: '场景任务 V2' },
-      { path: '/strategies', icon: TrendCharts, title: '市场监听' },
-      { path: '/trade-review', icon: Document, title: '交割单复盘' },
-      { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
-      { path: '/system-status', icon: WarningFilled, title: '能力状态' },
-      { path: '/automation-overview', icon: AlarmClock, title: '自动任务总览' },
-    ],
-  },
-  {
-    key: 'original',
-    title: '原项目页面',
-    items: [
-      { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
       { path: '/market', icon: Histogram, title: '行情分析' },
       { path: '/sector-strategy', icon: TrendCharts, title: '板块分析' },
       { path: '/hot-news', icon: Promotion, title: '热点追踪' },
-      { path: '/analysis', icon: DataAnalysis, title: '分析任务' },
-      { path: '/backtest', icon: DataAnalysis, title: '单股回测' },
+    ],
+  },
+  {
+    key: 'stock-selection',
+    title: '选股与股池',
+    items: [
+      { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
       { path: '/factor-selection', icon: DataAnalysis, title: '因子选股' },
+      { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
+      { path: '/watchlist', icon: Star, title: '自选股' },
+    ],
+  },
+  {
+    key: 'strategy-tasks',
+    title: '策略与任务',
+    items: [
+      { path: '/strategies-v2', icon: DataAnalysis, title: '策略中心 V2' },
+      { path: '/strategy-tasks', icon: TrendCharts, title: '场景任务 V2' },
+    ],
+  },
+  {
+    key: 'review-trading',
+    title: '交易与复盘',
+    items: [
+      { path: '/trade-review', icon: Document, title: '交割单复盘' },
+      { path: '/backtest', icon: DataAnalysis, title: '单股回测' },
       { path: '/reports', icon: Document, title: '报告回顾' },
+      { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
+    ],
+  },
+  {
+    key: 'workspace',
+    title: '智能工作区',
+    items: [
+      { path: '/assistant', icon: ChatDotRound, title: 'AI 工作台' },
+      { path: '/analysis', icon: DataAnalysis, title: '分析任务' },
+      { path: '/dashboard', icon: HomeFilled, title: '仪表盘' },
+    ],
+  },
+  {
+    key: 'system',
+    title: '系统',
+    items: [
+      { path: '/usage-guide', icon: Document, title: '使用说明' },
+      { path: '/automation-overview', icon: AlarmClock, title: '自动任务总览' },
+      { path: '/system-status', icon: WarningFilled, title: '能力状态' },
       { path: '/settings', icon: Setting, title: '设置' },
+    ],
+  },
+  {
+    key: 'legacy',
+    title: '旧版待下线',
+    items: [
+      { path: '/strategies', icon: TrendCharts, title: '市场监听' },
     ],
   },
 ]
