@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
 import re
 
@@ -33,6 +35,7 @@ from .auth import get_current_user_id
 
 
 router = APIRouter(prefix="/strategy-v2", tags=["Strategy V2"])
+logger = logging.getLogger("api.strategy_v2")
 
 TASK_COLLECTION = "strategy_v2_scene_tasks"
 RUN_COLLECTION = "strategy_v2_task_runs"
@@ -40,6 +43,24 @@ RUN_ITEM_COLLECTION = "strategy_v2_task_run_items"
 STOCK_POOL_COLLECTION = "stock_pools"
 RUN_STALE_AFTER_SECONDS = 30 * 60
 ACTIVE_RUN_STATUSES = {"running"}
+SCHEDULER_POLL_SECONDS = 30
+SCHEDULE_SLOT_GRACE_SECONDS = 10 * 60
+MARKET_TIMEZONE = ZoneInfo("Asia/Shanghai")
+SCHEDULE_SLOT_TIMES = {
+    "pre_market_0900": (9, 0),
+    "call_auction_0925": (9, 25),
+    "morning_turn_1000": (10, 0),
+    "midday_close_1130": (11, 30),
+    "afternoon_turn_1400": (14, 0),
+    "post_market_1505": (15, 5),
+    "weekly_sat_1200": (12, 0),
+}
+SCHEDULE_SLOT_INTERVALS = {
+    "intraday_1m": 60,
+    "intraday_5m": 5 * 60,
+    "intraday_30m": 30 * 60,
+}
+_SCHEDULER_TASK: Optional[asyncio.Task] = None
 
 
 class StrategyV2RunCancelled(Exception):
@@ -70,6 +91,15 @@ def _as_utc_datetime(value: Any) -> Optional[datetime]:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _is_weekday(value: datetime) -> bool:
+    return value.weekday() < 5
+
+
+def _is_intraday_session(value: datetime) -> bool:
+    minutes = value.hour * 60 + value.minute
+    return (9 * 60 + 15 <= minutes <= 11 * 60 + 30) or (13 * 60 <= minutes <= 15 * 60 + 5)
 
 
 @router.get("/rules", response_model=StrategyV2RuleDictionary)
@@ -329,13 +359,166 @@ async def _start_strategy_v2_run(
     return run_doc
 
 
+async def start_strategy_v2_scheduler() -> None:
+    global _SCHEDULER_TASK
+    if _SCHEDULER_TASK and not _SCHEDULER_TASK.done():
+        return
+    _SCHEDULER_TASK = asyncio.create_task(_strategy_v2_scheduler_loop())
+
+
+async def stop_strategy_v2_scheduler() -> None:
+    global _SCHEDULER_TASK
+    if not _SCHEDULER_TASK:
+        return
+    _SCHEDULER_TASK.cancel()
+    try:
+        await _SCHEDULER_TASK
+    except asyncio.CancelledError:
+        pass
+    _SCHEDULER_TASK = None
+
+
+async def _strategy_v2_scheduler_loop() -> None:
+    while True:
+        try:
+            await _scan_due_strategy_v2_tasks()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Keep the lightweight scheduler alive; individual failures are
+            # reflected on task/run records when a run is actually created.
+            logger.warning("Strategy V2 scheduler tick failed: %s", exc)
+        await asyncio.sleep(SCHEDULER_POLL_SECONDS)
+
+
+async def _scan_due_strategy_v2_tasks() -> None:
+    now = _utc_now()
+    local_now = now.astimezone(MARKET_TIMEZONE)
+    await _mark_stale_running_runs()
+    tasks = await mongo_manager.find_many(
+        TASK_COLLECTION,
+        {
+            "status": StrategyV2TaskStatus.ACTIVE.value,
+            "schedule.mode": "scheduled",
+        },
+        projection={"_id": 0},
+        sort=[("updated_at", 1)],
+        limit=100,
+    )
+
+    for task in tasks:
+        due = _resolve_schedule_due(task, local_now, now)
+        if not due:
+            continue
+        fire_key = due["fire_key"]
+        claimed = await mongo_manager.update_one(
+            TASK_COLLECTION,
+            {
+                "task_id": task.get("task_id"),
+                "user_id": task.get("user_id"),
+                "schedule.mode": "scheduled",
+                "status": StrategyV2TaskStatus.ACTIVE.value,
+                "last_scheduled_fire_key": {"$ne": fire_key},
+                "$or": [
+                    {"active_run_id": {"$exists": False}},
+                    {"active_run_id": None},
+                    {"active_run_id": ""},
+                ],
+            },
+            {
+                "$set": {
+                    "last_scheduled_fire_key": fire_key,
+                    "last_scheduled_run_at": now,
+                    "last_scheduled_label": due["label"],
+                    "updated_at": now,
+                }
+            },
+        )
+        if claimed <= 0:
+            continue
+
+        fresh_task = await _get_user_task_or_404(str(task.get("task_id") or ""), str(task.get("user_id") or ""))
+        try:
+            await _start_strategy_v2_run(
+                fresh_task,
+                str(fresh_task.get("user_id") or ""),
+                trigger_source="schedule",
+                parent_run_id=None,
+            )
+        except HTTPException:
+            continue
+
+
+def _resolve_schedule_due(
+    task: Dict[str, Any],
+    local_now: datetime,
+    utc_now: datetime,
+) -> Optional[Dict[str, str]]:
+    schedule = task.get("schedule") or {}
+    if schedule.get("mode") != "scheduled":
+        return None
+    if schedule.get("trading_day_only") and not _is_weekday(local_now):
+        return None
+
+    slot = str(schedule.get("slot") or "")
+    interval_seconds = _schedule_interval_seconds(schedule)
+    if interval_seconds:
+        if slot.startswith("intraday") and (not _is_weekday(local_now) or not _is_intraday_session(local_now)):
+            return None
+        last_run_at = _as_utc_datetime(task.get("last_scheduled_run_at"))
+        if last_run_at and (utc_now - last_run_at).total_seconds() < interval_seconds:
+            return None
+        bucket = int(utc_now.timestamp() // interval_seconds)
+        return {
+            "fire_key": f"{task.get('task_id')}:{slot or 'interval'}:{bucket}",
+            "label": schedule.get("label") or slot or f"{interval_seconds}s",
+        }
+
+    slot_time = SCHEDULE_SLOT_TIMES.get(slot)
+    if not slot_time:
+        return None
+    if slot == "weekly_sat_1200":
+        if local_now.weekday() != 5:
+            return None
+    elif not _is_weekday(local_now):
+        return None
+
+    scheduled_at = local_now.replace(
+        hour=slot_time[0],
+        minute=slot_time[1],
+        second=0,
+        microsecond=0,
+    )
+    delta = (local_now - scheduled_at).total_seconds()
+    if delta < 0 or delta > SCHEDULE_SLOT_GRACE_SECONDS:
+        return None
+    return {
+        "fire_key": f"{task.get('task_id')}:{slot}:{scheduled_at.strftime('%Y%m%d%H%M')}",
+        "label": schedule.get("label") or slot,
+    }
+
+
+def _schedule_interval_seconds(schedule: Dict[str, Any]) -> int:
+    raw_interval = schedule.get("interval_seconds")
+    try:
+        interval = int(raw_interval or 0)
+    except (TypeError, ValueError):
+        interval = 0
+    if interval > 0:
+        return max(interval, SCHEDULER_POLL_SECONDS)
+    slot = str(schedule.get("slot") or "")
+    return SCHEDULE_SLOT_INTERVALS.get(slot, 0)
+
+
 async def _mark_stale_running_runs(
     *,
-    user_id: str,
+    user_id: Optional[str] = None,
     task_id: Optional[str] = None,
     run_id: Optional[str] = None,
 ) -> None:
-    query: Dict[str, Any] = {"user_id": user_id, "run_status": "running"}
+    query: Dict[str, Any] = {"run_status": "running"}
+    if user_id:
+        query["user_id"] = user_id
     if task_id:
         query["task_id"] = task_id
     if run_id:
@@ -344,10 +527,13 @@ async def _mark_stale_running_runs(
     running_runs = await mongo_manager.find_many(
         RUN_COLLECTION,
         query,
-        projection={"_id": 0, "run_id": 1, "task_id": 1, "started_at": 1, "progress_current": 1, "progress_total": 1},
+        projection={"_id": 0, "run_id": 1, "task_id": 1, "user_id": 1, "started_at": 1, "progress_current": 1, "progress_total": 1},
     )
     now = _utc_now()
     for run in running_runs:
+        run_user_id = str(run.get("user_id") or user_id or "")
+        if not run_user_id:
+            continue
         started_at = _as_utc_datetime(run.get("started_at"))
         if not started_at or (now - started_at).total_seconds() < RUN_STALE_AFTER_SECONDS:
             continue
@@ -358,7 +544,7 @@ async def _mark_stale_running_runs(
         summary = "运行超时：后台任务长时间未更新，可能由服务重启或后台任务中断导致。"
         await mongo_manager.update_one(
             RUN_COLLECTION,
-            {"run_id": run.get("run_id"), "user_id": user_id},
+            {"run_id": run.get("run_id"), "user_id": run_user_id},
             {
                 "$set": {
                     "run_status": "failed",
@@ -377,7 +563,7 @@ async def _mark_stale_running_runs(
 
         await _release_task_run_lock(
             str(run.get("task_id") or ""),
-            user_id,
+            run_user_id,
             str(run.get("run_id") or ""),
             "failed",
             finished_at,

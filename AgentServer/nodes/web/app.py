@@ -20,6 +20,7 @@ from core.managers import (
 
 from .api import auth_router, user_router, task_router, stock_router, market_router, subscription_router, backtest_router, report_router, system_router, market_weather_router, stock_picker_router, practice_router, trade_review_router, assistant_router, strategy_v2_router
 from .api.auth import hash_password, verify_password
+from .api.strategy_v2 import start_strategy_v2_scheduler, stop_strategy_v2_scheduler
 from .websocket import websocket_router
 
 
@@ -82,9 +83,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await redis_manager.initialize()
     await mongo_manager.initialize()
     await ensure_default_admin_user()
-    
-    yield
-    
+    await start_strategy_v2_scheduler()
+
+    try:
+        yield
+    finally:
+        await stop_strategy_v2_scheduler()
+
     # ========== 关闭 ==========
     await mongo_manager.shutdown()
     await redis_manager.shutdown()
