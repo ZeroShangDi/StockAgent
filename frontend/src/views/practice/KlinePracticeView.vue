@@ -81,31 +81,6 @@
       </section>
 
       <template v-else>
-        <section class="status-ribbon">
-          <article class="status-pill">
-            <span>当前价</span>
-            <strong>{{ session.latest_close ? session.latest_close.toFixed(2) : '--' }}</strong>
-            <small>{{ session.current_trade_date || '--' }}</small>
-          </article>
-          <article class="status-pill" :class="pnlClass(currentPositionReturnPct)">
-            <span>当前操作盈亏</span>
-            <strong>{{ formatPct(currentPositionReturnPct) }}</strong>
-            <small>{{ session.position_shares > 0 ? `当前仓位 ${formatPct(session.position_pct)}` : '当前空仓' }}</small>
-          </article>
-          <article class="status-pill" :class="pnlClass(session.total_return_pct)">
-            <span>总盈亏</span>
-            <strong>{{ formatPct(session.total_return_pct) }}</strong>
-            <small>{{ session.position_shares > 0 ? '含浮动盈亏' : '已全部落袋' }}</small>
-          </article>
-          <article class="status-pill">
-            <span>进度</span>
-            <strong>{{ session.step }} / {{ session.total_steps }}</strong>
-            <div class="progress-line">
-              <div class="progress-fill" :style="{ width: `${progressPct}%` }"></div>
-            </div>
-          </article>
-        </section>
-
         <section class="action-ribbon">
           <div class="allocation-switch">
             <span class="action-label">仓位</span>
@@ -165,18 +140,10 @@
         </section>
 
         <section v-if="session.sample_mode === 'strategy'" class="strategy-sample-card">
-          <div>
-            <span>策略双盲</span>
-            <strong>{{ session.strategy_name || '策略样本' }}</strong>
-          </div>
-          <div>
-            <span>入选日期</span>
-            <strong>{{ session.strategy_signal_date || session.current_trade_date || '--' }}</strong>
-          </div>
-          <div class="wide">
-            <span>入选原因</span>
-            <strong>{{ session.strategy_reason || '策略返回正向信号' }}</strong>
-          </div>
+          <span class="sample-label">策略双盲</span>
+          <strong>{{ session.strategy_name || '策略样本' }}</strong>
+          <span>入选 {{ session.strategy_signal_date || session.current_trade_date || '--' }}</span>
+          <span class="sample-reason">{{ session.strategy_reason || '策略返回正向信号' }}</span>
         </section>
 
         <section class="chart-shell">
@@ -196,12 +163,31 @@
               :show-common-meta="false"
               :enable-keyboard-shortcuts="false"
             >
-              <template #extraChips>
-                <span class="practice-chip">{{ session.current_trade_date || '--' }}</span>
-                <span class="practice-chip">{{ session.position_shares > 0 ? `仓位 ${formatPct(session.position_pct)}` : '当前空仓' }}</span>
-                <span class="practice-chip" :class="pnlClass(session.total_return_pct)">
-                  总盈亏 {{ formatPct(session.total_return_pct) }}
-                </span>
+              <template #toolbarActions>
+                <div class="practice-toolbar-metrics">
+                  <span class="toolbar-metric">
+                    现价
+                    <strong>{{ session.latest_close ? session.latest_close.toFixed(2) : '--' }}</strong>
+                  </span>
+                  <span class="toolbar-metric" :class="pnlClass(currentPositionReturnPct)">
+                    当前
+                    <strong>{{ formatPct(currentPositionReturnPct) }}</strong>
+                  </span>
+                  <span class="toolbar-metric" :class="pnlClass(session.total_return_pct)">
+                    总计
+                    <strong>{{ formatPct(session.total_return_pct) }}</strong>
+                  </span>
+                  <span class="toolbar-metric">
+                    仓位
+                    <strong>{{ session.position_shares > 0 ? formatPct(session.position_pct) : '空仓' }}</strong>
+                  </span>
+                  <span class="toolbar-metric toolbar-progress">
+                    {{ session.step }}/{{ session.total_steps }}
+                    <i>
+                      <b :style="{ width: `${progressPct}%` }"></b>
+                    </i>
+                  </span>
+                </div>
               </template>
             </StockReviewChartPanel>
           </div>
@@ -552,7 +538,6 @@ onBeforeUnmount(() => {
 }
 
 .studio-topbar,
-.status-ribbon,
 .action-ribbon,
 .chart-shell,
 .shortcut-bar,
@@ -620,13 +605,6 @@ onBeforeUnmount(() => {
   width: 180px;
 }
 
-.status-ribbon {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.status-pill,
 .drawer-card {
   padding: 14px 16px;
   border-radius: 18px;
@@ -634,39 +612,17 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
-.status-pill span,
 .drawer-card span,
 .drawer-header span {
   color: #64748b;
   font-size: 12px;
 }
 
-.status-pill strong,
 .drawer-card strong {
   display: block;
   margin-top: 6px;
   font-size: 24px;
   line-height: 1.1;
-}
-
-.status-pill small {
-  display: block;
-  margin-top: 6px;
-  color: #94a3b8;
-}
-
-.progress-line {
-  margin-top: 8px;
-  height: 6px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.18);
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #0ea5e9, #2563eb);
 }
 
 .action-ribbon {
@@ -681,31 +637,34 @@ onBeforeUnmount(() => {
 }
 
 .strategy-sample-card {
-  display: grid;
-  grid-template-columns: 1fr 0.8fr 2fr;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+  padding: 9px 12px;
+  border-radius: 14px;
   background: linear-gradient(135deg, rgba(14, 165, 233, 0.10), rgba(34, 197, 94, 0.08));
   border: 1px solid rgba(14, 165, 233, 0.16);
+  color: #475569;
+  font-size: 13px;
 }
 
-.strategy-sample-card div {
-  min-width: 0;
-}
-
-.strategy-sample-card span {
-  display: block;
+.strategy-sample-card .sample-label {
+  flex: 0 0 auto;
   color: #64748b;
-  font-size: 12px;
 }
 
 .strategy-sample-card strong {
-  display: block;
-  margin-top: 4px;
+  flex: 0 0 auto;
   color: #0f172a;
-  font-size: 14px;
-  line-height: 1.45;
+}
+
+.strategy-sample-card .sample-reason {
+  flex: 1 1 auto;
+  min-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   word-break: break-word;
 }
 
@@ -738,18 +697,68 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
-.practice-chip {
-  font-size: 12px;
+.practice-toolbar-metrics {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 640px;
+}
+
+.toolbar-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.16);
   color: #64748b;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.toolbar-metric strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.toolbar-metric.is-profit strong {
+  color: #dc2626;
+}
+
+.toolbar-metric.is-loss strong {
+  color: #089981;
+}
+
+.toolbar-progress i {
+  position: relative;
+  display: inline-block;
+  width: 52px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.toolbar-progress b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0ea5e9, #2563eb);
 }
 
 .chart-stage {
   min-width: 0;
-  min-height: calc(100vh - 360px);
+  min-height: calc(100vh - 300px);
 }
 
 .chart-stage :deep(.stock-chart) {
-  height: calc(100vh - 360px);
+  height: calc(100vh - 300px);
   min-height: 420px;
 }
 
@@ -815,11 +824,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1180px) {
-  .status-ribbon,
-  .strategy-sample-card {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .action-ribbon,
   .studio-topbar {
     flex-direction: column;
@@ -835,12 +839,17 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 
+  .practice-toolbar-metrics {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
   .chart-stage {
-    min-height: calc(100vh - 470px);
+    min-height: calc(100vh - 420px);
   }
 
   .chart-stage :deep(.stock-chart) {
-    height: calc(100vh - 470px);
+    height: calc(100vh - 420px);
   }
 }
 
@@ -854,10 +863,17 @@ onBeforeUnmount(() => {
     min-height: auto;
   }
 
-  .status-ribbon,
-  .strategy-sample-card,
   .drawer-grid {
     grid-template-columns: 1fr;
+  }
+
+  .strategy-sample-card {
+    flex-wrap: wrap;
+  }
+
+  .strategy-sample-card .sample-reason {
+    flex-basis: 100%;
+    white-space: normal;
   }
 
   .chart-stage {
