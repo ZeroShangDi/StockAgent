@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
+from core.managers import mongo_manager
 from src.analysis.stock_picker import stock_picker_service
 
 
@@ -181,8 +182,192 @@ class OneLineStockPickerStrategy:
 one_line_stock_picker_strategy = OneLineStockPickerStrategy()
 
 
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(value: Any, default: int) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_enabled(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _daily_pct_change(row: dict[str, Any]) -> float:
+    pct = row.get("pct_chg")
+    if pct is not None:
+        return _to_float(pct)
+    pre_close = _to_float(row.get("pre_close"))
+    close = _to_float(row.get("close"))
+    if pre_close <= 0:
+        return 0.0
+    return (close - pre_close) / pre_close * 100
+
+
+def _moving_average(candles: list[dict[str, Any]], period: int) -> float | None:
+    if period <= 0 or len(candles) < period:
+        return None
+    closes = [_to_float(row.get("close")) for row in candles[-period:]]
+    if any(close <= 0 for close in closes):
+        return None
+    return sum(closes) / period
+
+
+def _has_bullish_ma_alignment(candles: list[dict[str, Any]], short: int, mid: int, long: int) -> bool:
+    ma_short = _moving_average(candles, short)
+    ma_mid = _moving_average(candles, mid)
+    ma_long = _moving_average(candles, long)
+    return ma_short is not None and ma_mid is not None and ma_long is not None and ma_short > ma_mid > ma_long
+
+
+def evaluate_double_cannon_from_candles(
+    candles: list[dict[str, Any]],
+    params: dict[str, Any] | None = None,
+) -> StrategyV2EvaluationResult:
+    """Evaluate the double-cannon pattern from ascending daily candles."""
+    params = params or {}
+    lookback_days = max(_to_int(params.get("lookback_days"), 22), 5)
+    min_bull_pct = _to_float(params.get("min_bull_pct"), 5.0)
+    max_second_age_days = max(_to_int(params.get("max_second_age_days"), 5), 0)
+    require_second_volume_gt_first = _is_enabled(params.get("require_second_volume_gt_first"))
+    require_bullish_ma = _is_enabled(params.get("require_bullish_ma"))
+    require_pullback_shrink_volume = _is_enabled(params.get("require_pullback_shrink_volume"))
+    ma_short = max(_to_int(params.get("ma_short"), 5), 1)
+    ma_mid = max(_to_int(params.get("ma_mid"), 10), 1)
+    ma_long = max(_to_int(params.get("ma_long"), 20), 1)
+
+    rows = [row for row in candles if row.get("trade_date") and _to_float(row.get("close")) > 0]
+    rows.sort(key=lambda item: str(item.get("trade_date")))
+    if len(rows) < 3:
+        return StrategyV2EvaluationResult(signal=0, reason="历史 K 线不足，无法识别双响炮")
+
+    recent = rows[-lookback_days:]
+    latest_index = len(recent) - 1
+    strong_indices = [
+        index
+        for index, row in enumerate(recent)
+        if _to_float(row.get("close")) > _to_float(row.get("open"))
+        and _daily_pct_change(row) >= min_bull_pct
+    ]
+    if len(strong_indices) < 2:
+        return StrategyV2EvaluationResult(signal=0, reason="近期开盘收阳且涨幅达标的大阳线不足两根")
+
+    for second_pos in reversed(strong_indices):
+        if latest_index - second_pos > max_second_age_days:
+            continue
+        second = recent[second_pos]
+        for first_pos in reversed(strong_indices):
+            if first_pos >= second_pos - 1:
+                continue
+            first = recent[first_pos]
+            if _to_float(second.get("close")) <= _to_float(first.get("close")):
+                continue
+
+            middle = recent[first_pos + 1:second_pos]
+            first_low = _to_float(first.get("low"))
+            broken_rows = [
+                row
+                for row in middle
+                if first_low > 0 and _to_float(row.get("close")) < first_low
+            ]
+            meta = {
+                "first_trade_date": str(first.get("trade_date")),
+                "second_trade_date": str(second.get("trade_date")),
+                "latest_trade_date": str(recent[-1].get("trade_date")),
+                "first_pct_chg": _daily_pct_change(first),
+                "second_pct_chg": _daily_pct_change(second),
+                "middle_days": len(middle),
+            }
+            if broken_rows:
+                meta["broken_trade_dates"] = [str(row.get("trade_date")) for row in broken_rows]
+                return StrategyV2EvaluationResult(
+                    signal=-1,
+                    reason="两根大阳线之间出现收盘价跌破第一根最低价，形态结构破坏",
+                    meta=meta,
+                )
+
+            if require_second_volume_gt_first and _to_float(second.get("vol")) <= _to_float(first.get("vol")):
+                return StrategyV2EvaluationResult(signal=0, reason="第二根大阳线成交量未大于第一根", meta=meta)
+
+            if require_pullback_shrink_volume and middle:
+                middle_avg_volume = sum(_to_float(row.get("vol")) for row in middle) / len(middle)
+                cannon_avg_volume = (_to_float(first.get("vol")) + _to_float(second.get("vol"))) / 2
+                meta["middle_avg_volume"] = middle_avg_volume
+                meta["cannon_avg_volume"] = cannon_avg_volume
+                if middle_avg_volume >= cannon_avg_volume:
+                    return StrategyV2EvaluationResult(signal=0, reason="两根大阳线之间调整阶段未缩量", meta=meta)
+
+            if require_bullish_ma:
+                if not _has_bullish_ma_alignment(rows, ma_short, ma_mid, ma_long):
+                    return StrategyV2EvaluationResult(signal=0, reason="最新交易日均线未形成多头排列", meta=meta)
+
+            return StrategyV2EvaluationResult(signal=1, reason="双响炮形态成立", meta=meta)
+
+    return StrategyV2EvaluationResult(signal=0, reason="未找到距离最新交易日足够近的有效双响炮组合")
+
+
+class DoubleCannonStrategy:
+    """Classic double-cannon candlestick pattern evaluator."""
+
+    strategy_key = "double_cannon"
+
+    async def evaluate(
+        self,
+        context: StrategyV2EvaluationContext,
+        params: dict[str, Any] | None = None,
+    ) -> StrategyV2EvaluationResult:
+        params = params or {}
+        _, ts_code = _extract_stock_codes(context)
+        if not ts_code:
+            return StrategyV2EvaluationResult(signal=0, reason="缺少股票代码，无法读取历史 K 线")
+
+        lookback_days = max(_to_int(params.get("lookback_days"), 22), 5)
+        ma_long = max(_to_int(params.get("ma_long"), 20), 1)
+        load_limit = max(lookback_days + ma_long + 5, 40)
+        records = await mongo_manager.find_many(
+            "stock_daily",
+            {"ts_code": ts_code},
+            projection={
+                "_id": 0,
+                "trade_date": 1,
+                "open": 1,
+                "high": 1,
+                "low": 1,
+                "close": 1,
+                "pre_close": 1,
+                "pct_chg": 1,
+                "vol": 1,
+            },
+            sort=[("trade_date", -1)],
+            limit=load_limit,
+        )
+        if not records:
+            return StrategyV2EvaluationResult(signal=0, reason="未找到股票历史 K 线")
+        records.sort(key=lambda item: str(item.get("trade_date")))
+        return evaluate_double_cannon_from_candles(records, params=params)
+
+
+double_cannon_strategy = DoubleCannonStrategy()
+
+
 STRATEGY_V2_EVALUATORS = {
     OneLineStockPickerStrategy.strategy_key: one_line_stock_picker_strategy,
+    DoubleCannonStrategy.strategy_key: double_cannon_strategy,
 }
 
 

@@ -119,7 +119,6 @@ const menuSections = [
     title: '交易与复盘',
     items: [
       { path: '/trade-review', icon: Document, title: '交割单复盘' },
-      { path: '/reports', icon: Document, title: '报告回顾' },
       { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
     ],
   },
@@ -149,6 +148,7 @@ const menuSections = [
       { path: '/strategies', icon: TrendCharts, title: '市场监听' },
       { path: '/factor-selection', icon: DataAnalysis, title: '因子选股' },
       { path: '/backtest', icon: DataAnalysis, title: '单股回测' },
+      { path: '/reports', icon: Document, title: '报告回顾' },
     ],
   },
 ]
