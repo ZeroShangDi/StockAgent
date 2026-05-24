@@ -179,7 +179,7 @@
                   </span>
                   <span class="toolbar-metric">
                     仓位
-                    <strong>{{ session.position_shares > 0 ? formatPct(session.position_pct) : '空仓' }}</strong>
+                    <strong>{{ session.position_shares > 0 ? formatPlainPct(session.position_pct) : '空仓' }}</strong>
                   </span>
                   <span class="toolbar-metric toolbar-progress">
                     {{ session.step }}/{{ session.total_steps }}
@@ -223,7 +223,7 @@
             </div>
             <div class="drawer-card">
               <span>当前仓位</span>
-              <strong>{{ session.position_shares > 0 ? formatPct(session.position_pct) : '0.00%' }}</strong>
+              <strong>{{ session.position_shares > 0 ? formatPlainPct(session.position_pct) : '0.00%' }}</strong>
             </div>
             <div class="drawer-card">
               <span>持仓成本</span>
@@ -295,7 +295,7 @@
               </el-table-column>
               <el-table-column prop="shares" label="股数" width="90" />
               <el-table-column prop="allocation_pct" label="仓位" width="90">
-                <template #default="{ row }">{{ formatPct((row.allocation_pct || 0) * 100) }}</template>
+                <template #default="{ row }">{{ formatPlainPct((row.allocation_pct || 0) * 100) }}</template>
               </el-table-column>
               <el-table-column prop="price" label="价格" width="90">
                 <template #default="{ row }">{{ row.price.toFixed(2) }}</template>
@@ -415,6 +415,10 @@ function formatCurrency(value: number): string {
 function formatPct(value: number): string {
   const prefix = value > 0 ? '+' : ''
   return `${prefix}${value.toFixed(2)}%`
+}
+
+function formatPlainPct(value: number): string {
+  return `${value.toFixed(2)}%`
 }
 
 function pnlClass(value: number): string {

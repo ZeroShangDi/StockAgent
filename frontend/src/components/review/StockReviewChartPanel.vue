@@ -240,7 +240,9 @@ function resolveMarkerCandle(
 }
 
 const selectedChartMarkers = computed(() => {
-  const candles = selectedChartData.value || []
+  const candles = [...(selectedChartData.value || [])].sort((a, b) => {
+    return String(a.trade_date || '').localeCompare(String(b.trade_date || ''))
+  })
   if (!props.markers?.length || !candles.length) return []
 
   return props.markers
