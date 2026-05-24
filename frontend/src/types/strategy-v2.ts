@@ -180,6 +180,36 @@ export interface StrategyTaskRunItem {
   state_writeback: boolean
 }
 
+export interface StrategyTaskRunLog {
+  log_id: string
+  run_id: string
+  task_id: string
+  level: 'info' | 'warning' | 'error'
+  stage: string
+  message: string
+  meta?: Record<string, unknown>
+  created_at: string
+}
+
+export interface StrategyActionAudit {
+  audit_id: string
+  run_id: string
+  task_id: string
+  item_id?: string
+  entity_key?: string
+  entity_name?: string
+  signal: StrategySignalValue
+  action_id?: string
+  action_type: StrategyActionType
+  action_label: string
+  status: 'planned' | 'executed' | 'skipped' | 'failed'
+  result_summary: string
+  trigger_signals?: StrategySignalValue[]
+  params?: Record<string, unknown>
+  related_resource?: Record<string, unknown>
+  created_at: string
+}
+
 export interface CreateStrategySceneTaskInput {
   name: string
   scene_type: StrategySceneType

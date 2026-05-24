@@ -184,6 +184,43 @@
         <section class="console-panel">
           <div class="section-title-row compact">
             <div>
+              <span class="section-kicker">动作审计</span>
+              <h3>命中动作是否落地</h3>
+            </div>
+          </div>
+          <div v-if="actionAudits.length > 0" class="audit-list">
+            <article v-for="audit in actionAudits.slice(0, 8)" :key="audit.audit_id" class="audit-card">
+              <div class="audit-head">
+                <strong>{{ audit.action_label || actionLabel(audit.action_type) }}</strong>
+                <span :class="['audit-status', audit.status]">{{ actionStatusLabel(audit.status) }}</span>
+              </div>
+              <p>{{ audit.result_summary }}</p>
+              <small>{{ audit.entity_name || audit.entity_key || '任务级动作' }} · {{ formatDateTime(audit.created_at) }}</small>
+            </article>
+          </div>
+          <el-empty v-else description="暂无动作审计" :image-size="64" />
+        </section>
+
+        <section class="console-panel">
+          <div class="section-title-row compact">
+            <div>
+              <span class="section-kicker">运行日志</span>
+              <h3>关键步骤记录</h3>
+            </div>
+          </div>
+          <div v-if="logs.length > 0" class="log-list">
+            <article v-for="log in logs.slice(-8)" :key="log.log_id" class="log-row" :class="log.level">
+              <span>{{ formatDateTime(log.created_at) }}</span>
+              <strong>{{ stageLabel(log.stage) }}</strong>
+              <p>{{ log.message }}</p>
+            </article>
+          </div>
+          <el-empty v-else description="暂无运行日志" :image-size="64" />
+        </section>
+
+        <section class="console-panel">
+          <div class="section-title-row compact">
+            <div>
               <span class="section-kicker">重点对象</span>
               <h3>适合先看的明细</h3>
             </div>
@@ -227,15 +264,25 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { cancelTaskRun, getRunItems, getTaskRun, retryTaskRun } from '@/api/modules/strategy-v2'
-import { STRATEGY_SCENE_LABELS } from '@/mocks/strategyV2'
-import type { StrategyRunStatus, StrategySignalValue, StrategyTaskRun, StrategyTaskRunItem } from '@/types/strategy-v2'
+import { cancelTaskRun, getRunActionAudits, getRunItems, getRunLogs, getTaskRun, retryTaskRun } from '@/api/modules/strategy-v2'
+import { STRATEGY_ACTION_LABELS, STRATEGY_SCENE_LABELS } from '@/mocks/strategyV2'
+import type {
+  StrategyActionAudit,
+  StrategyActionType,
+  StrategyRunStatus,
+  StrategySignalValue,
+  StrategyTaskRun,
+  StrategyTaskRunItem,
+  StrategyTaskRunLog,
+} from '@/types/strategy-v2'
 
 const route = useRoute()
 const router = useRouter()
 
 const run = ref<StrategyTaskRun | null>(null)
 const items = ref<StrategyTaskRunItem[]>([])
+const logs = ref<StrategyTaskRunLog[]>([])
+const actionAudits = ref<StrategyActionAudit[]>([])
 const itemFilter = ref<'all' | 'positive' | 'review' | 'skipped'>('all')
 const sceneLabels = STRATEGY_SCENE_LABELS
 let refreshTimer: ReturnType<typeof window.setTimeout> | undefined
@@ -459,7 +506,14 @@ async function loadRun(runId: string): Promise<void> {
     return
   }
   run.value = await getTaskRun(runId)
-  items.value = await getRunItems(runId)
+  const [runItems, runLogs, audits] = await Promise.all([
+    getRunItems(runId),
+    getRunLogs(runId),
+    getRunActionAudits(runId),
+  ])
+  items.value = runItems
+  logs.value = runLogs
+  actionAudits.value = audits
   if (run.value?.run_status === 'running') {
     if (refreshTimer) window.clearTimeout(refreshTimer)
     refreshTimer = window.setTimeout(() => {
@@ -478,7 +532,14 @@ async function cancelCurrentRun(): Promise<void> {
     })
     run.value = await cancelTaskRun(run.value.run_id)
     ElMessage.success('已请求取消运行')
-    items.value = await getRunItems(run.value.run_id)
+    const [runItems, runLogs, audits] = await Promise.all([
+      getRunItems(run.value.run_id),
+      getRunLogs(run.value.run_id),
+      getRunActionAudits(run.value.run_id),
+    ])
+    items.value = runItems
+    logs.value = runLogs
+    actionAudits.value = audits
   }
   catch (error) {
     if (error === 'cancel') return
@@ -549,6 +610,30 @@ function triggerSourceLabel(value: string): string {
   if (value === 'schedule') return '定时触发'
   if (value === 'retry') return '重试触发'
   return '历史回放'
+}
+
+function actionLabel(action: StrategyActionType): string {
+  return STRATEGY_ACTION_LABELS[action] || action
+}
+
+function actionStatusLabel(status: StrategyActionAudit['status']): string {
+  if (status === 'executed') return '已执行'
+  if (status === 'skipped') return '已跳过'
+  if (status === 'failed') return '失败'
+  return '待执行'
+}
+
+function stageLabel(stage: string): string {
+  const labels: Record<string, string> = {
+    start: '启动',
+    resolve_targets: '目标',
+    evaluate: '评估',
+    actions: '动作',
+    finish: '完成',
+    cancel: '取消',
+    failed: '失败',
+  }
+  return labels[stage] || stage
 }
 
 function signalLabel(value: StrategySignalValue): string {
@@ -800,7 +885,9 @@ function signalClass(value: StrategySignalValue): string {
 
 .context-list,
 .focus-list,
-.followup-grid {
+.followup-grid,
+.audit-list,
+.log-list {
   display: grid;
   gap: 12px;
 }
@@ -837,6 +924,79 @@ function signalClass(value: StrategySignalValue): string {
 .focus-card {
   border-radius: 18px;
   padding: 14px;
+}
+
+.audit-card,
+.log-row {
+  border-radius: 16px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.84);
+  padding: 12px 14px;
+}
+
+.audit-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.audit-card p,
+.log-row p {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+.audit-card small,
+.log-row span {
+  display: block;
+  margin-top: 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.audit-status {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.audit-status.executed {
+  background: rgba(34, 197, 94, 0.14);
+  color: #178948;
+}
+
+.audit-status.planned {
+  background: rgba(47, 95, 208, 0.12);
+  color: var(--accent);
+}
+
+.audit-status.skipped {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b46204;
+}
+
+.audit-status.failed {
+  background: rgba(239, 68, 68, 0.14);
+  color: #d14343;
+}
+
+.log-row {
+  border-left: 4px solid rgba(47, 95, 208, 0.34);
+}
+
+.log-row.warning {
+  border-left-color: #d97706;
+}
+
+.log-row.error {
+  border-left-color: #dc2626;
+}
+
+.log-row strong {
+  display: block;
+  margin-top: 4px;
 }
 
 .followup-grid {

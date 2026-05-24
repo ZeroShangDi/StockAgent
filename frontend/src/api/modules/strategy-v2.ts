@@ -2,10 +2,12 @@ import { api } from '../client'
 
 import type {
   CreateStrategySceneTaskInput,
+  StrategyActionAudit,
   StrategyDefinition,
   StrategySceneTask,
   StrategyTaskRun,
   StrategyTaskRunItem,
+  StrategyTaskRunLog,
 } from '@/types/strategy-v2'
 
 interface ListResponse<T> {
@@ -51,6 +53,14 @@ export const strategyV2Api = {
 
   getRunItems(runId: string): Promise<StrategyTaskRunItem[]> {
     return api.get<ListResponse<StrategyTaskRunItem>>(`/strategy-v2/runs/${runId}/items`).then((response) => response.items)
+  },
+
+  getRunLogs(runId: string): Promise<StrategyTaskRunLog[]> {
+    return api.get<ListResponse<StrategyTaskRunLog>>(`/strategy-v2/runs/${runId}/logs`).then((response) => response.items)
+  },
+
+  getRunActionAudits(runId: string): Promise<StrategyActionAudit[]> {
+    return api.get<ListResponse<StrategyActionAudit>>(`/strategy-v2/runs/${runId}/action-audits`).then((response) => response.items)
   },
 
   addStockToTask(taskId: string, tsCode: string, config?: Record<string, unknown>): Promise<StrategySceneTask> {
@@ -105,6 +115,14 @@ export async function getTaskRun(runId: string): Promise<StrategyTaskRun> {
 
 export async function getRunItems(runId: string): Promise<StrategyTaskRunItem[]> {
   return strategyV2Api.getRunItems(runId)
+}
+
+export async function getRunLogs(runId: string): Promise<StrategyTaskRunLog[]> {
+  return strategyV2Api.getRunLogs(runId)
+}
+
+export async function getRunActionAudits(runId: string): Promise<StrategyActionAudit[]> {
+  return strategyV2Api.getRunActionAudits(runId)
 }
 
 export async function addStockToStrategySceneTask(

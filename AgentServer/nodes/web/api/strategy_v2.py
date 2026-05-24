@@ -40,6 +40,8 @@ logger = logging.getLogger("api.strategy_v2")
 TASK_COLLECTION = "strategy_v2_scene_tasks"
 RUN_COLLECTION = "strategy_v2_task_runs"
 RUN_ITEM_COLLECTION = "strategy_v2_task_run_items"
+RUN_LOG_COLLECTION = "strategy_v2_task_run_logs"
+ACTION_AUDIT_COLLECTION = "strategy_v2_action_audits"
 STOCK_POOL_COLLECTION = "stock_pools"
 RUN_STALE_AFTER_SECONDS = 30 * 60
 ACTIVE_RUN_STATUSES = {"running"}
@@ -195,6 +197,38 @@ async def list_strategy_v2_run_items(
     return {"items": items}
 
 
+@router.get("/runs/{run_id}/logs")
+async def list_strategy_v2_run_logs(
+    run_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, List[Dict[str, Any]]]:
+    await _get_user_run_or_404(run_id, user_id, projection={"_id": 0, "run_id": 1})
+    items = await mongo_manager.find_many(
+        RUN_LOG_COLLECTION,
+        {"run_id": run_id, "user_id": user_id},
+        projection={"_id": 0},
+        sort=[("created_at", 1)],
+        limit=200,
+    )
+    return {"items": items}
+
+
+@router.get("/runs/{run_id}/action-audits")
+async def list_strategy_v2_run_action_audits(
+    run_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, List[Dict[str, Any]]]:
+    await _get_user_run_or_404(run_id, user_id, projection={"_id": 0, "run_id": 1})
+    items = await mongo_manager.find_many(
+        ACTION_AUDIT_COLLECTION,
+        {"run_id": run_id, "user_id": user_id},
+        projection={"_id": 0},
+        sort=[("created_at", 1), ("entity_key", 1)],
+        limit=500,
+    )
+    return {"items": items}
+
+
 @router.post("/tasks/{task_id}/runs")
 async def run_strategy_v2_task(
     task_id: str,
@@ -248,6 +282,16 @@ async def cancel_strategy_v2_run(
         },
     )
     await _release_task_run_lock(str(run.get("task_id") or ""), user_id, run_id, "cancelled", finished_at)
+    if run.get("task_id"):
+        await _append_run_log(
+            run_id,
+            str(run.get("task_id")),
+            user_id,
+            level="warning",
+            stage="cancel",
+            message="用户请求取消运行",
+            meta={"cancel_requested_at": finished_at.isoformat()},
+        )
     updated = await mongo_manager.find_one(
         RUN_COLLECTION,
         {"run_id": run_id, "user_id": user_id},
@@ -289,6 +333,21 @@ async def _get_user_task_or_404(task_id: str, user_id: str) -> Dict[str, Any]:
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
+
+
+async def _get_user_run_or_404(
+    run_id: str,
+    user_id: str,
+    projection: Optional[Dict[str, int]] = None,
+) -> Dict[str, Any]:
+    run = await mongo_manager.find_one(
+        RUN_COLLECTION,
+        {"run_id": run_id, "user_id": user_id},
+        projection=projection or {"_id": 0},
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    return run
 
 
 async def _start_strategy_v2_run(
@@ -698,6 +757,33 @@ async def _update_run_progress(
     )
 
 
+async def _append_run_log(
+    run_id: str,
+    task_id: str,
+    user_id: str,
+    *,
+    level: str,
+    stage: str,
+    message: str,
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    now = _utc_now()
+    await mongo_manager.insert_one(
+        RUN_LOG_COLLECTION,
+        {
+            "log_id": f"sv2_log_{uuid.uuid4().hex[:12]}",
+            "run_id": run_id,
+            "task_id": task_id,
+            "user_id": user_id,
+            "level": level,
+            "stage": stage,
+            "message": message,
+            "meta": meta or {},
+            "created_at": now,
+        },
+    )
+
+
 def _stock_identity(stock: Dict[str, Any]) -> Dict[str, str]:
     ts_code = str(stock.get("ts_code") or "").upper()
     code = str(stock.get("symbol") or stock.get("code") or (ts_code.split(".")[0] if "." in ts_code else ts_code))
@@ -734,29 +820,75 @@ def _has_enabled_action(task: Dict[str, Any], action_type: str, signal: int | No
     return False
 
 
-def _action_result_for_signal(task: Dict[str, Any], signal: int, temp_pool_name: Optional[str]) -> str:
+def _build_action_audits_for_item(
+    task: Dict[str, Any],
+    item_doc: Dict[str, Any],
+    temp_pool: Optional[Dict[str, str]],
+) -> tuple[str, List[Dict[str, Any]]]:
     action_results: List[str] = []
+    audit_docs: List[Dict[str, Any]] = []
+    signal = int(item_doc.get("signal") or 0)
+    now = _utc_now()
     for action in task.get("actions") or []:
         action_type = action.get("action_type")
         if not _action_accepts_signal(action, signal):
             continue
+        audit_status = "planned"
+        result_summary = "动作已命中，等待执行器接入"
+        related_resource: Dict[str, Any] = {}
         if action_type == "temp_list":
-            action_results.append(f"已加入临时清单：{temp_pool_name or '待生成'}")
+            if temp_pool:
+                audit_status = "executed"
+                result_summary = f"已生成临时清单：{temp_pool['pool_name']}"
+                related_resource = {"pool_id": temp_pool["pool_id"], "pool_name": temp_pool["pool_name"]}
+            else:
+                audit_status = "skipped"
+                result_summary = "未生成临时清单：没有正向命中或动作未启用"
+            action_results.append(result_summary)
         elif action_type == "add_to_pool":
-            action_results.append("命中加入股池动作")
+            result_summary = "命中加入股池动作，待接入实际入池执行"
+            action_results.append(result_summary)
         elif action_type == "notify":
-            action_results.append("命中通知动作")
+            result_summary = "命中通知动作，待接入通知发送执行"
+            action_results.append(result_summary)
         elif action_type == "paper_trade":
-            action_results.append("命中模拟成交动作")
+            result_summary = "命中模拟成交动作，待接入交割单写入"
+            action_results.append(result_summary)
         elif action_type == "pool_transition":
-            action_results.append("命中股池流转动作")
+            result_summary = "命中股池流转动作，待接入股池流转执行"
+            action_results.append(result_summary)
+        else:
+            result_summary = f"命中未知动作：{action_type}"
+            action_results.append(result_summary)
+
+        audit_docs.append(
+            {
+                "audit_id": f"sv2_audit_{uuid.uuid4().hex[:12]}",
+                "run_id": item_doc.get("run_id"),
+                "task_id": task.get("task_id"),
+                "user_id": item_doc.get("user_id"),
+                "item_id": item_doc.get("item_id"),
+                "entity_key": item_doc.get("entity_key"),
+                "entity_name": item_doc.get("entity_name"),
+                "signal": signal,
+                "action_id": action.get("action_id"),
+                "action_type": action_type,
+                "action_label": action.get("label") or action_type,
+                "status": audit_status,
+                "result_summary": result_summary,
+                "trigger_signals": action.get("trigger_signals") or [],
+                "params": action.get("params") or {},
+                "related_resource": related_resource,
+                "created_at": now,
+            }
+        )
     if action_results:
-        return "；".join(action_results)
+        return "；".join(action_results), audit_docs
     if signal == 1:
-        return "正向信号，未配置动作"
+        return "正向信号，未配置动作", audit_docs
     if signal == -1:
-        return "负向信号，未配置动作"
-    return "无动作"
+        return "负向信号，未配置动作", audit_docs
+    return "无动作", audit_docs
 
 
 async def _resolve_task_targets(task: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -899,6 +1031,15 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
         if not task:
             raise RuntimeError("任务不存在或已被删除")
         task_id = str(task.get("task_id") or "")
+        await _append_run_log(
+            run_id,
+            task_id,
+            user_id,
+            level="info",
+            stage="start",
+            message=f"开始运行任务：{task.get('name') or task_id}",
+            meta={"trigger_source": run.get("trigger_source"), "strategy_key": task.get("strategy_key")},
+        )
 
         await _ensure_run_can_continue(run_id, user_id)
         await _update_run_progress(
@@ -907,6 +1048,15 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
             current=0,
             total=0,
             label="正在解析目标范围",
+        )
+        await _append_run_log(
+            run_id,
+            task_id,
+            user_id,
+            level="info",
+            stage="resolve_targets",
+            message="正在解析目标范围",
+            meta={"scope_type": (task.get("target_scope") or {}).get("scope_type")},
         )
         targets = await _resolve_task_targets(task)
         await _ensure_run_can_continue(run_id, user_id)
@@ -918,9 +1068,19 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
             total=total_targets,
             label=f"已加载 {total_targets} 个目标，开始评估",
         )
+        await _append_run_log(
+            run_id,
+            task_id,
+            user_id,
+            level="info",
+            stage="resolve_targets",
+            message=f"目标解析完成，共 {total_targets} 个",
+            meta={"total_targets": total_targets},
+        )
         params = dict(task.get("params") or {})
         item_docs: List[Dict[str, Any]] = []
         positive_items: List[Dict[str, Any]] = []
+        action_audit_docs: List[Dict[str, Any]] = []
         positive = neutral = negative = 0
 
         for index, stock in enumerate(targets, start=1):
@@ -993,14 +1153,38 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
             total=total_targets,
             label="策略评估完成，正在处理动作产物",
         )
+        await _append_run_log(
+            run_id,
+            task_id,
+            user_id,
+            level="info",
+            stage="evaluate",
+            message=f"策略评估完成：正向 {positive}，中性 {neutral}，负向 {negative}",
+            meta={"positive": positive, "neutral": neutral, "negative": negative},
+        )
         temp_pool = await _create_temp_stock_pool(task, run_id, positive_items)
         await _ensure_run_can_continue(run_id, user_id)
-        temp_pool_name = temp_pool["pool_name"] if temp_pool else None
         for item_doc in item_docs:
-            item_doc["action_result"] = _action_result_for_signal(task, int(item_doc["signal"]), temp_pool_name)
+            item_doc["action_result"], audits = _build_action_audits_for_item(task, item_doc, temp_pool)
+            action_audit_docs.extend(audits)
+        await _append_run_log(
+            run_id,
+            task_id,
+            user_id,
+            level="info",
+            stage="actions",
+            message=f"动作审计生成完成，共 {len(action_audit_docs)} 条",
+            meta={
+                "audit_count": len(action_audit_docs),
+                "temp_pool_id": temp_pool["pool_id"] if temp_pool else None,
+                "temp_pool_name": temp_pool["pool_name"] if temp_pool else None,
+            },
+        )
 
         if item_docs:
             await mongo_manager.insert_many(RUN_ITEM_COLLECTION, item_docs)
+        if action_audit_docs:
+            await mongo_manager.insert_many(ACTION_AUDIT_COLLECTION, action_audit_docs)
 
         await _ensure_run_can_continue(run_id, user_id)
         finished_at = _utc_now()
@@ -1022,6 +1206,7 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
                 {"label": "正向信号", "value": str(positive), "tone": "positive"},
                 {"label": "负向信号", "value": str(negative), "tone": "negative" if negative else "default"},
                 {"label": "临时清单", "value": str(positive if temp_pool else 0), "tone": "warning" if temp_pool else "default"},
+                {"label": "动作审计", "value": str(len(action_audit_docs))},
             ],
             "related_pool_id": temp_pool["pool_id"] if temp_pool else None,
             "related_pool_name": temp_pool["pool_name"] if temp_pool else None,
@@ -1040,6 +1225,15 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
             run_status,
             finished_at,
             signal_count=positive + negative,
+        )
+        await _append_run_log(
+            run_id,
+            task_id,
+            user_id,
+            level="info",
+            stage="finish",
+            message="运行完成",
+            meta={"run_status": run_status, "finished_at": finished_at.isoformat()},
         )
     except StrategyV2RunCancelled:
         finished_at = _utc_now()
@@ -1066,6 +1260,16 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
             )
             task_id = str((run or {}).get("task_id") or "")
         await _release_task_run_lock(task_id, user_id, run_id, "cancelled", finished_at)
+        if task_id:
+            await _append_run_log(
+                run_id,
+                task_id,
+                user_id,
+                level="warning",
+                stage="cancel",
+                message="运行已取消",
+                meta={"finished_at": finished_at.isoformat()},
+            )
     except Exception as exc:
         finished_at = _utc_now()
         await mongo_manager.update_one(
@@ -1091,6 +1295,16 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
             )
             task_id = str((run or {}).get("task_id") or "")
         await _release_task_run_lock(task_id, user_id, run_id, "failed", finished_at)
+        if task_id:
+            await _append_run_log(
+                run_id,
+                task_id,
+                user_id,
+                level="error",
+                stage="failed",
+                message=f"运行失败：{exc}",
+                meta={"finished_at": finished_at.isoformat()},
+            )
 
 
 async def _validate_stock_exists(ts_code: str) -> Dict[str, Any]:
