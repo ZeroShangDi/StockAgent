@@ -102,7 +102,6 @@ const menuSections = [
     title: '选股与股池',
     items: [
       { path: '/stock-picker', icon: Opportunity, title: '一句话选股' },
-      { path: '/factor-selection', icon: DataAnalysis, title: '因子选股' },
       { path: '/stock-pools', icon: CollectionTag, title: '股池管理' },
       { path: '/watchlist', icon: Star, title: '自选股' },
     ],
@@ -120,7 +119,6 @@ const menuSections = [
     title: '交易与复盘',
     items: [
       { path: '/trade-review', icon: Document, title: '交割单复盘' },
-      { path: '/backtest', icon: DataAnalysis, title: '单股回测' },
       { path: '/reports', icon: Document, title: '报告回顾' },
       { path: '/kline-practice', icon: DataLine, title: '盘感练习' },
     ],
@@ -149,6 +147,8 @@ const menuSections = [
     title: '旧版待下线',
     items: [
       { path: '/strategies', icon: TrendCharts, title: '市场监听' },
+      { path: '/factor-selection', icon: DataAnalysis, title: '因子选股' },
+      { path: '/backtest', icon: DataAnalysis, title: '单股回测' },
     ],
   },
 ]
