@@ -37,6 +37,14 @@ export const strategyV2Api = {
     return api.post(`/strategy-v2/tasks/${taskId}/runs`)
   },
 
+  cancelRun(runId: string): Promise<StrategyTaskRun> {
+    return api.post(`/strategy-v2/runs/${runId}/cancel`)
+  },
+
+  retryRun(runId: string): Promise<StrategyTaskRun> {
+    return api.post(`/strategy-v2/runs/${runId}/retry`)
+  },
+
   getRun(runId: string): Promise<StrategyTaskRun> {
     return api.get(`/strategy-v2/runs/${runId}`)
   },
@@ -81,6 +89,14 @@ export async function listTaskRuns(taskId: string): Promise<StrategyTaskRun[]> {
 
 export async function runStrategySceneTask(taskId: string): Promise<StrategyTaskRun> {
   return strategyV2Api.runTask(taskId)
+}
+
+export async function cancelTaskRun(runId: string): Promise<StrategyTaskRun> {
+  return strategyV2Api.cancelRun(runId)
+}
+
+export async function retryTaskRun(runId: string): Promise<StrategyTaskRun> {
+  return strategyV2Api.retryRun(runId)
 }
 
 export async function getTaskRun(runId: string): Promise<StrategyTaskRun> {

@@ -259,6 +259,7 @@ function runStatusLabel(status: StrategyRunStatus): string {
   if (status === 'success') return '成功'
   if (status === 'partial_success') return '部分成功'
   if (status === 'failed') return '失败'
+  if (status === 'cancelled') return '已取消'
   return '运行中'
 }
 

@@ -105,6 +105,7 @@ class StrategyV2SceneTaskResponse(StrategyV2CreateTaskRequest):
     last_signal_count: int = 0
     last_run_id: Optional[str] = None
     last_run_status: Optional[str] = None
+    active_run_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

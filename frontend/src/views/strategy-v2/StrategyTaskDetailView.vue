@@ -11,9 +11,10 @@
           size="small"
           type="primary"
           :loading="running"
+          :disabled="hasRunningRun"
           @click="runTaskNow"
         >
-          立即运行
+          {{ hasRunningRun ? '运行中' : '立即运行' }}
         </el-button>
       </div>
     </section>
@@ -173,6 +174,16 @@
                 {{ formatDateTime(row.started_at) }}
               </template>
             </el-table-column>
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="{ row }">
+                <el-button v-if="row.run_status === 'running'" size="small" text type="danger" @click="cancelRun(row)">
+                  取消
+                </el-button>
+                <el-button v-else size="small" text type="primary" @click="retryRun(row)">
+                  重试
+                </el-button>
+              </template>
+            </el-table-column>
           </el-table>
           <el-empty v-else description="暂无运行记录" :image-size="64" />
         </article>
@@ -184,9 +195,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { getStrategySceneTask, listStrategySceneTasks, listTaskRuns, runStrategySceneTask } from '@/api/modules/strategy-v2'
+import {
+  cancelTaskRun,
+  getStrategySceneTask,
+  listStrategySceneTasks,
+  listTaskRuns,
+  retryTaskRun,
+  runStrategySceneTask,
+} from '@/api/modules/strategy-v2'
 import {
   STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
@@ -215,6 +233,9 @@ const paramEntries = computed(() => {
     key,
     value: formatValue(value),
   }))
+})
+const hasRunningRun = computed(() => {
+  return Boolean(task.value?.active_run_id || runs.value.some((run) => run.run_status === 'running'))
 })
 
 onMounted(async () => {
@@ -268,6 +289,10 @@ async function loadRuns(): Promise<void> {
 
 async function runTaskNow(): Promise<void> {
   if (!task.value) return
+  if (hasRunningRun.value) {
+    ElMessage.warning('当前任务已有运行中的记录，请先等待完成或取消')
+    return
+  }
   running.value = true
   try {
     const run = await runStrategySceneTask(task.value.task_id)
@@ -281,6 +306,41 @@ async function runTaskNow(): Promise<void> {
   }
   finally {
     running.value = false
+  }
+}
+
+async function cancelRun(row: StrategyTaskRun): Promise<void> {
+  try {
+    await ElMessageBox.confirm('取消后本次运行会停止继续扫描，已产生的运行明细会保留用于排查。', '取消运行', {
+      type: 'warning',
+      confirmButtonText: '确认取消',
+      cancelButtonText: '先不取消',
+    })
+    await cancelTaskRun(row.run_id)
+    ElMessage.success('已请求取消运行')
+    await loadTask()
+  }
+  catch (error) {
+    if (error === 'cancel') return
+    console.error(error)
+    ElMessage.error('取消运行失败')
+  }
+}
+
+async function retryRun(row: StrategyTaskRun): Promise<void> {
+  if (hasRunningRun.value) {
+    ElMessage.warning('当前任务已有运行中的记录，暂时不能重试')
+    return
+  }
+  try {
+    const nextRun = await retryTaskRun(row.run_id)
+    ElMessage.success('已开始重试')
+    await loadTask()
+    router.push({ name: 'StrategyRunDetailV2', params: { runId: nextRun.run_id } })
+  }
+  catch (error) {
+    console.error(error)
+    ElMessage.error('重试启动失败')
   }
 }
 
@@ -304,6 +364,7 @@ function runStatusLabel(status: StrategyRunStatus): string {
   if (status === 'success') return '成功'
   if (status === 'partial_success') return '部分成功'
   if (status === 'failed') return '失败'
+  if (status === 'cancelled') return '已取消'
   return '运行中'
 }
 
@@ -318,6 +379,7 @@ function runStatusTagType(status: StrategyRunStatus): 'success' | 'warning' | 'd
   if (status === 'success') return 'success'
   if (status === 'partial_success') return 'warning'
   if (status === 'failed') return 'danger'
+  if (status === 'cancelled') return 'warning'
   return 'info'
 }
 

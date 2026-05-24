@@ -39,6 +39,16 @@ RUN_COLLECTION = "strategy_v2_task_runs"
 RUN_ITEM_COLLECTION = "strategy_v2_task_run_items"
 STOCK_POOL_COLLECTION = "stock_pools"
 RUN_STALE_AFTER_SECONDS = 30 * 60
+ACTIVE_RUN_STATUSES = {"running"}
+
+
+class StrategyV2RunCancelled(Exception):
+    """Raised inside the cooperative runner when a run is cancelled by user."""
+
+
+class StrategyV2RunRequest(BaseModel):
+    trigger_source: str = Field(default="manual", pattern=r"^(manual|schedule|retry)$")
+    parent_run_id: Optional[str] = None
 
 
 class StrategyV2TaskStockRequest(BaseModel):
@@ -158,28 +168,86 @@ async def list_strategy_v2_run_items(
 @router.post("/tasks/{task_id}/runs")
 async def run_strategy_v2_task(
     task_id: str,
+    body: Optional[StrategyV2RunRequest] = Body(default=None),
     user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
     task = await _get_user_task_or_404(task_id, user_id)
     await _mark_stale_running_runs(user_id=user_id, task_id=task_id)
-    run_id = f"sv2_run_{uuid.uuid4().hex[:12]}"
-    now = _utc_now()
-    run_doc = _build_running_doc(task, run_id, now)
+    request = body or StrategyV2RunRequest()
+    return await _start_strategy_v2_run(
+        task,
+        user_id,
+        trigger_source=request.trigger_source,
+        parent_run_id=request.parent_run_id,
+    )
 
-    await mongo_manager.insert_one(RUN_COLLECTION, run_doc)
+
+@router.post("/runs/{run_id}/cancel")
+async def cancel_strategy_v2_run(
+    run_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    run = await mongo_manager.find_one(
+        RUN_COLLECTION,
+        {"run_id": run_id, "user_id": user_id},
+        projection={"_id": 0},
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    if run.get("run_status") != "running":
+        return run
+
+    finished_at = _utc_now()
     await mongo_manager.update_one(
-        TASK_COLLECTION,
-        {"task_id": task_id, "user_id": user_id},
+        RUN_COLLECTION,
+        {"run_id": run_id, "user_id": user_id, "run_status": "running"},
         {
             "$set": {
-                "last_run_id": run_id,
-                "last_run_status": "running",
-                "updated_at": now,
+                "run_status": "cancelled",
+                "summary": "运行已取消：用户手动停止了本次任务。",
+                "finished_at": finished_at,
+                "cancel_requested_at": finished_at,
+                "progress_label": "已取消",
+                "summary_metrics": [
+                    {"label": "状态", "value": "已取消", "tone": "warning"},
+                    {"label": "已扫描", "value": f"{int(run.get('progress_current') or 0)}/{int(run.get('progress_total') or 0)}"},
+                ],
+                "next_action_hint": "如需重新执行，可在本页或任务详情页点击重试。",
+                "updated_at": finished_at,
             }
         },
     )
-    asyncio.create_task(_execute_strategy_v2_run(run_id, user_id))
-    return run_doc
+    await _release_task_run_lock(str(run.get("task_id") or ""), user_id, run_id, "cancelled", finished_at)
+    updated = await mongo_manager.find_one(
+        RUN_COLLECTION,
+        {"run_id": run_id, "user_id": user_id},
+        projection={"_id": 0},
+    )
+    return updated or run
+
+
+@router.post("/runs/{run_id}/retry")
+async def retry_strategy_v2_run(
+    run_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    run = await mongo_manager.find_one(
+        RUN_COLLECTION,
+        {"run_id": run_id, "user_id": user_id},
+        projection={"_id": 0},
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    if run.get("run_status") == "running":
+        raise HTTPException(status_code=409, detail="当前运行仍在执行，不能重试")
+    task = await _get_user_task_or_404(str(run.get("task_id") or ""), user_id)
+    await _mark_stale_running_runs(user_id=user_id, task_id=task["task_id"])
+    return await _start_strategy_v2_run(
+        task,
+        user_id,
+        trigger_source="retry",
+        parent_run_id=run_id,
+    )
 
 
 async def _get_user_task_or_404(task_id: str, user_id: str) -> Dict[str, Any]:
@@ -191,6 +259,74 @@ async def _get_user_task_or_404(task_id: str, user_id: str) -> Dict[str, Any]:
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
+
+
+async def _start_strategy_v2_run(
+    task: Dict[str, Any],
+    user_id: str,
+    *,
+    trigger_source: str,
+    parent_run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    task_id = str(task.get("task_id") or "")
+    if not task_id:
+        raise HTTPException(status_code=400, detail="任务缺少 task_id")
+
+    active_run = await mongo_manager.find_one(
+        RUN_COLLECTION,
+        {"task_id": task_id, "user_id": user_id, "run_status": {"$in": list(ACTIVE_RUN_STATUSES)}},
+        projection={"_id": 0, "run_id": 1},
+        sort=[("started_at", -1)],
+    )
+    if active_run:
+        raise HTTPException(status_code=409, detail=f"任务已有运行中的记录：{active_run['run_id']}")
+
+    run_id = f"sv2_run_{uuid.uuid4().hex[:12]}"
+    now = _utc_now()
+    run_doc = _build_running_doc(
+        task,
+        run_id,
+        now,
+        trigger_source=trigger_source,
+        parent_run_id=parent_run_id,
+    )
+
+    acquired = await mongo_manager.update_one(
+        TASK_COLLECTION,
+        {
+            "task_id": task_id,
+            "user_id": user_id,
+            "$or": [
+                {"active_run_id": {"$exists": False}},
+                {"active_run_id": None},
+                {"active_run_id": ""},
+            ],
+        },
+        {
+            "$set": {
+                "active_run_id": run_id,
+                "last_run_id": run_id,
+                "last_run_status": "running",
+                "updated_at": now,
+            }
+        },
+    )
+    if acquired <= 0:
+        latest = await mongo_manager.find_one(
+            TASK_COLLECTION,
+            {"task_id": task_id, "user_id": user_id},
+            projection={"_id": 0, "active_run_id": 1},
+        )
+        raise HTTPException(status_code=409, detail=f"任务正在运行：{(latest or {}).get('active_run_id') or '未知运行'}")
+
+    try:
+        await mongo_manager.insert_one(RUN_COLLECTION, run_doc)
+    except Exception:
+        await _release_task_run_lock(task_id, user_id, run_id, "failed", now)
+        raise
+
+    asyncio.create_task(_execute_strategy_v2_run(run_id, user_id))
+    return run_doc
 
 
 async def _mark_stale_running_runs(
@@ -239,28 +375,89 @@ async def _mark_stale_running_runs(
             },
         )
 
-        if run.get("task_id"):
-            latest_run = await mongo_manager.find_one(
-                RUN_COLLECTION,
-                {"task_id": run.get("task_id"), "user_id": user_id},
-                projection={"_id": 0, "run_id": 1, "run_status": 1},
-                sort=[("started_at", -1)],
-            )
-            if latest_run and latest_run.get("run_id") == run.get("run_id"):
-                await mongo_manager.update_one(
-                    TASK_COLLECTION,
-                    {"task_id": run.get("task_id"), "user_id": user_id},
-                    {
-                        "$set": {
-                            "last_run_id": run.get("run_id"),
-                            "last_run_status": "failed",
-                            "updated_at": finished_at,
-                        }
-                    },
-                )
+        await _release_task_run_lock(
+            str(run.get("task_id") or ""),
+            user_id,
+            str(run.get("run_id") or ""),
+            "failed",
+            finished_at,
+        )
 
 
-def _build_running_doc(task: Dict[str, Any], run_id: str, now: datetime) -> Dict[str, Any]:
+async def _release_task_run_lock(
+    task_id: str,
+    user_id: str,
+    run_id: str,
+    final_status: str,
+    finished_at: datetime,
+    *,
+    signal_count: Optional[int] = None,
+) -> None:
+    if not task_id:
+        return
+    set_doc: Dict[str, Any] = {
+        "last_run_id": run_id,
+        "last_run_status": final_status,
+        "active_run_id": None,
+        "updated_at": finished_at,
+    }
+    if signal_count is not None:
+        set_doc["last_signal_count"] = signal_count
+    modified = await mongo_manager.update_one(
+        TASK_COLLECTION,
+        {"task_id": task_id, "user_id": user_id, "active_run_id": run_id},
+        {"$set": set_doc},
+    )
+    if modified > 0:
+        return
+
+    # Older runs may not have acquired active_run_id. Keep recovery safe by
+    # only updating the task when this run is still the latest known run and
+    # no newer active run has taken the lock.
+    await mongo_manager.update_one(
+        TASK_COLLECTION,
+        {
+            "task_id": task_id,
+            "user_id": user_id,
+            "last_run_id": run_id,
+            "$or": [
+                {"active_run_id": {"$exists": False}},
+                {"active_run_id": None},
+                {"active_run_id": ""},
+                {"active_run_id": run_id},
+            ],
+        },
+        {"$set": set_doc},
+    )
+
+
+async def _is_run_cancelled(run_id: str, user_id: str) -> bool:
+    run = await mongo_manager.find_one(
+        RUN_COLLECTION,
+        {"run_id": run_id, "user_id": user_id},
+        projection={"_id": 0, "run_status": 1},
+    )
+    return not run or run.get("run_status") == "cancelled"
+
+
+async def _ensure_run_can_continue(run_id: str, user_id: str) -> None:
+    if await _is_run_cancelled(run_id, user_id):
+        raise StrategyV2RunCancelled()
+
+
+def _build_running_doc(
+    task: Dict[str, Any],
+    run_id: str,
+    now: datetime,
+    *,
+    trigger_source: str = "manual",
+    parent_run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    trigger_labels = {
+        "manual": "手动运行",
+        "schedule": "定时运行",
+        "retry": "重试运行",
+    }
     return {
         "run_id": run_id,
         "task_id": task.get("task_id"),
@@ -268,9 +465,10 @@ def _build_running_doc(task: Dict[str, Any], run_id: str, now: datetime) -> Dict
         "scene_type": task.get("scene_type"),
         "strategy_key": task.get("strategy_key"),
         "strategy_name": task.get("strategy_name"),
-        "trigger_source": "manual",
+        "trigger_source": trigger_source,
+        "parent_run_id": parent_run_id,
         "run_status": "running",
-        "title": f"{task.get('name') or 'V2 任务'} · 手动运行",
+        "title": f"{task.get('name') or 'V2 任务'} · {trigger_labels.get(trigger_source, trigger_source)}",
         "summary": "任务已进入运行队列，正在生成结果。",
         "started_at": now,
         "finished_at": None,
@@ -301,7 +499,7 @@ async def _update_run_progress(
     progress_pct = round((current / total * 100) if total else 0, 2)
     await mongo_manager.update_one(
         RUN_COLLECTION,
-        {"run_id": run_id, "user_id": user_id},
+        {"run_id": run_id, "user_id": user_id, "run_status": "running"},
         {
             "$set": {
                 "progress_current": current,
@@ -498,6 +696,7 @@ async def _create_temp_stock_pool(
 
 async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
     now = _utc_now()
+    task_id = ""
     try:
         run = await mongo_manager.find_one(
             RUN_COLLECTION,
@@ -513,7 +712,9 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
         )
         if not task:
             raise RuntimeError("任务不存在或已被删除")
+        task_id = str(task.get("task_id") or "")
 
+        await _ensure_run_can_continue(run_id, user_id)
         await _update_run_progress(
             run_id,
             user_id,
@@ -522,6 +723,7 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
             label="正在解析目标范围",
         )
         targets = await _resolve_task_targets(task)
+        await _ensure_run_can_continue(run_id, user_id)
         total_targets = len(targets)
         await _update_run_progress(
             run_id,
@@ -536,6 +738,8 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
         positive = neutral = negative = 0
 
         for index, stock in enumerate(targets, start=1):
+            if index == 1 or index % 25 == 0:
+                await _ensure_run_can_continue(run_id, user_id)
             identity = _stock_identity(stock)
             if not identity["ts_code"]:
                 continue
@@ -595,6 +799,7 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
                     label=f"正在评估 {index}/{total_targets}",
                 )
 
+        await _ensure_run_can_continue(run_id, user_id)
         await _update_run_progress(
             run_id,
             user_id,
@@ -603,6 +808,7 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
             label="策略评估完成，正在处理动作产物",
         )
         temp_pool = await _create_temp_stock_pool(task, run_id, positive_items)
+        await _ensure_run_can_continue(run_id, user_id)
         temp_pool_name = temp_pool["pool_name"] if temp_pool else None
         for item_doc in item_docs:
             item_doc["action_result"] = _action_result_for_signal(task, int(item_doc["signal"]), temp_pool_name)
@@ -610,6 +816,7 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
         if item_docs:
             await mongo_manager.insert_many(RUN_ITEM_COLLECTION, item_docs)
 
+        await _ensure_run_can_continue(run_id, user_id)
         finished_at = _utc_now()
         run_status = "success"
         summary = f"完成 {len(targets)} 个目标评估，正向 {positive}，中性 {neutral}，负向 {negative}。"
@@ -635,24 +842,49 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
             "next_action_hint": "打开临时清单进入股池复盘，或在下方结果表逐只查看命中原因。" if temp_pool else "本次未生成临时清单，可检查策略参数和目标范围。",
             "updated_at": finished_at,
         }
-        await mongo_manager.update_one(RUN_COLLECTION, {"run_id": run_id, "user_id": user_id}, {"$set": run_update})
         await mongo_manager.update_one(
-            TASK_COLLECTION,
-            {"task_id": task.get("task_id"), "user_id": user_id},
+            RUN_COLLECTION,
+            {"run_id": run_id, "user_id": user_id, "run_status": "running"},
+            {"$set": run_update},
+        )
+        await _release_task_run_lock(
+            task_id,
+            user_id,
+            run_id,
+            run_status,
+            finished_at,
+            signal_count=positive + negative,
+        )
+    except StrategyV2RunCancelled:
+        finished_at = _utc_now()
+        await mongo_manager.update_one(
+            RUN_COLLECTION,
+            {"run_id": run_id, "user_id": user_id, "run_status": "running"},
             {
                 "$set": {
-                    "last_run_id": run_id,
-                    "last_run_status": run_status,
-                    "last_signal_count": positive + negative,
+                    "run_status": "cancelled",
+                    "summary": "运行已取消：后台执行已停止。",
+                    "finished_at": finished_at,
+                    "progress_label": "已取消",
+                    "summary_metrics": [{"label": "状态", "value": "已取消", "tone": "warning"}],
+                    "next_action_hint": "如需重新执行，可在本页或任务详情页点击重试。",
                     "updated_at": finished_at,
                 }
             },
         )
+        if not task_id:
+            run = await mongo_manager.find_one(
+                RUN_COLLECTION,
+                {"run_id": run_id, "user_id": user_id},
+                projection={"_id": 0, "task_id": 1},
+            )
+            task_id = str((run or {}).get("task_id") or "")
+        await _release_task_run_lock(task_id, user_id, run_id, "cancelled", finished_at)
     except Exception as exc:
         finished_at = _utc_now()
         await mongo_manager.update_one(
             RUN_COLLECTION,
-            {"run_id": run_id, "user_id": user_id},
+            {"run_id": run_id, "user_id": user_id, "run_status": "running"},
             {
                 "$set": {
                     "run_status": "failed",
@@ -665,23 +897,14 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
                 }
             },
         )
-        run = await mongo_manager.find_one(
-            RUN_COLLECTION,
-            {"run_id": run_id, "user_id": user_id},
-            projection={"_id": 0, "task_id": 1},
-        )
-        if run and run.get("task_id"):
-            await mongo_manager.update_one(
-                TASK_COLLECTION,
-                {"task_id": run["task_id"], "user_id": user_id},
-                {
-                    "$set": {
-                        "last_run_id": run_id,
-                        "last_run_status": "failed",
-                        "updated_at": finished_at,
-                    }
-                },
+        if not task_id:
+            run = await mongo_manager.find_one(
+                RUN_COLLECTION,
+                {"run_id": run_id, "user_id": user_id},
+                projection={"_id": 0, "task_id": 1},
             )
+            task_id = str((run or {}).get("task_id") or "")
+        await _release_task_run_lock(task_id, user_id, run_id, "failed", finished_at)
 
 
 async def _validate_stock_exists(ts_code: str) -> Dict[str, Any]:
@@ -890,6 +1113,7 @@ async def create_strategy_v2_task(
         "last_signal_count": 0,
         "last_run_id": None,
         "last_run_status": None,
+        "active_run_id": None,
         "created_at": now,
         "updated_at": now,
     }

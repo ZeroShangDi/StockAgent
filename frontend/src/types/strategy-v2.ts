@@ -4,7 +4,7 @@ export type StrategySceneType = 'scan' | 'listen' | 'backtest' | 'sim_trade'
 
 export type StrategyTaskStatus = 'draft' | 'active' | 'paused' | 'archived'
 
-export type StrategyRunStatus = 'running' | 'success' | 'failed' | 'partial_success'
+export type StrategyRunStatus = 'running' | 'success' | 'failed' | 'partial_success' | 'cancelled'
 
 export type StrategyActionType =
   | 'notify'
@@ -126,6 +126,7 @@ export interface StrategySceneTask {
   notes?: string
   last_run_id?: string
   last_run_status?: StrategyRunStatus
+  active_run_id?: string
   last_signal_count: number
   created_at: string
   updated_at: string
@@ -144,7 +145,7 @@ export interface StrategyTaskRun {
   scene_type: StrategySceneType
   strategy_key: string
   strategy_name: string
-  trigger_source: 'manual' | 'schedule' | 'replay'
+  trigger_source: 'manual' | 'schedule' | 'replay' | 'retry'
   run_status: StrategyRunStatus
   title: string
   summary: string

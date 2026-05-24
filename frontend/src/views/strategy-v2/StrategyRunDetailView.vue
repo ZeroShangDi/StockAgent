@@ -10,6 +10,12 @@
         <el-tag :type="runStatusTagType(run.run_status)" effect="plain" round>
           {{ runStatusLabel(run.run_status) }}
         </el-tag>
+        <el-button v-if="run.run_status === 'running'" type="danger" plain @click="cancelCurrentRun">
+          取消运行
+        </el-button>
+        <el-button v-else-if="canRetry" type="primary" plain @click="retryCurrentRun">
+          重试运行
+        </el-button>
         <el-button @click="openTask">返回任务</el-button>
         <el-button v-if="run.related_pool_id" type="primary" plain @click="router.push({ name: 'StockPools', query: { pool: run.related_pool_id } })">
           打开临时清单
@@ -219,8 +225,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { getRunItems, getTaskRun } from '@/api/modules/strategy-v2'
+import { cancelTaskRun, getRunItems, getTaskRun, retryTaskRun } from '@/api/modules/strategy-v2'
 import { STRATEGY_SCENE_LABELS } from '@/mocks/strategyV2'
 import type { StrategyRunStatus, StrategySignalValue, StrategyTaskRun, StrategyTaskRunItem } from '@/types/strategy-v2'
 
@@ -241,9 +248,11 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.max(0, Math.round((progressCurrent.value / progressTotal.value) * 100)))
 })
 const showProgress = computed(() => run.value?.run_status === 'running' || progressTotal.value > 0)
+const canRetry = computed(() => Boolean(run.value && ['failed', 'cancelled', 'partial_success', 'success'].includes(run.value.run_status)))
 const progressStatus = computed(() => {
   if (run.value?.run_status === 'success') return 'success'
   if (run.value?.run_status === 'failed') return 'exception'
+  if (run.value?.run_status === 'cancelled') return 'warning'
   return undefined
 })
 const stateWritebackCount = computed(() => items.value.filter((item) => item.state_writeback).length)
@@ -251,7 +260,7 @@ const reviewNeededCount = computed(() => items.value.filter((item) => item.actio
 const skippedCount = computed(() => items.value.filter((item) => item.action_result.includes('无动作') || item.action_result.includes('跳过')).length)
 const notifiedCount = computed(() => items.value.filter((item) => item.action_result.includes('通知')).length)
 const poolLandingCount = computed(() => items.value.filter((item) => item.action_result.includes('池') && !item.action_result.includes('未入池')).length)
-const tempListCount = computed(() => items.value.filter((item) => item.action_result.includes('临时列表')).length)
+const tempListCount = computed(() => items.value.filter((item) => item.action_result.includes('临时清单') || item.action_result.includes('临时列表')).length)
 const cooledDownCount = computed(() => items.value.filter((item) => item.action_result.includes('冷却')).length)
 const tradeReviewLandingCount = computed(() => items.value.filter((item) => item.action_result.includes('交割单')).length)
 const simulatedTradeCount = computed(() => items.value.filter((item) => item.action_result.includes('模拟卖出') || item.action_result.includes('模拟成交')).length)
@@ -459,6 +468,39 @@ async function loadRun(runId: string): Promise<void> {
   }
 }
 
+async function cancelCurrentRun(): Promise<void> {
+  if (!run.value) return
+  try {
+    await ElMessageBox.confirm('取消后本次运行会停止继续扫描，已产生的运行明细会保留用于排查。', '取消运行', {
+      type: 'warning',
+      confirmButtonText: '确认取消',
+      cancelButtonText: '先不取消',
+    })
+    run.value = await cancelTaskRun(run.value.run_id)
+    ElMessage.success('已请求取消运行')
+    items.value = await getRunItems(run.value.run_id)
+  }
+  catch (error) {
+    if (error === 'cancel') return
+    console.error(error)
+    ElMessage.error('取消运行失败')
+  }
+}
+
+async function retryCurrentRun(): Promise<void> {
+  if (!run.value) return
+  try {
+    const nextRun = await retryTaskRun(run.value.run_id)
+    ElMessage.success('已开始重试')
+    router.push({ name: 'StrategyRunDetailV2', params: { runId: nextRun.run_id } })
+    await loadRun(nextRun.run_id)
+  }
+  catch (error) {
+    console.error(error)
+    ElMessage.error('重试启动失败')
+  }
+}
+
 function openTask(): void {
   if (!run.value) return
   router.push({ name: 'StrategyTaskDetailV2', params: { taskId: run.value.task_id } })
@@ -477,6 +519,7 @@ function runStatusLabel(status: StrategyRunStatus): string {
   if (status === 'success') return '成功'
   if (status === 'partial_success') return '部分成功'
   if (status === 'failed') return '失败'
+  if (status === 'cancelled') return '已取消'
   return '运行中'
 }
 
@@ -484,6 +527,7 @@ function runStatusTagType(status: StrategyRunStatus): 'success' | 'warning' | 'd
   if (status === 'success') return 'success'
   if (status === 'partial_success') return 'warning'
   if (status === 'failed') return 'danger'
+  if (status === 'cancelled') return 'warning'
   return 'info'
 }
 
@@ -503,6 +547,7 @@ function formatDateTime(value?: string): string {
 function triggerSourceLabel(value: string): string {
   if (value === 'manual') return '手动触发'
   if (value === 'schedule') return '定时触发'
+  if (value === 'retry') return '重试触发'
   return '历史回放'
 }
 
