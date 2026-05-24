@@ -230,10 +230,19 @@
                         placeholder="输入自然语言选股条件"
                         @update:model-value="(value) => updateViewParamDefault(row.key, value)"
                       />
+                      <el-input-number
+                        v-else-if="row.type === 'number' || row.type === 'float'"
+                        :model-value="numericParamValue(row.default)"
+                        :step="row.type === 'float' ? 0.1 : 1"
+                        :precision="row.type === 'float' ? 4 : 0"
+                        :controls="false"
+                        style="width: 100%"
+                        @update:model-value="(value) => updateViewParamDefault(row.key, value ?? 0)"
+                      />
                       <el-input
                         v-else
                         :model-value="String(row.default)"
-                        @update:model-value="(value) => updateViewParamDefault(row.key, castParamValue(row.type, value))"
+                        @update:model-value="(value) => updateViewParamDefault(row.key, value)"
                       />
                     </template>
                   </el-table-column>
@@ -382,10 +391,19 @@
                       placeholder="例如：近三个月放量突破年线且排除 ST"
                       @update:model-value="(value) => updateTaskParam(row.key, value)"
                     />
+                    <el-input-number
+                      v-else-if="row.type === 'number' || row.type === 'float'"
+                      :model-value="numericParamValue(taskParamValue(row.key))"
+                      :step="row.type === 'float' ? 0.1 : 1"
+                      :precision="row.type === 'float' ? 4 : 0"
+                      :controls="false"
+                      style="width: 100%"
+                      @update:model-value="(value) => updateTaskParam(row.key, value ?? 0)"
+                    />
                     <el-input
                       v-else
                       :model-value="String(taskParamValue(row.key))"
-                      @update:model-value="(value) => updateTaskParam(row.key, castParamValue(row.type, value))"
+                      @update:model-value="(value) => updateTaskParam(row.key, value)"
                     />
                   </template>
                 </el-table-column>
@@ -1239,10 +1257,9 @@ function paramTypeLabel(type: StrategyDefinition['param_schema'][number]['type']
   return '字符串'
 }
 
-function castParamValue(type: StrategyDefinition['param_schema'][number]['type'], value: string): string | number | boolean {
-  if (type === 'number') return Number.parseInt(value || '0', 10)
-  if (type === 'float') return Number.parseFloat(value || '0')
-  return value
+function numericParamValue(value: string | number | boolean): number {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : 0
 }
 
 function updateViewParamDefault(key: string, value: string | number | boolean): void {
