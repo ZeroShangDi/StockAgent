@@ -820,7 +820,114 @@ def _has_enabled_action(task: Dict[str, Any], action_type: str, signal: int | No
     return False
 
 
-def _build_action_audits_for_item(
+def _stock_payload_from_run_item(
+    item_doc: Dict[str, Any],
+    *,
+    source_module: str,
+    source_query: str,
+    source_pool_name: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    now = _utc_now()
+    payload = {
+        "ts_code": item_doc.get("entity_key"),
+        "code": item_doc.get("code") or str(item_doc.get("entity_key") or "").split(".")[0],
+        "name": item_doc.get("entity_name") or item_doc.get("entity_key"),
+        "status": "active",
+        "source_module": source_module,
+        "source_run_id": item_doc.get("run_id"),
+        "source_query": source_query,
+        "source_pool_name": source_pool_name,
+        "source_type": "strategy_v2",
+        "source_strategy": (item_doc.get("tags") or [""])[0],
+        "operator_type": "auto",
+        "last_transition_at": now,
+        "added_at": now,
+    }
+    payload.update(extra or {})
+    return payload
+
+
+async def _load_user_pool(pool_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+    if not pool_id:
+        return None
+    return await mongo_manager.find_one(
+        STOCK_POOL_COLLECTION,
+        {"pool_id": pool_id, "user_id": user_id},
+        projection={"_id": 0},
+    )
+
+
+async def _upsert_stock_into_pool(
+    pool: Dict[str, Any],
+    user_id: str,
+    stock_payload: Dict[str, Any],
+    *,
+    duplicate_policy: str,
+) -> Dict[str, Any]:
+    pool_id = str(pool.get("pool_id") or "")
+    ts_code = str(stock_payload.get("ts_code") or "").upper()
+    stocks = list(pool.get("stocks") or [])
+    existing_index = next(
+        (
+            index for index, item in enumerate(stocks)
+            if str(item.get("ts_code") or "").upper() == ts_code
+        ),
+        None,
+    )
+    now = _utc_now()
+    if existing_index is not None and duplicate_policy == "skip":
+        return {
+            "status": "skipped",
+            "summary": f"{stock_payload.get('name') or ts_code} 已存在于股池「{pool.get('name') or pool_id}」",
+            "changed": False,
+        }
+
+    if existing_index is None:
+        stock_payload["entered_at"] = stock_payload.get("entered_at") or now
+        stocks.append(stock_payload)
+        status = "executed"
+        summary = f"已加入股池「{pool.get('name') or pool_id}」"
+    else:
+        existing = dict(stocks[existing_index])
+        stock_payload["entered_at"] = existing.get("entered_at") or existing.get("added_at") or now
+        stock_payload["added_at"] = existing.get("added_at") or now
+        stocks[existing_index] = {**existing, **stock_payload}
+        status = "executed"
+        summary = f"已刷新股池「{pool.get('name') or pool_id}」中的入池原因"
+
+    await mongo_manager.update_one(
+        STOCK_POOL_COLLECTION,
+        {"pool_id": pool_id, "user_id": user_id},
+        {"$set": {"stocks": stocks, "updated_at": now}},
+    )
+    return {"status": status, "summary": summary, "changed": True}
+
+
+async def _remove_stock_from_pool(pool: Dict[str, Any], user_id: str, ts_code: str) -> Dict[str, Any]:
+    pool_id = str(pool.get("pool_id") or "")
+    normalized = ts_code.upper()
+    stocks = list(pool.get("stocks") or [])
+    filtered = [item for item in stocks if str(item.get("ts_code") or "").upper() != normalized]
+    if len(filtered) == len(stocks):
+        return {
+            "status": "skipped",
+            "summary": f"{normalized} 不在股池「{pool.get('name') or pool_id}」中",
+            "changed": False,
+        }
+    await mongo_manager.update_one(
+        STOCK_POOL_COLLECTION,
+        {"pool_id": pool_id, "user_id": user_id},
+        {"$set": {"stocks": filtered, "updated_at": _utc_now()}},
+    )
+    return {
+        "status": "executed",
+        "summary": f"已从股池「{pool.get('name') or pool_id}」移出",
+        "changed": True,
+    }
+
+
+async def _build_action_audits_for_item(
     task: Dict[str, Any],
     item_doc: Dict[str, Any],
     temp_pool: Optional[Dict[str, str]],
@@ -846,7 +953,28 @@ def _build_action_audits_for_item(
                 result_summary = "未生成临时清单：没有正向命中或动作未启用"
             action_results.append(result_summary)
         elif action_type == "add_to_pool":
-            result_summary = "命中加入股池动作，待接入实际入池执行"
+            target_pool_id = str((action.get("params") or {}).get("target_pool_id") or "").strip()
+            duplicate_policy = str((action.get("params") or {}).get("duplicate_policy") or "skip")
+            target_pool = await _load_user_pool(target_pool_id, str(task.get("user_id") or ""))
+            if not target_pool:
+                audit_status = "failed"
+                result_summary = "加入股池失败：目标股池不存在"
+            else:
+                stock_payload = _stock_payload_from_run_item(
+                    item_doc,
+                    source_module="strategy_v2_add_to_pool",
+                    source_query=task.get("name") or task.get("strategy_name") or "Strategy V2",
+                    extra={"source_action_id": action.get("action_id")},
+                )
+                result = await _upsert_stock_into_pool(
+                    target_pool,
+                    str(task.get("user_id") or ""),
+                    stock_payload,
+                    duplicate_policy=duplicate_policy,
+                )
+                audit_status = result["status"]
+                result_summary = result["summary"]
+                related_resource = {"pool_id": target_pool_id, "pool_name": target_pool.get("name")}
             action_results.append(result_summary)
         elif action_type == "notify":
             result_summary = "命中通知动作，待接入通知发送执行"
@@ -855,7 +983,58 @@ def _build_action_audits_for_item(
             result_summary = "命中模拟成交动作，待接入交割单写入"
             action_results.append(result_summary)
         elif action_type == "pool_transition":
-            result_summary = "命中股池流转动作，待接入股池流转执行"
+            action_params = action.get("params") or {}
+            transition_mode = str(action_params.get("transition_mode") or "copy").strip().lower()
+            source_scope = task.get("target_scope") or {}
+            source_pool_id = str(source_scope.get("scope_id") or (source_scope.get("params") or {}).get("stock_pool_id") or "")
+            target_pool_id = str(action_params.get("target_pool_id") or "").strip()
+            source_pool = await _load_user_pool(source_pool_id, str(task.get("user_id") or ""))
+            target_pool = None if transition_mode == "delete" else await _load_user_pool(target_pool_id, str(task.get("user_id") or ""))
+            if transition_mode not in {"copy", "move", "delete"}:
+                audit_status = "failed"
+                result_summary = f"股池流转失败：不支持的流转方式 {transition_mode}"
+            elif not source_pool:
+                audit_status = "failed"
+                result_summary = "股池流转失败：来源股池不存在"
+            elif transition_mode != "delete" and not target_pool:
+                audit_status = "failed"
+                result_summary = "股池流转失败：目标股池不存在"
+            elif transition_mode in {"copy", "move"} and source_pool_id == target_pool_id:
+                audit_status = "skipped"
+                result_summary = "股池流转跳过：来源股池和目标股池相同"
+            else:
+                summaries: List[str] = []
+                if transition_mode in {"copy", "move"} and target_pool:
+                    stock_payload = _stock_payload_from_run_item(
+                        item_doc,
+                        source_module="strategy_v2_pool_transition",
+                        source_query=task.get("name") or task.get("strategy_name") or "Strategy V2",
+                        source_pool_name=source_pool.get("name"),
+                        extra={"source_action_id": action.get("action_id"), "transition_mode": transition_mode},
+                    )
+                    upsert_result = await _upsert_stock_into_pool(
+                        target_pool,
+                        str(task.get("user_id") or ""),
+                        stock_payload,
+                        duplicate_policy="refresh_reason",
+                    )
+                    summaries.append(upsert_result["summary"])
+                if transition_mode in {"move", "delete"}:
+                    remove_result = await _remove_stock_from_pool(
+                        source_pool,
+                        str(task.get("user_id") or ""),
+                        str(item_doc.get("entity_key") or ""),
+                    )
+                    summaries.append(remove_result["summary"])
+                audit_status = "executed" if any("已" in summary for summary in summaries) else "skipped"
+                result_summary = "；".join(summaries) or "股池流转未产生变化"
+                related_resource = {
+                    "source_pool_id": source_pool_id,
+                    "source_pool_name": source_pool.get("name") if source_pool else None,
+                    "target_pool_id": target_pool_id if transition_mode != "delete" else None,
+                    "target_pool_name": target_pool.get("name") if target_pool else None,
+                    "transition_mode": transition_mode,
+                }
             action_results.append(result_summary)
         else:
             result_summary = f"命中未知动作：{action_type}"
@@ -1165,7 +1344,7 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
         temp_pool = await _create_temp_stock_pool(task, run_id, positive_items)
         await _ensure_run_can_continue(run_id, user_id)
         for item_doc in item_docs:
-            item_doc["action_result"], audits = _build_action_audits_for_item(task, item_doc, temp_pool)
+            item_doc["action_result"], audits = await _build_action_audits_for_item(task, item_doc, temp_pool)
             action_audit_docs.extend(audits)
         await _append_run_log(
             run_id,
