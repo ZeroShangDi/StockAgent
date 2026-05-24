@@ -60,6 +60,137 @@
               />
             </el-tab-pane>
 
+            <el-tab-pane label="交易分析" name="analysis">
+              <div v-if="stats" class="analysis-tab">
+                <section class="analysis-hero">
+                  <div>
+                    <p class="analysis-kicker">Performance Analysis</p>
+                    <h3>{{ analysisSummary.verdict }}</h3>
+                    <p>{{ analysisSummary.description }}</p>
+                  </div>
+                  <div class="analysis-score" :class="analysisSummary.scoreClass">
+                    <span>综合评分</span>
+                    <strong>{{ analysisSummary.score }}</strong>
+                    <small>{{ analysisSummary.level }}</small>
+                  </div>
+                </section>
+
+                <section class="analysis-metrics">
+                  <article
+                    v-for="metric in analysisMetricCards"
+                    :key="metric.label"
+                    class="analysis-metric-card"
+                    :class="metric.tone"
+                  >
+                    <span>{{ metric.label }}</span>
+                    <strong>{{ metric.value }}</strong>
+                    <small>{{ metric.hint }}</small>
+                  </article>
+                </section>
+
+                <section class="analysis-columns">
+                  <article class="analysis-panel">
+                    <header>
+                      <h4>收益质量</h4>
+                      <span>参考回测收益 / 风险口径</span>
+                    </header>
+                    <div class="analysis-rows">
+                      <div v-for="item in returnQualityRows" :key="item.label" class="analysis-row">
+                        <span>{{ item.label }}</span>
+                        <strong :class="item.className">{{ item.value }}</strong>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article class="analysis-panel">
+                    <header>
+                      <h4>交易质量</h4>
+                      <span>参考交割单常用复盘口径</span>
+                    </header>
+                    <div class="analysis-rows">
+                      <div v-for="item in tradeQualityRows" :key="item.label" class="analysis-row">
+                        <span>{{ item.label }}</span>
+                        <strong :class="item.className">{{ item.value }}</strong>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article class="analysis-panel">
+                    <header>
+                      <h4>持仓风险</h4>
+                      <span>当前未了结风险暴露</span>
+                    </header>
+                    <div class="analysis-rows">
+                      <div v-for="item in positionRiskRows" :key="item.label" class="analysis-row">
+                        <span>{{ item.label }}</span>
+                        <strong :class="item.className">{{ item.value }}</strong>
+                      </div>
+                    </div>
+                  </article>
+                </section>
+
+                <section class="analysis-columns two">
+                  <article class="analysis-panel">
+                    <header>
+                      <h4>个股贡献榜</h4>
+                      <span>盈利来源是否集中</span>
+                    </header>
+                    <div class="analysis-ranking">
+                      <button
+                        v-for="item in topProfitStocks"
+                        :key="`profit-${item.ts_code}`"
+                        type="button"
+                        class="analysis-rank-item"
+                        @click="openStockSummaryReview(item)"
+                      >
+                        <span>
+                          <strong>{{ item.name || item.code }}</strong>
+                          <small>{{ item.ts_code }}</small>
+                        </span>
+                        <b :class="pnlClass(item.net_pnl)">{{ formatSignedAmount(item.net_pnl) }}</b>
+                      </button>
+                    </div>
+                  </article>
+
+                  <article class="analysis-panel">
+                    <header>
+                      <h4>亏损来源榜</h4>
+                      <span>优先复盘最大拖累项</span>
+                    </header>
+                    <div class="analysis-ranking">
+                      <button
+                        v-for="item in topLossStocks"
+                        :key="`loss-${item.ts_code}`"
+                        type="button"
+                        class="analysis-rank-item"
+                        @click="openStockSummaryReview(item)"
+                      >
+                        <span>
+                          <strong>{{ item.name || item.code }}</strong>
+                          <small>{{ item.ts_code }}</small>
+                        </span>
+                        <b :class="pnlClass(item.net_pnl)">{{ formatSignedAmount(item.net_pnl) }}</b>
+                      </button>
+                    </div>
+                  </article>
+                </section>
+
+                <section class="analysis-panel diagnosis-panel">
+                  <header>
+                    <h4>复盘诊断</h4>
+                    <span>根据当前交割单数据自动生成</span>
+                  </header>
+                  <div class="diagnosis-list">
+                    <div v-for="item in analysisDiagnostics" :key="item.title" class="diagnosis-item" :class="item.tone">
+                      <strong>{{ item.title }}</strong>
+                      <p>{{ item.description }}</p>
+                    </div>
+                  </div>
+                </section>
+              </div>
+              <el-empty v-else description="暂无分析数据，请先导入交割单或刷新统计。" />
+            </el-tab-pane>
+
             <el-tab-pane label="持仓股" name="holdings">
               <div class="holdings-tab">
                 <template v-if="positions">
@@ -467,7 +598,7 @@ const userStore = useUserStore()
 const loading = ref(false)
 const groups = ref<TradeReviewGroupSummary[]>([])
 const activeGroupId = ref('')
-const activeTab = ref<'heatmap' | 'holdings' | 'records' | 'stocks'>('records')
+const activeTab = ref<'heatmap' | 'analysis' | 'holdings' | 'records' | 'stocks'>('records')
 const category = ref('trade')
 const keyword = ref('')
 const holdingsKeyword = ref('')
@@ -560,6 +691,266 @@ const filteredPositions = computed(() => {
       || (item.name || '').toLowerCase().includes(text)
   })
 })
+type StockPnlItem = TradeReviewStatsResult['stock_pnl_ranking'][number]
+interface AnalysisRow {
+  label: string
+  value: string
+  className?: string
+}
+
+const analysisBase = computed(() => {
+  const ranking = stats.value?.stock_pnl_ranking || []
+  const totalBuyAmount = Number(stats.value?.summary.total_buy_amount || 0)
+  const totalSellAmount = Number(stats.value?.summary.total_sell_amount || 0)
+  const totalFee = Number(stats.value?.summary.total_fee || 0)
+  const totalNetPnl = ranking.reduce((sum, item) => sum + Number(item.net_pnl || 0), 0)
+  const realizedPnl = ranking.reduce((sum, item) => sum + Number(item.realized_pnl || 0), 0)
+  const unrealizedPnl = ranking.reduce((sum, item) => sum + Number(item.unrealized_pnl || 0), 0)
+  const profitStocks = ranking.filter((item) => Number(item.net_pnl || 0) > 0)
+  const lossStocks = ranking.filter((item) => Number(item.net_pnl || 0) < 0)
+  const flatStocks = ranking.filter((item) => Number(item.net_pnl || 0) === 0)
+  const grossProfit = profitStocks.reduce((sum, item) => sum + Number(item.net_pnl || 0), 0)
+  const grossLoss = Math.abs(lossStocks.reduce((sum, item) => sum + Number(item.net_pnl || 0), 0))
+  const investedBase = totalBuyAmount > 0 ? totalBuyAmount : ranking.reduce((sum, item) => sum + Number(item.total_buy_amount || 0), 0)
+  const returnPct = investedBase > 0 ? totalNetPnl / investedBase * 100 : 0
+  const realizedRatio = Math.abs(totalNetPnl) > 0 ? realizedPnl / totalNetPnl * 100 : 0
+  const winRate = ranking.length > 0 ? profitStocks.length / ranking.length * 100 : 0
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : 0)
+  const avgPnl = ranking.length > 0 ? totalNetPnl / ranking.length : 0
+  const topAbsPnl = [...ranking].sort((a, b) => Math.abs(Number(b.net_pnl || 0)) - Math.abs(Number(a.net_pnl || 0))).slice(0, 3)
+  const totalAbsPnl = ranking.reduce((sum, item) => sum + Math.abs(Number(item.net_pnl || 0)), 0)
+  const top3ContributionPct = totalAbsPnl > 0
+    ? topAbsPnl.reduce((sum, item) => sum + Math.abs(Number(item.net_pnl || 0)), 0) / totalAbsPnl * 100
+    : 0
+  const feeRatePct = investedBase > 0 ? totalFee / investedBase * 100 : 0
+  const reviewCoveragePct = Number(stats.value?.summary.review_coverage_pct || 0)
+  const buySellRatio = stats.value?.summary.sell_count
+    ? Number(stats.value.summary.buy_count || 0) / Number(stats.value.summary.sell_count || 1)
+    : 0
+  const monthlyCounts = stats.value?.monthly_trade_counts || []
+  const busiestMonth = [...monthlyCounts].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0]
+  const avgMonthlyTrades = monthlyCounts.length > 0
+    ? monthlyCounts.reduce((sum, item) => sum + Number(item.count || 0), 0) / monthlyCounts.length
+    : 0
+
+  return {
+    ranking,
+    totalBuyAmount,
+    totalSellAmount,
+    totalFee,
+    totalNetPnl,
+    realizedPnl,
+    unrealizedPnl,
+    profitStocks,
+    lossStocks,
+    flatStocks,
+    grossProfit,
+    grossLoss,
+    investedBase,
+    returnPct,
+    realizedRatio,
+    winRate,
+    profitFactor,
+    avgPnl,
+    top3ContributionPct,
+    feeRatePct,
+    reviewCoveragePct,
+    buySellRatio,
+    busiestMonth,
+    avgMonthlyTrades,
+  }
+})
+
+const topProfitStocks = computed<StockPnlItem[]>(() => {
+  return [...analysisBase.value.ranking]
+    .filter((item) => Number(item.net_pnl || 0) > 0)
+    .sort((a, b) => Number(b.net_pnl || 0) - Number(a.net_pnl || 0))
+    .slice(0, 5)
+})
+
+const topLossStocks = computed<StockPnlItem[]>(() => {
+  return [...analysisBase.value.ranking]
+    .filter((item) => Number(item.net_pnl || 0) < 0)
+    .sort((a, b) => Number(a.net_pnl || 0) - Number(b.net_pnl || 0))
+    .slice(0, 5)
+})
+
+const analysisSummary = computed(() => {
+  const base = analysisBase.value
+  let score = 50
+  if (base.totalNetPnl > 0) score += 15
+  if (base.returnPct > 5) score += 10
+  if (base.winRate >= 55) score += 10
+  if (base.profitFactor >= 1.5) score += 10
+  if (base.reviewCoveragePct >= 70) score += 8
+  if (base.top3ContributionPct > 75) score -= 8
+  if (base.returnPct < 0) score -= 15
+  if (base.winRate < 40 && base.ranking.length >= 5) score -= 8
+  score = Math.max(0, Math.min(100, Math.round(score)))
+
+  if (score >= 80) {
+    return {
+      score,
+      level: '较强',
+      scoreClass: 'is-good',
+      verdict: '收益结构相对健康',
+      description: '当前交割单同时具备正收益、较好的盈利覆盖和较可控的集中度，后续重点复盘可复制的买卖模式。',
+    }
+  }
+  if (score >= 60) {
+    return {
+      score,
+      level: '中性',
+      scoreClass: 'is-neutral',
+      verdict: '收益质量仍需继续验证',
+      description: '当前结果有可用信号，但还需要继续检查盈利来源、亏损拖累和复盘覆盖，避免偶然收益被误判为稳定模式。',
+    }
+  }
+  return {
+    score,
+    level: '偏弱',
+    scoreClass: 'is-risk',
+    verdict: '交易质量需要优先复盘',
+    description: '当前交割单暴露出收益、胜率、集中度或复盘覆盖中的一项或多项问题，建议先从最大亏损来源和未复盘记录开始处理。',
+  }
+})
+
+const analysisMetricCards = computed(() => {
+  const base = analysisBase.value
+  return [
+    {
+      label: '总盈亏',
+      value: formatSignedAmount(base.totalNetPnl),
+      hint: `已实现 ${formatSignedAmount(base.realizedPnl)} / 浮动 ${formatSignedAmount(base.unrealizedPnl)}`,
+      tone: pnlTone(base.totalNetPnl),
+    },
+    {
+      label: '投入收益率',
+      value: formatSignedPct(base.returnPct),
+      hint: `按累计买入金额 ${formatAmount(base.investedBase)} 估算`,
+      tone: pnlTone(base.returnPct),
+    },
+    {
+      label: '胜率',
+      value: formatSignedPct(base.winRate).replace('+', ''),
+      hint: `盈利 ${base.profitStocks.length} 只 / 亏损 ${base.lossStocks.length} 只 / 持平 ${base.flatStocks.length} 只`,
+      tone: base.winRate >= 50 ? 'is-good' : 'is-risk',
+    },
+    {
+      label: '盈亏比',
+      value: formatRatio(base.profitFactor),
+      hint: `总盈利 ${formatAmount(base.grossProfit)} / 总亏损 ${formatAmount(base.grossLoss)}`,
+      tone: base.profitFactor >= 1.2 ? 'is-good' : 'is-risk',
+    },
+    {
+      label: 'Top3 集中度',
+      value: formatSignedPct(base.top3ContributionPct).replace('+', ''),
+      hint: '按绝对盈亏贡献估算，过高说明收益依赖少数股票',
+      tone: base.top3ContributionPct > 70 ? 'is-risk' : 'is-neutral',
+    },
+    {
+      label: '复盘覆盖',
+      value: formatSignedPct(base.reviewCoveragePct).replace('+', ''),
+      hint: `${stats.value?.summary.reviewed_count || 0} / ${stats.value?.summary.trade_records || 0} 笔成交已复盘`,
+      tone: base.reviewCoveragePct >= 70 ? 'is-good' : 'is-risk',
+    },
+  ]
+})
+
+const returnQualityRows = computed<AnalysisRow[]>(() => {
+  const base = analysisBase.value
+  return [
+    { label: '累计买入金额', value: formatAmount(base.totalBuyAmount) },
+    { label: '累计卖出金额', value: formatAmount(base.totalSellAmount) },
+    { label: '总费用', value: formatAmount(base.totalFee), className: base.totalFee > 0 ? 'is-loss' : '' },
+    { label: '费用拖累', value: formatSignedPct(base.feeRatePct).replace('+', '') },
+    { label: '平均单股盈亏', value: formatSignedAmount(base.avgPnl), className: pnlClass(base.avgPnl) },
+    { label: '已实现占比', value: Number.isFinite(base.realizedRatio) ? formatSignedPct(base.realizedRatio).replace('+', '') : '--' },
+  ]
+})
+
+const tradeQualityRows = computed<AnalysisRow[]>(() => {
+  const base = analysisBase.value
+  return [
+    { label: '买入笔数', value: String(stats.value?.summary.buy_count || 0) },
+    { label: '卖出笔数', value: String(stats.value?.summary.sell_count || 0) },
+    { label: '买卖笔数比', value: formatRatio(base.buySellRatio) },
+    { label: '月均交易笔数', value: base.avgMonthlyTrades.toFixed(1) },
+    { label: '交易最密集月份', value: base.busiestMonth ? `${base.busiestMonth.month} · ${base.busiestMonth.count} 笔` : '--' },
+    { label: '交易股票数', value: String(base.ranking.length) },
+  ]
+})
+
+const positionRiskRows = computed<AnalysisRow[]>(() => {
+  const summary = positionStockSummary.value
+  return [
+    { label: '当前股票持仓', value: `${stockPositions.value.length} 只` },
+    { label: '持仓成本', value: formatAmount(summary.total_cost) },
+    { label: '持仓市值', value: formatAmount(summary.total_market_value) },
+    { label: '浮动盈亏', value: formatSignedAmount(summary.total_unrealized_pnl), className: pnlClass(summary.total_unrealized_pnl) },
+    { label: '浮动收益率', value: formatSignedPct(summary.total_unrealized_pnl_pct), className: pnlClass(summary.total_unrealized_pnl_pct) },
+    { label: '盈利 / 亏损持仓', value: `${profitableStockCount.value} / ${lossStockCount.value}` },
+  ]
+})
+
+const analysisDiagnostics = computed(() => {
+  const base = analysisBase.value
+  const items: Array<{ title: string; description: string; tone: string }> = []
+
+  if (base.totalNetPnl >= 0) {
+    items.push({
+      title: '先沉淀盈利模式',
+      description: '当前总盈亏为正，建议优先复盘贡献榜中的股票，提炼共同买点、持仓周期、卖出触发和市场环境。',
+      tone: 'is-good',
+    })
+  } else {
+    items.push({
+      title: '先处理亏损拖累',
+      description: '当前总盈亏为负，建议从亏损来源榜开始，检查追高、逆势、仓位过重、止损延迟等共性问题。',
+      tone: 'is-risk',
+    })
+  }
+
+  if (base.profitFactor < 1) {
+    items.push({
+      title: '盈亏比不足',
+      description: '总盈利无法覆盖总亏损，后续需要提高单笔盈利空间，或压缩亏损交易的平均亏损。',
+      tone: 'is-risk',
+    })
+  } else {
+    items.push({
+      title: '盈亏比可继续观察',
+      description: '当前盈利对亏损的覆盖尚可，下一步可以结合胜率判断是趋势持仓型，还是高胜率短线型。',
+      tone: 'is-neutral',
+    })
+  }
+
+  if (base.top3ContributionPct > 70) {
+    items.push({
+      title: '收益或亏损来源偏集中',
+      description: 'Top3 股票贡献了大部分绝对盈亏，结论可能受少数样本影响，建议扩大样本或单独复盘这些股票。',
+      tone: 'is-risk',
+    })
+  }
+
+  if (base.reviewCoveragePct < 60) {
+    items.push({
+      title: '复盘覆盖不足',
+      description: '已复盘成交占比偏低，交割单分析目前更多是财务统计，还不足以支撑交易模式打磨。',
+      tone: 'is-risk',
+    })
+  }
+
+  if (stockPositions.value.length > 0) {
+    items.push({
+      title: '关注未了结风险',
+      description: '当前仍有持仓未了结，已实现收益不能代表最终结果，需要结合持仓浮盈亏和个股走势继续跟踪。',
+      tone: 'is-neutral',
+    })
+  }
+
+  return items
+})
 
 const categoryOptions = [
   { label: '成交记录', value: 'trade' },
@@ -614,6 +1005,19 @@ function pnlClass(value?: number | null): string {
   if (Number(value) > 0) return 'is-profit'
   if (Number(value) < 0) return 'is-loss'
   return ''
+}
+
+function pnlTone(value?: number | null): string {
+  if (value == null || Number.isNaN(Number(value))) return 'is-neutral'
+  if (Number(value) > 0) return 'is-good'
+  if (Number(value) < 0) return 'is-risk'
+  return 'is-neutral'
+}
+
+function formatRatio(value: number): string {
+  if (!Number.isFinite(value)) return '∞'
+  if (Number.isNaN(value)) return '--'
+  return value.toFixed(2)
 }
 
 async function loadGroups(): Promise<void> {
@@ -923,7 +1327,7 @@ async function handleBatchAddStrategy(): Promise<void> {
 }
 
 watch(activeTab, async (value) => {
-  if ((value === 'stocks' || value === 'heatmap') && activeGroupId.value) {
+  if ((value === 'stocks' || value === 'heatmap' || value === 'analysis') && activeGroupId.value) {
     await loadStats(false)
     return
   }
@@ -936,7 +1340,13 @@ onMounted(() => {
   if (typeof route.query.groupId === 'string') {
     activeGroupId.value = route.query.groupId
   }
-  if (route.query.tab === 'stocks' || route.query.tab === 'records' || route.query.tab === 'heatmap' || route.query.tab === 'holdings') {
+  if (
+    route.query.tab === 'stocks'
+    || route.query.tab === 'records'
+    || route.query.tab === 'heatmap'
+    || route.query.tab === 'analysis'
+    || route.query.tab === 'holdings'
+  ) {
     activeTab.value = route.query.tab
   } else if (route.query.tab === 'stats') {
     activeTab.value = 'heatmap'
@@ -1244,6 +1654,215 @@ onMounted(() => {
   line-height: 1.8;
 }
 
+.analysis-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.analysis-hero,
+.analysis-panel,
+.analysis-metric-card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(248, 250, 252, 0.82);
+}
+
+.analysis-hero {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 30%),
+    linear-gradient(135deg, rgba(248, 250, 252, 0.92), rgba(255, 255, 255, 0.96));
+}
+
+.analysis-kicker {
+  margin: 0 0 8px;
+  color: var(--el-color-primary);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.analysis-hero h3 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.analysis-hero p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.7;
+}
+
+.analysis-score {
+  display: grid;
+  place-items: center;
+  min-width: 140px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.06);
+}
+
+.analysis-score span,
+.analysis-score small,
+.analysis-metric-card span,
+.analysis-metric-card small,
+.analysis-panel header span,
+.analysis-row span,
+.analysis-rank-item small,
+.diagnosis-item p {
+  color: var(--el-text-color-secondary);
+}
+
+.analysis-score strong {
+  font-size: 36px;
+  line-height: 1.1;
+}
+
+.analysis-score.is-good strong,
+.analysis-metric-card.is-good strong {
+  color: #dc2626;
+}
+
+.analysis-score.is-risk strong,
+.analysis-metric-card.is-risk strong {
+  color: #16a34a;
+}
+
+.analysis-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.analysis-metric-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 16px;
+}
+
+.analysis-metric-card strong {
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.analysis-metric-card small {
+  line-height: 1.5;
+}
+
+.analysis-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.analysis-columns.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.analysis-panel {
+  min-width: 0;
+  padding: 16px;
+  border-radius: 18px;
+}
+
+.analysis-panel header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.analysis-panel h4 {
+  margin: 0;
+}
+
+.analysis-panel header span {
+  font-size: 12px;
+}
+
+.analysis-rows,
+.analysis-ranking,
+.diagnosis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.analysis-row,
+.analysis-rank-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analysis-row {
+  padding: 10px 0;
+  border-bottom: 1px dashed rgba(15, 23, 42, 0.08);
+}
+
+.analysis-row:last-child {
+  border-bottom: 0;
+}
+
+.analysis-rank-item {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  text-align: left;
+}
+
+.analysis-rank-item span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.analysis-rank-item b {
+  white-space: nowrap;
+}
+
+.diagnosis-panel {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.diagnosis-item {
+  padding: 13px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.diagnosis-item p {
+  margin: 6px 0 0;
+  line-height: 1.7;
+}
+
+.diagnosis-item.is-good {
+  border-color: rgba(220, 38, 38, 0.16);
+  background: rgba(254, 242, 242, 0.7);
+}
+
+.diagnosis-item.is-risk {
+  border-color: rgba(22, 163, 74, 0.16);
+  background: rgba(240, 253, 244, 0.72);
+}
+
 .dialog-body {
   display: flex;
   flex-direction: column;
@@ -1304,13 +1923,22 @@ onMounted(() => {
 
 @media (max-width: 1200px) {
   .body-grid,
-  .summary-grid {
+  .summary-grid,
+  .analysis-metrics,
+  .analysis-columns,
+  .analysis-columns.two {
     grid-template-columns: 1fr;
   }
 
   .stock-pnl-header,
-  .holdings-header {
+  .holdings-header,
+  .analysis-hero,
+  .analysis-panel header {
     flex-direction: column;
+  }
+
+  .analysis-score {
+    width: 100%;
   }
 }
 </style>
