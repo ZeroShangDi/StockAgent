@@ -38,6 +38,7 @@ TASK_COLLECTION = "strategy_v2_scene_tasks"
 RUN_COLLECTION = "strategy_v2_task_runs"
 RUN_ITEM_COLLECTION = "strategy_v2_task_run_items"
 STOCK_POOL_COLLECTION = "stock_pools"
+RUN_STALE_AFTER_SECONDS = 30 * 60
 
 
 class StrategyV2TaskStockRequest(BaseModel):
@@ -51,6 +52,14 @@ class StrategyV2StockConfigRequest(BaseModel):
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _as_utc_datetime(value: Any) -> Optional[datetime]:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 @router.get("/rules", response_model=StrategyV2RuleDictionary)
@@ -67,6 +76,7 @@ async def list_strategy_v2_definitions() -> Dict[str, Any]:
 
 @router.get("/tasks")
 async def list_strategy_v2_tasks(user_id: str = Depends(get_current_user_id)) -> Dict[str, List[Dict[str, Any]]]:
+    await _mark_stale_running_runs(user_id=user_id)
     items = await mongo_manager.find_many(
         TASK_COLLECTION,
         {"user_id": user_id},
@@ -97,6 +107,7 @@ async def list_strategy_v2_task_runs(
     user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, List[Dict[str, Any]]]:
     await _get_user_task_or_404(task_id, user_id)
+    await _mark_stale_running_runs(user_id=user_id, task_id=task_id)
     items = await mongo_manager.find_many(
         RUN_COLLECTION,
         {"task_id": task_id, "user_id": user_id},
@@ -112,6 +123,7 @@ async def get_strategy_v2_run(
     run_id: str,
     user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
+    await _mark_stale_running_runs(user_id=user_id, run_id=run_id)
     run = await mongo_manager.find_one(
         RUN_COLLECTION,
         {"run_id": run_id, "user_id": user_id},
@@ -149,6 +161,7 @@ async def run_strategy_v2_task(
     user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
     task = await _get_user_task_or_404(task_id, user_id)
+    await _mark_stale_running_runs(user_id=user_id, task_id=task_id)
     run_id = f"sv2_run_{uuid.uuid4().hex[:12]}"
     now = _utc_now()
     run_doc = _build_running_doc(task, run_id, now)
@@ -178,6 +191,73 @@ async def _get_user_task_or_404(task_id: str, user_id: str) -> Dict[str, Any]:
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
+
+
+async def _mark_stale_running_runs(
+    *,
+    user_id: str,
+    task_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> None:
+    query: Dict[str, Any] = {"user_id": user_id, "run_status": "running"}
+    if task_id:
+        query["task_id"] = task_id
+    if run_id:
+        query["run_id"] = run_id
+
+    running_runs = await mongo_manager.find_many(
+        RUN_COLLECTION,
+        query,
+        projection={"_id": 0, "run_id": 1, "task_id": 1, "started_at": 1, "progress_current": 1, "progress_total": 1},
+    )
+    now = _utc_now()
+    for run in running_runs:
+        started_at = _as_utc_datetime(run.get("started_at"))
+        if not started_at or (now - started_at).total_seconds() < RUN_STALE_AFTER_SECONDS:
+            continue
+
+        finished_at = _utc_now()
+        progress_current = int(run.get("progress_current") or 0)
+        progress_total = int(run.get("progress_total") or 0)
+        summary = "运行超时：后台任务长时间未更新，可能由服务重启或后台任务中断导致。"
+        await mongo_manager.update_one(
+            RUN_COLLECTION,
+            {"run_id": run.get("run_id"), "user_id": user_id},
+            {
+                "$set": {
+                    "run_status": "failed",
+                    "summary": summary,
+                    "finished_at": finished_at,
+                    "progress_label": "运行超时",
+                    "summary_metrics": [
+                        {"label": "状态", "value": "超时失败", "tone": "negative"},
+                        {"label": "已扫描", "value": f"{progress_current}/{progress_total}"},
+                    ],
+                    "next_action_hint": "这通常表示 Web 服务重启或后台执行被中断，建议重新运行任务。",
+                    "updated_at": finished_at,
+                }
+            },
+        )
+
+        if run.get("task_id"):
+            latest_run = await mongo_manager.find_one(
+                RUN_COLLECTION,
+                {"task_id": run.get("task_id"), "user_id": user_id},
+                projection={"_id": 0, "run_id": 1, "run_status": 1},
+                sort=[("started_at", -1)],
+            )
+            if latest_run and latest_run.get("run_id") == run.get("run_id"):
+                await mongo_manager.update_one(
+                    TASK_COLLECTION,
+                    {"task_id": run.get("task_id"), "user_id": user_id},
+                    {
+                        "$set": {
+                            "last_run_id": run.get("run_id"),
+                            "last_run_status": "failed",
+                            "updated_at": finished_at,
+                        }
+                    },
+                )
 
 
 def _build_running_doc(task: Dict[str, Any], run_id: str, now: datetime) -> Dict[str, Any]:
