@@ -143,6 +143,36 @@ async def get_strategy_v2_task(
     return StrategyV2SceneTaskResponse(**task)
 
 
+@router.delete("/tasks/{task_id}")
+async def delete_strategy_v2_task(
+    task_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    task = await _get_user_task_or_404(task_id, user_id)
+    await _mark_stale_running_runs(user_id=user_id, task_id=task_id)
+    running_run = await mongo_manager.find_one(
+        RUN_COLLECTION,
+        {"task_id": task_id, "user_id": user_id, "run_status": "running"},
+        projection={"_id": 0, "run_id": 1},
+    )
+    if running_run or task.get("active_run_id"):
+        raise HTTPException(status_code=409, detail="任务正在运行，请先取消或等待完成后再删除")
+
+    await mongo_manager.delete_one(TASK_COLLECTION, {"task_id": task_id, "user_id": user_id})
+    deleted_runs = await mongo_manager.delete_many(RUN_COLLECTION, {"task_id": task_id, "user_id": user_id})
+    deleted_items = await mongo_manager.delete_many(RUN_ITEM_COLLECTION, {"task_id": task_id, "user_id": user_id})
+    deleted_logs = await mongo_manager.delete_many(RUN_LOG_COLLECTION, {"task_id": task_id, "user_id": user_id})
+    deleted_audits = await mongo_manager.delete_many(ACTION_AUDIT_COLLECTION, {"task_id": task_id, "user_id": user_id})
+    return {
+        "message": f"已删除任务「{task.get('name') or task_id}」",
+        "task_id": task_id,
+        "deleted_runs": deleted_runs,
+        "deleted_items": deleted_items,
+        "deleted_logs": deleted_logs,
+        "deleted_audits": deleted_audits,
+    }
+
+
 @router.get("/tasks/{task_id}/runs")
 async def list_strategy_v2_task_runs(
     task_id: str,

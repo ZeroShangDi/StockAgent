@@ -113,10 +113,13 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="110" align="right" fixed="right">
+        <el-table-column label="操作" width="150" align="right" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click="goDetail(row.task_id)">
               查看详情
+            </el-button>
+            <el-button size="small" type="danger" link :disabled="Boolean(row.active_run_id)" @click="handleDeleteTask(row)">
+              删除
             </el-button>
           </template>
         </el-table-column>
@@ -128,9 +131,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { listStrategySceneTasks } from '@/api/modules/strategy-v2'
+import { deleteStrategySceneTask, listStrategySceneTasks } from '@/api/modules/strategy-v2'
 import {
   STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
@@ -230,6 +233,32 @@ async function refreshTasks(): Promise<void> {
 
 function goDetail(taskId: string): void {
   router.push({ name: 'StrategyTaskDetailV2', params: { taskId } })
+}
+
+async function handleDeleteTask(row: StrategySceneTask): Promise<void> {
+  if (row.active_run_id) {
+    ElMessage.warning('任务正在运行，请先取消或等待完成后再删除')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `删除后会同时清理任务运行记录、运行明细、日志和动作审计。确认删除「${row.name}」吗？`,
+      '删除场景任务',
+      {
+        type: 'warning',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+      },
+    )
+    const response = await deleteStrategySceneTask(row.task_id)
+    ElMessage.success(response.message || '任务已删除')
+    await refreshTasks()
+  }
+  catch (error) {
+    if (error === 'cancel') return
+    console.error(error)
+    ElMessage.error('删除任务失败')
+  }
 }
 
 function isSceneType(value: string): value is StrategySceneType {

@@ -31,6 +31,10 @@ export const strategyV2Api = {
     return api.post('/strategy-v2/tasks', payload)
   },
 
+  deleteTask(taskId: string): Promise<{ message: string }> {
+    return api.delete(`/strategy-v2/tasks/${taskId}`)
+  },
+
   listTaskRuns(taskId: string): Promise<StrategyTaskRun[]> {
     return api.get<ListResponse<StrategyTaskRun>>(`/strategy-v2/tasks/${taskId}/runs`).then((response) => response.items)
   },
@@ -91,6 +95,10 @@ export async function getStrategySceneTask(taskId: string): Promise<StrategyScen
 
 export async function createStrategySceneTask(input: CreateStrategySceneTaskInput): Promise<StrategySceneTask> {
   return strategyV2Api.createTask(input)
+}
+
+export async function deleteStrategySceneTask(taskId: string): Promise<{ message: string }> {
+  return strategyV2Api.deleteTask(taskId)
 }
 
 export async function listTaskRuns(taskId: string): Promise<StrategyTaskRun[]> {

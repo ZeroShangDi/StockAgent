@@ -9,6 +9,16 @@
         <el-button
           v-if="task"
           size="small"
+          type="danger"
+          plain
+          :disabled="hasRunningRun"
+          @click="deleteCurrentTask"
+        >
+          删除任务
+        </el-button>
+        <el-button
+          v-if="task"
+          size="small"
           type="primary"
           :loading="running"
           :disabled="hasRunningRun"
@@ -199,6 +209,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   cancelTaskRun,
+  deleteStrategySceneTask,
   getStrategySceneTask,
   listStrategySceneTasks,
   listTaskRuns,
@@ -341,6 +352,33 @@ async function retryRun(row: StrategyTaskRun): Promise<void> {
   catch (error) {
     console.error(error)
     ElMessage.error('重试启动失败')
+  }
+}
+
+async function deleteCurrentTask(): Promise<void> {
+  if (!task.value) return
+  if (hasRunningRun.value) {
+    ElMessage.warning('任务正在运行，请先取消或等待完成后再删除')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `删除后会同时清理任务运行记录、运行明细、日志和动作审计。确认删除「${task.value.name}」吗？`,
+      '删除场景任务',
+      {
+        type: 'warning',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+      },
+    )
+    const response = await deleteStrategySceneTask(task.value.task_id)
+    ElMessage.success(response.message || '任务已删除')
+    router.push({ name: 'StrategyTaskCenterV2', query: { scene: task.value.scene_type } })
+  }
+  catch (error) {
+    if (error === 'cancel') return
+    console.error(error)
+    ElMessage.error('删除任务失败')
   }
 }
 
