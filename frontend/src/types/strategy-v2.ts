@@ -150,12 +150,18 @@ export interface StrategyTaskRun {
   summary: string
   started_at: string
   finished_at?: string
+  progress_current?: number
+  progress_total?: number
+  progress_pct?: number
+  progress_label?: string
   signal_breakdown: {
     positive: number
     neutral: number
     negative: number
   }
   summary_metrics: StrategySummaryMetric[]
+  related_pool_id?: string
+  related_pool_name?: string
   related_trade_review_group_name?: string
   next_action_hint?: string
 }

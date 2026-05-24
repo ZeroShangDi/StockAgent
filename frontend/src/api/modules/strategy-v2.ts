@@ -4,6 +4,8 @@ import type {
   CreateStrategySceneTaskInput,
   StrategyDefinition,
   StrategySceneTask,
+  StrategyTaskRun,
+  StrategyTaskRunItem,
 } from '@/types/strategy-v2'
 
 interface ListResponse<T> {
@@ -25,6 +27,22 @@ export const strategyV2Api = {
 
   createTask(payload: CreateStrategySceneTaskInput): Promise<StrategySceneTask> {
     return api.post('/strategy-v2/tasks', payload)
+  },
+
+  listTaskRuns(taskId: string): Promise<StrategyTaskRun[]> {
+    return api.get<ListResponse<StrategyTaskRun>>(`/strategy-v2/tasks/${taskId}/runs`).then((response) => response.items)
+  },
+
+  runTask(taskId: string): Promise<StrategyTaskRun> {
+    return api.post(`/strategy-v2/tasks/${taskId}/runs`)
+  },
+
+  getRun(runId: string): Promise<StrategyTaskRun> {
+    return api.get(`/strategy-v2/runs/${runId}`)
+  },
+
+  getRunItems(runId: string): Promise<StrategyTaskRunItem[]> {
+    return api.get<ListResponse<StrategyTaskRunItem>>(`/strategy-v2/runs/${runId}/items`).then((response) => response.items)
   },
 
   addStockToTask(taskId: string, tsCode: string, config?: Record<string, unknown>): Promise<StrategySceneTask> {
@@ -55,6 +73,22 @@ export async function getStrategySceneTask(taskId: string): Promise<StrategyScen
 
 export async function createStrategySceneTask(input: CreateStrategySceneTaskInput): Promise<StrategySceneTask> {
   return strategyV2Api.createTask(input)
+}
+
+export async function listTaskRuns(taskId: string): Promise<StrategyTaskRun[]> {
+  return strategyV2Api.listTaskRuns(taskId)
+}
+
+export async function runStrategySceneTask(taskId: string): Promise<StrategyTaskRun> {
+  return strategyV2Api.runTask(taskId)
+}
+
+export async function getTaskRun(runId: string): Promise<StrategyTaskRun> {
+  return strategyV2Api.getRun(runId)
+}
+
+export async function getRunItems(runId: string): Promise<StrategyTaskRunItem[]> {
+  return strategyV2Api.getRunItems(runId)
 }
 
 export async function addStockToStrategySceneTask(

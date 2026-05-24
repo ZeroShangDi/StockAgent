@@ -288,7 +288,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { stockPickerApi } from '@/api'
@@ -298,6 +298,7 @@ import type { StockPoolDetail, StockPoolSummary, StockPoolStock } from '@/api/mo
 import type { StrategySceneTask } from '@/types/strategy-v2'
 
 const router = useRouter()
+const route = useRoute()
 
 const loading = ref(false)
 const pools = ref<StockPoolSummary[]>([])
@@ -389,7 +390,9 @@ async function loadPools(): Promise<void> {
     const response = await stockPickerApi.listPools()
     pools.value = response.items || []
     if (pools.value.length > 0) {
-      await selectPool(activePoolId.value || pools.value[0].pool_id)
+      const routePoolId = String(route.query.pool || '').trim()
+      const targetPool = pools.value.find((item) => item.pool_id === routePoolId)
+      await selectPool(targetPool?.pool_id || activePoolId.value || pools.value[0].pool_id)
     } else {
       activePoolId.value = ''
       activePool.value = null

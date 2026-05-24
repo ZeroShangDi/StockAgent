@@ -11,6 +11,9 @@
           {{ runStatusLabel(run.run_status) }}
         </el-tag>
         <el-button @click="openTask">返回任务</el-button>
+        <el-button v-if="run.related_pool_id" type="primary" plain @click="router.push({ name: 'StockPools', query: { pool: run.related_pool_id } })">
+          打开临时清单
+        </el-button>
         <el-button v-if="run.related_trade_review_group_name" type="primary" plain @click="router.push('/trade-review')">
           打开交割单分析
         </el-button>
@@ -22,6 +25,17 @@
         <span>{{ metric.label }}</span>
         <strong>{{ metric.value }}</strong>
       </article>
+    </section>
+
+    <section v-if="showProgress" class="progress-card">
+      <div class="progress-head">
+        <div>
+          <span class="section-kicker">运行进度</span>
+          <strong>{{ run.progress_label || runStatusLabel(run.run_status) }}</strong>
+        </div>
+        <span>{{ progressCurrent }} / {{ progressTotal }}，{{ progressPercent }}%</span>
+      </div>
+      <el-progress :percentage="progressPercent" :status="progressStatus" :stroke-width="10" />
     </section>
 
     <section class="workspace-shell">
@@ -114,11 +128,15 @@
             </div>
             <div class="context-row">
               <span>开始时间</span>
-              <strong>{{ run.started_at }}</strong>
+              <strong>{{ formatDateTime(run.started_at) }}</strong>
             </div>
             <div class="context-row" v-if="run.finished_at">
               <span>完成时间</span>
-              <strong>{{ run.finished_at }}</strong>
+              <strong>{{ formatDateTime(run.finished_at) }}</strong>
+            </div>
+            <div class="context-row" v-if="run.related_pool_name">
+              <span>临时清单</span>
+              <strong>{{ run.related_pool_name }}</strong>
             </div>
             <div class="context-row" v-if="run.related_trade_review_group_name">
               <span>关联交割单</span>
@@ -199,10 +217,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { getRunItems, getTaskRun, STRATEGY_SCENE_LABELS } from '@/mocks/strategyV2'
+import { getRunItems, getTaskRun } from '@/api/modules/strategy-v2'
+import { STRATEGY_SCENE_LABELS } from '@/mocks/strategyV2'
 import type { StrategyRunStatus, StrategySignalValue, StrategyTaskRun, StrategyTaskRunItem } from '@/types/strategy-v2'
 
 const route = useRoute()
@@ -212,7 +231,21 @@ const run = ref<StrategyTaskRun | null>(null)
 const items = ref<StrategyTaskRunItem[]>([])
 const itemFilter = ref<'all' | 'positive' | 'review' | 'skipped'>('all')
 const sceneLabels = STRATEGY_SCENE_LABELS
+let refreshTimer: ReturnType<typeof window.setTimeout> | undefined
 
+const progressCurrent = computed(() => Number(run.value?.progress_current || 0))
+const progressTotal = computed(() => Number(run.value?.progress_total || 0))
+const progressPercent = computed(() => {
+  if (typeof run.value?.progress_pct === 'number') return Math.min(100, Math.max(0, Math.round(run.value.progress_pct)))
+  if (!progressTotal.value) return run.value?.run_status === 'success' ? 100 : 0
+  return Math.min(100, Math.max(0, Math.round((progressCurrent.value / progressTotal.value) * 100)))
+})
+const showProgress = computed(() => run.value?.run_status === 'running' || progressTotal.value > 0)
+const progressStatus = computed(() => {
+  if (run.value?.run_status === 'success') return 'success'
+  if (run.value?.run_status === 'failed') return 'exception'
+  return undefined
+})
 const stateWritebackCount = computed(() => items.value.filter((item) => item.state_writeback).length)
 const reviewNeededCount = computed(() => items.value.filter((item) => item.action_result.includes('待') || item.action_result.includes('建议')).length)
 const skippedCount = computed(() => items.value.filter((item) => item.action_result.includes('无动作') || item.action_result.includes('跳过')).length)
@@ -403,9 +436,28 @@ const resultDestinationCards = computed(() => {
 
 onMounted(async () => {
   const runId = String(route.params.runId || '')
-  run.value = (await getTaskRun(runId)) || null
-  items.value = await getRunItems(runId)
+  await loadRun(runId)
 })
+
+onBeforeUnmount(() => {
+  if (refreshTimer) window.clearTimeout(refreshTimer)
+})
+
+async function loadRun(runId: string): Promise<void> {
+  if (!runId) {
+    run.value = null
+    items.value = []
+    return
+  }
+  run.value = await getTaskRun(runId)
+  items.value = await getRunItems(runId)
+  if (run.value?.run_status === 'running') {
+    if (refreshTimer) window.clearTimeout(refreshTimer)
+    refreshTimer = window.setTimeout(() => {
+      void loadRun(runId)
+    }, 2500)
+  }
+}
 
 function openTask(): void {
   if (!run.value) return
@@ -433,6 +485,19 @@ function runStatusTagType(status: StrategyRunStatus): 'success' | 'warning' | 'd
   if (status === 'partial_success') return 'warning'
   if (status === 'failed') return 'danger'
   return 'info'
+}
+
+function formatDateTime(value?: string): string {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function triggerSourceLabel(value: string): string {
@@ -469,6 +534,7 @@ function signalClass(value: StrategySignalValue): string {
 .hero-card,
 .strip-card,
 .signal-card,
+.progress-card,
 .console-panel,
 .review-card,
 .focus-card,
@@ -558,6 +624,24 @@ function signalClass(value: StrategySignalValue): string {
 
 .strip-card.warning strong {
   color: #d97706;
+}
+
+.progress-card {
+  border-radius: 20px;
+  padding: 16px 18px;
+}
+
+.progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  color: var(--ink-soft);
+}
+
+.progress-head strong {
+  display: block;
+  color: #0f172a;
 }
 
 .workspace-shell {
