@@ -15,6 +15,12 @@ from pydantic import BaseModel, Field
 
 from core.managers import mongo_manager
 from src.analysis.stock_chart_context import build_period_candles
+from src.strategy_v2.evaluator import (
+    StrategyV2EvaluationResult,
+    evaluate_double_cannon_from_candles,
+    evaluate_turtle_trading_from_candles,
+)
+from src.strategy_v2.rules import get_strategy_definition
 from .auth import get_current_user_id
 
 
@@ -24,6 +30,10 @@ DEFAULT_INITIAL_CAPITAL = 100000.0
 DEFAULT_INIT_BARS = 80
 DEFAULT_FUTURE_BARS = 120
 MIN_TOTAL_BARS = 180
+PRACTICE_STRATEGY_EVALUATORS = {
+    "double_cannon": evaluate_double_cannon_from_candles,
+    "turtle_trading": evaluate_turtle_trading_from_candles,
+}
 
 
 class PracticeStartRequest(BaseModel):
@@ -32,6 +42,8 @@ class PracticeStartRequest(BaseModel):
     init_bars: int = Field(default=DEFAULT_INIT_BARS, ge=30, le=200)
     future_bars: int = Field(default=DEFAULT_FUTURE_BARS, ge=20, le=240)
     initial_capital: float = Field(default=DEFAULT_INITIAL_CAPITAL, ge=10000, le=10000000)
+    sample_mode: Literal["random", "strategy"] = "random"
+    strategy_key: Optional[str] = None
 
 
 class PracticeTradeRequest(BaseModel):
@@ -110,6 +122,12 @@ class PracticeSessionState(BaseModel):
     can_buy: bool
     can_sell: bool
     is_revealed: bool
+    sample_mode: Literal["random", "strategy"] = "random"
+    strategy_key: Optional[str] = None
+    strategy_name: Optional[str] = None
+    strategy_signal_date: Optional[str] = None
+    strategy_reason: Optional[str] = None
+    strategy_meta: Dict[str, Any] = Field(default_factory=dict)
     reveal: Optional[PracticeReveal] = None
     created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -227,6 +245,12 @@ def _build_state(session: Dict[str, Any]) -> PracticeSessionState:
         can_buy=session["status"] == "active" and latest_close is not None and cash >= (latest_close * 100),
         can_sell=session["status"] == "active" and position_shares > 0,
         is_revealed=is_revealed,
+        sample_mode=session.get("sample_mode", "random"),
+        strategy_key=session.get("strategy_key"),
+        strategy_name=session.get("strategy_name"),
+        strategy_signal_date=session.get("strategy_signal_date"),
+        strategy_reason=session.get("strategy_reason"),
+        strategy_meta=session.get("strategy_meta") or {},
         reveal=reveal,
         created_at=session.get("created_at"),
         completed_at=session.get("completed_at"),
@@ -290,6 +314,78 @@ async def _pick_random_segment(required_bars: int) -> Tuple[Dict[str, Any], List
                 return candidate, segment
 
     raise HTTPException(status_code=404, detail="没有找到足够历史数据的股票样本")
+
+
+def _default_strategy_params(strategy: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        str(item.get("key")): item.get("default")
+        for item in strategy.get("param_schema", []) or []
+        if item.get("key") and "default" in item
+    }
+
+
+def _practice_strategy(strategy_key: str) -> Tuple[Dict[str, Any], Any]:
+    strategy = get_strategy_definition(strategy_key)
+    evaluator = PRACTICE_STRATEGY_EVALUATORS.get(strategy_key)
+    if not strategy or not evaluator:
+        raise HTTPException(status_code=400, detail="当前策略暂不支持盘感策略双盲")
+    if "scan" not in (strategy.get("supported_scenes") or []):
+        raise HTTPException(status_code=400, detail="策略双盲只支持选股策略")
+    return strategy, evaluator
+
+
+async def _pick_strategy_segment(
+    required_bars: int,
+    init_bars: int,
+    strategy_key: str,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Any]]:
+    strategy, evaluator = _practice_strategy(strategy_key)
+    params = _default_strategy_params(strategy)
+    sample_size = 60
+
+    for _ in range(10):
+        candidates = await mongo_manager.aggregate(
+            "stock_basic",
+            [
+                {"$match": {"ts_code": {"$exists": True, "$ne": None}}},
+                {"$sample": {"size": sample_size}},
+                {"$project": {"ts_code": 1, "name": 1, "industry": 1, "market": 1}},
+            ],
+        )
+
+        for candidate in candidates:
+            ts_code = candidate["ts_code"]
+            candle_count = await mongo_manager.count("stock_daily", {"ts_code": ts_code})
+            if candle_count < required_bars:
+                continue
+
+            start_max = candle_count - required_bars
+            for _attempt in range(3):
+                start_index = random.randint(0, max(start_max, 0))
+                segment = await mongo_manager.find_many(
+                    "stock_daily",
+                    {"ts_code": ts_code},
+                    sort=[("trade_date", 1)],
+                    skip=start_index,
+                    limit=required_bars,
+                )
+                if len(segment) < required_bars:
+                    continue
+
+                visible_prefix = segment[:init_bars]
+                result: StrategyV2EvaluationResult = evaluator(visible_prefix, params)
+                if result.signal == 1:
+                    signal_date = str(visible_prefix[-1].get("trade_date"))
+                    return candidate, segment, {
+                        "sample_mode": "strategy",
+                        "strategy_key": strategy_key,
+                        "strategy_name": strategy.get("name") or strategy_key,
+                        "strategy_signal_date": signal_date,
+                        "strategy_reason": result.reason,
+                        "strategy_meta": result.meta,
+                    }
+
+    raise HTTPException(status_code=404, detail="没有找到符合该策略的练习样本，请稍后重试或更换策略")
 
 
 async def _persist_session(session: Dict[str, Any]) -> None:
@@ -428,18 +524,29 @@ async def start_practice_session(
     for active_session in active_sessions:
         await _complete_session(active_session)
 
-    stock, segment = await _pick_random_segment(required_bars)
+    strategy_sample: Dict[str, Any] = {"sample_mode": "random"}
+    if body.sample_mode == "strategy":
+        if not body.strategy_key:
+            raise HTTPException(status_code=400, detail="策略双盲需要选择策略")
+        stock, segment, strategy_sample = await _pick_strategy_segment(
+            required_bars,
+            body.init_bars,
+            body.strategy_key,
+        )
+    else:
+        stock, segment = await _pick_random_segment(required_bars)
     sanitized_segment = [_sanitize_candle(item) for item in segment]
 
     session = {
         "session_id": uuid.uuid4().hex,
         "user_id": user_id,
-        "label": f"训练样本 {datetime.now().strftime('%m%d')}-{uuid.uuid4().hex[:4].upper()}",
+        "label": f"{'策略样本' if body.sample_mode == 'strategy' else '训练样本'} {datetime.now().strftime('%m%d')}-{uuid.uuid4().hex[:4].upper()}",
         "status": "active",
         "ts_code": stock["ts_code"],
         "stock_name": stock.get("name", stock["ts_code"]),
         "industry": stock.get("industry"),
         "market": stock.get("market"),
+        **strategy_sample,
         "initial_capital": round(body.initial_capital, 2),
         "cash": round(body.initial_capital, 2),
         "position_shares": 0,

@@ -19,9 +19,30 @@
             <el-button size="small" disabled>沉浸模式</el-button>
             <el-button type="primary" plain size="small" @click="goClassic">经典模式</el-button>
           </div>
+          <div class="sample-switch">
+            <el-radio-group v-model="sampleMode" size="small">
+              <el-radio-button label="random">随机双盲</el-radio-button>
+              <el-radio-button label="strategy">策略双盲</el-radio-button>
+            </el-radio-group>
+            <el-select
+              v-if="sampleMode === 'strategy'"
+              v-model="selectedStrategyKey"
+              size="small"
+              class="strategy-select"
+              placeholder="选择策略"
+              :loading="strategyLoading"
+            >
+              <el-option
+                v-for="strategy in practiceStrategies"
+                :key="strategy.strategy_key"
+                :label="strategy.name"
+                :value="strategy.strategy_key"
+              />
+            </el-select>
+          </div>
           <el-button
             :loading="starting"
-            :disabled="actionBusy"
+            :disabled="actionBusy || !canStartPractice"
             type="primary"
             @click="startSessionAndReset(true)"
           >
@@ -50,7 +71,7 @@
         <el-empty description="还没有进行中的练习，开始一局就能进入沉浸模式。">
           <el-button
             :loading="starting"
-            :disabled="actionBusy"
+            :disabled="actionBusy || !canStartPractice"
             type="primary"
             @click="startSessionAndReset(false)"
           >
@@ -140,6 +161,21 @@
               平仓
               <span class="shortcut-hint">C</span>
             </el-button>
+          </div>
+        </section>
+
+        <section v-if="session.sample_mode === 'strategy'" class="strategy-sample-card">
+          <div>
+            <span>策略双盲</span>
+            <strong>{{ session.strategy_name || '策略样本' }}</strong>
+          </div>
+          <div>
+            <span>入选日期</span>
+            <strong>{{ session.strategy_signal_date || session.current_trade_date || '--' }}</strong>
+          </div>
+          <div class="wide">
+            <span>入选原因</span>
+            <strong>{{ session.strategy_reason || '策略返回正向信号' }}</strong>
           </div>
         </section>
 
@@ -238,6 +274,26 @@
           </div>
         </section>
 
+        <section v-if="session.sample_mode === 'strategy'" class="drawer-section">
+          <header class="drawer-header">
+            <h3>策略入选信息</h3>
+          </header>
+          <div class="drawer-grid">
+            <div class="drawer-card">
+              <span>策略</span>
+              <strong>{{ session.strategy_name || '-' }}</strong>
+            </div>
+            <div class="drawer-card">
+              <span>入选 K 线日期</span>
+              <strong>{{ session.strategy_signal_date || '-' }}</strong>
+            </div>
+            <div class="drawer-card wide">
+              <span>入选原因</span>
+              <strong>{{ session.strategy_reason || '-' }}</strong>
+            </div>
+          </div>
+        </section>
+
         <section class="drawer-section">
           <header class="drawer-header">
             <h3>交易记录</h3>
@@ -276,12 +332,19 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import StockReviewChartPanel from '@/components/review/StockReviewChartPanel.vue'
+import { listStrategyDefinitions } from '@/api/modules/strategy-v2'
+import type { StrategyDefinition } from '@/types/strategy-v2'
 import { usePracticeSession } from './usePracticeSession'
 
 const route = useRoute()
 const router = useRouter()
 const detailsVisible = ref(false)
 const tradeAllocation = ref<0.25 | 0.5 | 1>(1)
+const sampleMode = ref<'random' | 'strategy'>('random')
+const selectedStrategyKey = ref('')
+const strategyDefinitions = ref<StrategyDefinition[]>([])
+const strategyLoading = ref(false)
+const practiceStrategyKeys = new Set(['double_cannon', 'turtle_trading'])
 const {
   session,
   starting,
@@ -296,6 +359,15 @@ const {
   trade,
   finishSession,
 } = usePracticeSession()
+
+const practiceStrategies = computed(() => {
+  return strategyDefinitions.value.filter((strategy) => (
+    practiceStrategyKeys.has(strategy.strategy_key)
+    && strategy.supported_scenes.includes('scan')
+  ))
+})
+
+const canStartPractice = computed(() => sampleMode.value === 'random' || Boolean(selectedStrategyKey.value))
 
 const currentPositionReturnPct = computed(() => {
   if (!session.value || session.value.position_shares <= 0 || !session.value.avg_cost || !session.value.latest_close) {
@@ -329,9 +401,24 @@ function goHistory(): void {
 }
 
 async function startSessionAndReset(forceConfirm = true): Promise<void> {
-  await startSession(forceConfirm)
+  await startSession(forceConfirm, {
+    sample_mode: sampleMode.value,
+    strategy_key: sampleMode.value === 'strategy' ? selectedStrategyKey.value : undefined,
+  })
   if (session.value) {
     await router.replace({ name: 'KlinePractice' })
+  }
+}
+
+async function loadPracticeStrategies(): Promise<void> {
+  strategyLoading.value = true
+  try {
+    strategyDefinitions.value = await listStrategyDefinitions()
+    if (!selectedStrategyKey.value && practiceStrategies.value.length > 0) {
+      selectedStrategyKey.value = practiceStrategies.value[0].strategy_key
+    }
+  } finally {
+    strategyLoading.value = false
   }
 }
 
@@ -436,6 +523,7 @@ watch(
 )
 
 onMounted(async () => {
+  await loadPracticeStrategies()
   await loadByRoute()
   window.addEventListener('keydown', handleKeydown)
 })
@@ -517,6 +605,21 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.sample-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.strategy-select {
+  width: 180px;
+}
+
 .status-ribbon {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -575,6 +678,35 @@ onBeforeUnmount(() => {
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.strategy-sample-card {
+  display: grid;
+  grid-template-columns: 1fr 0.8fr 2fr;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.10), rgba(34, 197, 94, 0.08));
+  border: 1px solid rgba(14, 165, 233, 0.16);
+}
+
+.strategy-sample-card div {
+  min-width: 0;
+}
+
+.strategy-sample-card span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.strategy-sample-card strong {
+  display: block;
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .allocation-switch,
@@ -683,7 +815,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1180px) {
-  .status-ribbon {
+  .status-ribbon,
+  .strategy-sample-card {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -695,6 +828,11 @@ onBeforeUnmount(() => {
 
   .topbar-actions {
     justify-content: flex-start;
+  }
+
+  .sample-switch,
+  .strategy-select {
+    width: 100%;
   }
 
   .chart-stage {
@@ -717,6 +855,7 @@ onBeforeUnmount(() => {
   }
 
   .status-ribbon,
+  .strategy-sample-card,
   .drawer-grid {
     grid-template-columns: 1fr;
   }

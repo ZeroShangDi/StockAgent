@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { practiceApi, type PracticeSessionState, type PracticeTradeRequest } from '@/api'
+import { practiceApi, type PracticeSessionState, type PracticeStartRequest, type PracticeTradeRequest } from '@/api'
 
 export function usePracticeSession() {
   const session = ref<PracticeSessionState | null>(null)
@@ -42,7 +42,7 @@ export function usePracticeSession() {
     }
   }
 
-  async function startSession(forceConfirm = true): Promise<void> {
+  async function startSession(forceConfirm = true, request: PracticeStartRequest = {}): Promise<void> {
     if (forceConfirm && hasActiveSession.value) {
       try {
         await ElMessageBox.confirm(
@@ -61,7 +61,7 @@ export function usePracticeSession() {
 
     starting.value = true
     try {
-      session.value = await practiceApi.startSession({})
+      session.value = await practiceApi.startSession(request)
       ElMessage.success('新的练习样本已就绪')
     } catch {
       ElMessage.error('重开失败，请稍后重试')

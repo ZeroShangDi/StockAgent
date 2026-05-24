@@ -56,6 +56,12 @@ export interface PracticeSessionState {
   can_buy: boolean
   can_sell: boolean
   is_revealed: boolean
+  sample_mode: 'random' | 'strategy'
+  strategy_key?: string | null
+  strategy_name?: string | null
+  strategy_signal_date?: string | null
+  strategy_reason?: string | null
+  strategy_meta?: Record<string, unknown>
   reveal?: PracticeReveal | null
   created_at?: string | null
   completed_at?: string | null
@@ -85,6 +91,8 @@ export interface PracticeStartRequest {
   init_bars?: number
   future_bars?: number
   initial_capital?: number
+  sample_mode?: 'random' | 'strategy'
+  strategy_key?: string
 }
 
 export interface PracticeTradeRequest {
