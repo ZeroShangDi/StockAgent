@@ -19,7 +19,8 @@ from common.models.strategy_v2 import (
     StrategyV2SceneTaskResponse,
     StrategyV2TaskStatus,
 )
-from core.managers import mongo_manager
+from core.managers import mongo_manager, notification_manager
+from core.protocols import StrategyAlert
 from src.strategy_v2.rules import (
     BUILTIN_STRATEGY_DEFINITIONS,
     build_rule_dictionary,
@@ -957,6 +958,100 @@ async def _remove_stock_from_pool(pool: Dict[str, Any], user_id: str, ts_code: s
     }
 
 
+def _normalize_alert_frequency(action_params: Dict[str, Any]) -> str:
+    frequency = str(action_params.get("alert_frequency") or "daily_once").strip().lower()
+    if frequency in {"daily_once", "once_then_disable", "unlimited"}:
+        return frequency
+    return "daily_once"
+
+
+def _market_today_key() -> str:
+    return datetime.now(MARKET_TIMEZONE).strftime("%Y%m%d")
+
+
+def _notify_stock_config(task: Dict[str, Any], entity_key: str) -> Dict[str, Any]:
+    params = task.get("params") or {}
+    stock_configs = params.get("stock_configs") or {}
+    current = stock_configs.get(entity_key) or {}
+    return dict(current) if isinstance(current, dict) else {}
+
+
+def _notify_skip_reason(task: Dict[str, Any], entity_key: str, frequency: str, today_key: str) -> Optional[str]:
+    config = _notify_stock_config(task, entity_key)
+    if config.get("enabled") is False:
+        return "通知跳过：股票级监听配置已停用"
+    if frequency == "unlimited":
+        return None
+    if frequency == "daily_once" and config.get("last_notified_date") == today_key:
+        return "通知跳过：今日已提醒过"
+    if frequency == "once_then_disable":
+        if config.get("frequency_disabled"):
+            return "通知跳过：提醒后关闭规则已生效"
+        if config.get("last_notified_date") == today_key:
+            return "通知跳过：今日已提醒过"
+    return None
+
+
+async def _record_notify_state(task: Dict[str, Any], entity_key: str, frequency: str, today_key: str) -> None:
+    params = dict(task.get("params") or {})
+    stock_configs = dict(params.get("stock_configs") or {})
+    current = dict(stock_configs.get(entity_key) or {})
+    current["ts_code"] = current.get("ts_code") or entity_key
+    current["last_notified_date"] = today_key
+    current["last_notified_at"] = _utc_now()
+    try:
+        current["notify_count"] = int(current.get("notify_count") or 0) + 1
+    except (TypeError, ValueError):
+        current["notify_count"] = 1
+    if frequency == "once_then_disable":
+        current["enabled"] = False
+        current["frequency_disabled"] = True
+        current["disabled_reason"] = "once_then_disable"
+    stock_configs[entity_key] = current
+    params["stock_configs"] = stock_configs
+    task["params"] = params
+    await mongo_manager.update_one(
+        TASK_COLLECTION,
+        {"task_id": task.get("task_id"), "user_id": task.get("user_id")},
+        {"$set": {"params": params, "updated_at": _utc_now()}},
+    )
+
+
+def _float_from_meta(meta: Dict[str, Any], keys: List[str], default: float = 0.0) -> float:
+    for key in keys:
+        try:
+            value = meta.get(key)
+            if value not in (None, ""):
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _build_notify_alert(task: Dict[str, Any], item_doc: Dict[str, Any], action: Dict[str, Any]) -> StrategyAlert:
+    meta = item_doc.get("meta") or {}
+    strategy_name = str(task.get("strategy_name") or task.get("strategy_key") or "Strategy V2")
+    action_label = str(action.get("label") or "通知")
+    reason = str(item_doc.get("reason") or "策略信号触发")
+    return StrategyAlert(
+        subscription_id=str(task.get("task_id") or ""),
+        strategy_id=f"strategy_v2:{task.get('task_id')}:{action.get('action_id') or 'notify'}:{item_doc.get('entity_key')}",
+        strategy_name=f"{strategy_name} · {action_label}",
+        ts_code=str(item_doc.get("entity_key") or ""),
+        stock_name=str(item_doc.get("entity_name") or item_doc.get("entity_key") or ""),
+        trigger_price=_float_from_meta(meta, ["current_price", "price", "close", "latest_price"]),
+        trigger_reason=f"信号 {item_doc.get('signal')}：{reason}",
+        extra_data={
+            "run_id": item_doc.get("run_id"),
+            "task_id": task.get("task_id"),
+            "action_id": action.get("action_id"),
+            "score": item_doc.get("score"),
+            "strategy_v2": True,
+        },
+        triggered_at=_utc_now(),
+    )
+
+
 async def _build_action_audits_for_item(
     task: Dict[str, Any],
     item_doc: Dict[str, Any],
@@ -1007,7 +1102,41 @@ async def _build_action_audits_for_item(
                 related_resource = {"pool_id": target_pool_id, "pool_name": target_pool.get("name")}
             action_results.append(result_summary)
         elif action_type == "notify":
-            result_summary = "命中通知动作，待接入通知发送执行"
+            action_params = action.get("params") or {}
+            entity_key = str(item_doc.get("entity_key") or "")
+            frequency = _normalize_alert_frequency(action_params)
+            today_key = _market_today_key()
+            channel_id = str(action_params.get("notification_channel_id") or "").strip() or None
+            related_resource = {
+                "notification_channel_id": channel_id,
+                "alert_frequency": frequency,
+            }
+            skip_reason = _notify_skip_reason(task, entity_key, frequency, today_key)
+            if skip_reason:
+                audit_status = "skipped"
+                result_summary = skip_reason
+            else:
+                alert = _build_notify_alert(task, item_doc, action)
+                try:
+                    sent = await notification_manager.send_alert(
+                        alert,
+                        user_id=str(task.get("user_id") or ""),
+                        channel_id=channel_id,
+                    )
+                except Exception as exc:
+                    logger.exception("Strategy V2 notify action failed: %s", exc)
+                    sent = False
+                    result_summary = f"通知发送失败：{exc}"
+                if sent:
+                    await _record_notify_state(task, entity_key, frequency, today_key)
+                    audit_status = "executed"
+                    result_summary = "通知已发送"
+                    related_resource["alert_id"] = alert.alert_id
+                elif not result_summary.startswith("通知发送失败"):
+                    audit_status = "failed"
+                    result_summary = "通知发送失败：通知渠道未配置、未启用或被通道限流"
+                else:
+                    audit_status = "failed"
             action_results.append(result_summary)
         elif action_type == "paper_trade":
             result_summary = "命中模拟成交动作，待接入交割单写入"
@@ -1376,6 +1505,7 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
         for item_doc in item_docs:
             item_doc["action_result"], audits = await _build_action_audits_for_item(task, item_doc, temp_pool)
             action_audit_docs.extend(audits)
+        notify_audits = [audit for audit in action_audit_docs if audit.get("action_type") == "notify"]
         await _append_run_log(
             run_id,
             task_id,
@@ -1387,6 +1517,9 @@ async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
                 "audit_count": len(action_audit_docs),
                 "temp_pool_id": temp_pool["pool_id"] if temp_pool else None,
                 "temp_pool_name": temp_pool["pool_name"] if temp_pool else None,
+                "notify_executed": sum(1 for audit in notify_audits if audit.get("status") == "executed"),
+                "notify_skipped": sum(1 for audit in notify_audits if audit.get("status") == "skipped"),
+                "notify_failed": sum(1 for audit in notify_audits if audit.get("status") == "failed"),
             },
         )
 

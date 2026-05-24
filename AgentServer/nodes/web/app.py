@@ -16,6 +16,7 @@ from core.settings import settings
 from core.managers import (
     redis_manager,
     mongo_manager,
+    notification_manager,
 )
 
 from .api import auth_router, user_router, task_router, stock_router, market_router, subscription_router, backtest_router, report_router, system_router, market_weather_router, stock_picker_router, practice_router, trade_review_router, assistant_router, strategy_v2_router
@@ -79,9 +80,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     按依赖顺序初始化和关闭管理器。
     """
     # ========== 启动 ==========
-    # 初始化必要的管理器 (Web 节点只需要 Redis 和 Mongo)
+    # 初始化必要的管理器 (Web 节点负责 API、调度 worker 与通知动作)
     await redis_manager.initialize()
     await mongo_manager.initialize()
+    await notification_manager.initialize()
     await ensure_default_admin_user()
     await start_strategy_v2_scheduler()
 
@@ -91,6 +93,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await stop_strategy_v2_scheduler()
 
     # ========== 关闭 ==========
+    await notification_manager.shutdown()
     await mongo_manager.shutdown()
     await redis_manager.shutdown()
 
