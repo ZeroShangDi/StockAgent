@@ -235,6 +235,111 @@ def _has_bullish_ma_alignment(candles: list[dict[str, Any]], short: int, mid: in
     return ma_short is not None and ma_mid is not None and ma_long is not None and ma_short > ma_mid > ma_long
 
 
+def _average_true_range(candles: list[dict[str, Any]], period: int) -> float | None:
+    if period <= 0 or len(candles) < period + 1:
+        return None
+    ranges: list[float] = []
+    recent = candles[-period:]
+    previous_rows = candles[-period - 1:-1]
+    for row, previous in zip(recent, previous_rows):
+        high = _to_float(row.get("high"))
+        low = _to_float(row.get("low"))
+        previous_close = _to_float(previous.get("close"))
+        if high <= 0 or low <= 0 or previous_close <= 0:
+            return None
+        ranges.append(max(high - low, abs(high - previous_close), abs(low - previous_close)))
+    return sum(ranges) / len(ranges) if ranges else None
+
+
+def evaluate_turtle_trading_from_candles(
+    candles: list[dict[str, Any]],
+    params: dict[str, Any] | None = None,
+) -> StrategyV2EvaluationResult:
+    """Evaluate a simplified Turtle/Donchian breakout strategy from ascending daily candles."""
+    params = params or {}
+    entry_window = max(_to_int(params.get("entry_window"), 20), 2)
+    exit_window = max(_to_int(params.get("exit_window"), 10), 2)
+    atr_period = max(_to_int(params.get("atr_period"), 20), 1)
+    use_close_confirmation = _is_enabled(params.get("use_close_confirmation", True))
+    require_volume_confirm = _is_enabled(params.get("require_volume_confirm", False))
+    volume_window = max(_to_int(params.get("volume_window"), 20), 2)
+    volume_multiplier = max(_to_float(params.get("volume_multiplier"), 1.2), 0)
+    min_atr_pct = max(_to_float(params.get("min_atr_pct"), 0), 0)
+    max_atr_pct = max(_to_float(params.get("max_atr_pct"), 0), 0)
+
+    rows = [
+        row for row in candles
+        if row.get("trade_date") and _to_float(row.get("close")) > 0
+    ]
+    rows.sort(key=lambda item: str(item.get("trade_date")))
+    required_rows = max(entry_window, exit_window, atr_period, volume_window) + 1
+    if len(rows) < required_rows:
+        return StrategyV2EvaluationResult(signal=0, reason="历史 K 线不足，无法计算海龟通道")
+
+    latest = rows[-1]
+    previous_rows = rows[:-1]
+    entry_rows = previous_rows[-entry_window:]
+    exit_rows = previous_rows[-exit_window:]
+    entry_high = max(_to_float(row.get("high")) for row in entry_rows)
+    exit_low = min(_to_float(row.get("low")) for row in exit_rows)
+    latest_close = _to_float(latest.get("close"))
+    latest_high = _to_float(latest.get("high"))
+    latest_low = _to_float(latest.get("low"))
+    atr = _average_true_range(rows, atr_period)
+    atr_pct = (atr / latest_close * 100) if atr and latest_close > 0 else None
+    meta = {
+        "latest_trade_date": str(latest.get("trade_date")),
+        "entry_window": entry_window,
+        "exit_window": exit_window,
+        "entry_channel_high": entry_high,
+        "exit_channel_low": exit_low,
+        "latest_close": latest_close,
+        "latest_high": latest_high,
+        "latest_low": latest_low,
+        "atr": atr,
+        "atr_pct": atr_pct,
+        "use_close_confirmation": use_close_confirmation,
+    }
+
+    breakdown_price = latest_close if use_close_confirmation else latest_low
+    if breakdown_price < exit_low:
+        return StrategyV2EvaluationResult(
+            signal=-1,
+            reason=f"价格跌破 {exit_window} 日退出通道，海龟退出信号触发",
+            meta=meta,
+        )
+
+    breakout_price = latest_close if use_close_confirmation else latest_high
+    if breakout_price <= entry_high:
+        return StrategyV2EvaluationResult(
+            signal=0,
+            reason=f"尚未突破 {entry_window} 日入场通道",
+            meta=meta,
+        )
+
+    if atr_pct is not None:
+        if min_atr_pct and atr_pct < min_atr_pct:
+            return StrategyV2EvaluationResult(signal=0, reason="突破成立但 ATR 波动率低于最小过滤阈值", meta=meta)
+        if max_atr_pct and atr_pct > max_atr_pct:
+            return StrategyV2EvaluationResult(signal=0, reason="突破成立但 ATR 波动率高于最大过滤阈值", meta=meta)
+
+    if require_volume_confirm:
+        volume_rows = previous_rows[-volume_window:]
+        avg_volume = sum(_to_float(row.get("vol")) for row in volume_rows) / len(volume_rows)
+        latest_volume = _to_float(latest.get("vol"))
+        meta["latest_volume"] = latest_volume
+        meta["avg_volume"] = avg_volume
+        meta["volume_multiplier"] = volume_multiplier
+        if avg_volume > 0 and latest_volume < avg_volume * volume_multiplier:
+            return StrategyV2EvaluationResult(signal=0, reason="突破成立但成交量未达到确认阈值", meta=meta)
+
+    return StrategyV2EvaluationResult(
+        signal=1,
+        reason=f"价格突破 {entry_window} 日入场通道，海龟买入信号触发",
+        meta=meta,
+    )
+
+
 def evaluate_double_cannon_from_candles(
     candles: list[dict[str, Any]],
     params: dict[str, Any] | None = None,
@@ -365,9 +470,56 @@ class DoubleCannonStrategy:
 double_cannon_strategy = DoubleCannonStrategy()
 
 
+class TurtleTradingStrategy:
+    """Simplified Turtle trading strategy using Donchian entry/exit channels."""
+
+    strategy_key = "turtle_trading"
+
+    async def evaluate(
+        self,
+        context: StrategyV2EvaluationContext,
+        params: dict[str, Any] | None = None,
+    ) -> StrategyV2EvaluationResult:
+        params = params or {}
+        _, ts_code = _extract_stock_codes(context)
+        if not ts_code:
+            return StrategyV2EvaluationResult(signal=0, reason="缺少股票代码，无法读取历史 K 线")
+
+        entry_window = max(_to_int(params.get("entry_window"), 20), 2)
+        exit_window = max(_to_int(params.get("exit_window"), 10), 2)
+        atr_period = max(_to_int(params.get("atr_period"), 20), 1)
+        volume_window = max(_to_int(params.get("volume_window"), 20), 2)
+        load_limit = max(entry_window, exit_window, atr_period, volume_window) + 5
+        records = await mongo_manager.find_many(
+            "stock_daily",
+            {"ts_code": ts_code},
+            projection={
+                "_id": 0,
+                "trade_date": 1,
+                "open": 1,
+                "high": 1,
+                "low": 1,
+                "close": 1,
+                "pre_close": 1,
+                "pct_chg": 1,
+                "vol": 1,
+            },
+            sort=[("trade_date", -1)],
+            limit=load_limit,
+        )
+        if not records:
+            return StrategyV2EvaluationResult(signal=0, reason="未找到股票历史 K 线")
+        records.sort(key=lambda item: str(item.get("trade_date")))
+        return evaluate_turtle_trading_from_candles(records, params=params)
+
+
+turtle_trading_strategy = TurtleTradingStrategy()
+
+
 STRATEGY_V2_EVALUATORS = {
     OneLineStockPickerStrategy.strategy_key: one_line_stock_picker_strategy,
     DoubleCannonStrategy.strategy_key: double_cannon_strategy,
+    TurtleTradingStrategy.strategy_key: turtle_trading_strategy,
 }
 
 
