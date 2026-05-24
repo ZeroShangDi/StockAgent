@@ -1743,7 +1743,7 @@ async def add_stock_to_strategy_v2_task(
     ts_code = body.ts_code.upper()
     if not re.match(r"^\d{6}\.(SH|SZ|BJ)$", ts_code):
         raise HTTPException(status_code=400, detail="股票代码格式不正确")
-    await _validate_stock_exists(ts_code)
+    stock = await _validate_stock_exists(ts_code)
 
     ts_codes = [str(item).upper() for item in scope.get("ts_codes", []) or []]
     if ts_code not in ts_codes:
@@ -1757,9 +1757,12 @@ async def add_stock_to_strategy_v2_task(
         current_config = dict(stock_configs.get(ts_code) or {})
         current_config.update(_normalize_stock_config(body.config))
         current_config["ts_code"] = ts_code
+        current_config["name"] = stock.get("name") or current_config.get("name") or ts_code
         stock_configs[ts_code] = current_config
     else:
-        stock_configs.setdefault(ts_code, _default_stock_config(task, ts_code, body.config))
+        current_config = stock_configs.get(ts_code) or _default_stock_config(task, ts_code, body.config)
+        current_config["name"] = stock.get("name") or current_config.get("name") or ts_code
+        stock_configs[ts_code] = current_config
     params["stock_configs"] = stock_configs
 
     now = datetime.now(UTC)
@@ -1806,6 +1809,48 @@ async def update_strategy_v2_task_stock_config(
         {"task_id": task_id, "user_id": user_id},
         {
             "$set": {
+                "params": params,
+                "updated_at": datetime.now(UTC),
+            }
+        },
+    )
+    updated = await _get_user_task_or_404(task_id, user_id)
+    return StrategyV2SceneTaskResponse(**updated)
+
+
+@router.delete("/tasks/{task_id}/stocks/{ts_code}", response_model=StrategyV2SceneTaskResponse)
+async def remove_stock_from_strategy_v2_task(
+    task_id: str = Path(...),
+    ts_code: str = Path(..., pattern=r"^\d{6}\.(SH|SZ|BJ)$"),
+    user_id: str = Depends(get_current_user_id),
+) -> StrategyV2SceneTaskResponse:
+    """Remove a stock and its per-stock config from a V2 custom-stock listener task."""
+    task = await _get_user_task_or_404(task_id, user_id)
+    _ensure_listen_task(task)
+    scope = _task_scope(task)
+    if scope.get("scope_type") != "custom_stock_list":
+        raise HTTPException(status_code=400, detail="移除股票只支持自定义股票列表监听任务")
+
+    normalized = ts_code.upper()
+    ts_codes = [str(item).upper() for item in scope.get("ts_codes", []) or [] if item]
+    if normalized not in ts_codes:
+        raise HTTPException(status_code=404, detail=f"{normalized} 不在该任务监听列表中")
+
+    scope["ts_codes"] = [item for item in ts_codes if item != normalized]
+    scope["summary"] = f"自定义股票列表 · {len(scope['ts_codes'])} 只"
+
+    params = dict(task.get("params") or {})
+    stock_configs = dict(params.get("stock_configs") or {})
+    stock_configs.pop(normalized, None)
+    params["stock_configs"] = stock_configs
+
+    await mongo_manager.update_one(
+        TASK_COLLECTION,
+        {"task_id": task_id, "user_id": user_id},
+        {
+            "$set": {
+                "target_scope": scope,
+                "target_scope_summary": scope["summary"],
                 "params": params,
                 "updated_at": datetime.now(UTC),
             }

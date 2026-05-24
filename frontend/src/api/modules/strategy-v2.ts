@@ -79,6 +79,10 @@ export const strategyV2Api = {
       config,
     })
   },
+
+  removeStockFromTask(taskId: string, tsCode: string): Promise<StrategySceneTask> {
+    return api.delete(`/strategy-v2/tasks/${taskId}/stocks/${tsCode.toUpperCase()}`)
+  },
 }
 
 export async function listStrategyDefinitions(): Promise<StrategyDefinition[]> {
@@ -147,4 +151,11 @@ export async function updateStrategySceneTaskStockConfig(
   config: Record<string, unknown>,
 ): Promise<StrategySceneTask> {
   return strategyV2Api.updateTaskStockConfig(taskId, tsCode, config)
+}
+
+export async function removeStockFromStrategySceneTask(
+  taskId: string,
+  tsCode: string,
+): Promise<StrategySceneTask> {
+  return strategyV2Api.removeStockFromTask(taskId, tsCode)
 }

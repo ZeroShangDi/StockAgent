@@ -149,6 +149,85 @@
           <el-empty v-else description="当前任务没有动作规则" :image-size="64" />
         </article>
 
+        <article v-if="isCustomStockListenTask" class="detail-card span-2">
+          <div class="card-head">
+            <div>
+              <h2>监听股票</h2>
+              <p class="card-subtitle">沿用旧市场监听的股票列表逻辑，股票保存在当前任务下，可单独维护股票级参数。</p>
+            </div>
+            <div class="stock-add-box">
+              <el-select
+                v-model="selectedStock"
+                filterable
+                remote
+                clearable
+                reserve-keyword
+                placeholder="搜索代码或名称添加"
+                :remote-method="searchStocks"
+                :loading="stockSearchLoading"
+                size="small"
+                class="stock-search-select"
+              >
+                <el-option
+                  v-for="stock in stockOptions"
+                  :key="stock.ts_code"
+                  :label="`${stock.name} (${stock.ts_code})`"
+                  :value="stock.ts_code"
+                >
+                  <div class="stock-option">
+                    <span>{{ stock.name }}</span>
+                    <small>{{ stock.ts_code }}</small>
+                  </div>
+                </el-option>
+              </el-select>
+              <el-button size="small" type="primary" :loading="stockAdding" :disabled="!selectedStock" @click="addSelectedStock">
+                添加
+              </el-button>
+            </div>
+          </div>
+          <el-table v-if="listenStocks.length > 0" :data="listenStocks" size="small" stripe>
+            <el-table-column label="股票" min-width="180">
+              <template #default="{ row }">
+                <div class="stock-name-cell">
+                  <strong>{{ row.name || row.ts_code }}</strong>
+                  <small>{{ row.ts_code }}</small>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="启用" width="90">
+              <template #default="{ row }">
+                <el-switch
+                  :model-value="row.config.enabled !== false"
+                  size="small"
+                  :loading="stockConfigSaving === row.ts_code"
+                  @change="(value) => toggleStockEnabled(row.ts_code, Boolean(value))"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="股票级参数" min-width="260" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ stockConfigSummary(row.config) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="备注" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.config.note || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="170" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" text type="primary" @click="openStockConfig(row)">
+                  配置
+                </el-button>
+                <el-button size="small" text type="danger" @click="removeListenStock(row)">
+                  移除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-else description="暂无监听股票，可从这里搜索添加，也可从股票详情、自选股、股池或交割单加入" :image-size="64" />
+        </article>
+
         <article class="detail-card span-2">
           <div class="card-head">
             <h2>运行记录</h2>
@@ -199,6 +278,61 @@
         </article>
       </section>
     </template>
+
+    <el-dialog
+      v-model="stockConfigDialogVisible"
+      :title="editingStock ? `配置监听股票：${editingStock.name || editingStock.ts_code}` : '配置监听股票'"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <el-form v-if="editingStock" label-position="top" class="stock-config-form">
+        <el-form-item label="是否启用">
+          <el-switch v-model="editingStockConfig.enabled" active-text="启用" inactive-text="关闭" />
+        </el-form-item>
+        <el-row :gutter="12">
+          <el-col v-for="param in editableStockParamSchema" :key="param.key" :span="12">
+            <el-form-item :label="param.label">
+              <el-select
+                v-if="param.type === 'select' && param.options"
+                v-model="editingStockConfig[param.key]"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="option in param.options"
+                  :key="String(option.value)"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
+              <el-switch
+                v-else-if="param.type === 'boolean'"
+                v-model="editingStockConfig[param.key]"
+                active-text="是"
+                inactive-text="否"
+              />
+              <el-input-number
+                v-else-if="param.type === 'number' || param.type === 'float'"
+                v-model="editingStockConfig[param.key]"
+                :precision="param.type === 'float' ? 4 : 0"
+                :step="param.type === 'float' ? 0.1 : 1"
+                :controls="false"
+                style="width: 100%"
+              />
+              <el-input v-else v-model="editingStockConfig[param.key]" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="备注">
+          <el-input v-model="editingStockConfig.note" type="textarea" :rows="3" placeholder="记录这只股票为什么加入监听，或参数特殊原因" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="stockConfigDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="stockConfigSaving === editingStock?.ts_code" @click="saveStockConfig">
+          保存配置
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -208,21 +342,29 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
+  addStockToStrategySceneTask,
   cancelTaskRun,
   deleteStrategySceneTask,
   getStrategySceneTask,
+  listStrategyDefinitions,
   listStrategySceneTasks,
   listTaskRuns,
+  removeStockFromStrategySceneTask,
   retryTaskRun,
   runStrategySceneTask,
+  updateStrategySceneTaskStockConfig,
 } from '@/api/modules/strategy-v2'
+import { stockApi } from '@/api/modules/stock'
 import {
   STRATEGY_ACTION_LABELS,
   STRATEGY_SCENE_LABELS,
   STRATEGY_TASK_STATUS_LABELS,
 } from '@/mocks/strategyV2'
+import type { StockBasic } from '@/api/types'
 import type {
+  StrategyDefinition,
   StrategyActionType,
+  StrategyParamSchemaItem,
   StrategyRunStatus,
   StrategySceneTask,
   StrategySceneType,
@@ -235,8 +377,24 @@ const router = useRouter()
 
 const task = ref<StrategySceneTask | null>(null)
 const runs = ref<StrategyTaskRun[]>([])
+const strategyDefinitions = ref<StrategyDefinition[]>([])
 const loading = ref(false)
 const running = ref(false)
+const selectedStock = ref('')
+const stockOptions = ref<StockBasic[]>([])
+const stockSearchLoading = ref(false)
+const stockAdding = ref(false)
+const stockConfigSaving = ref('')
+const stockConfigDialogVisible = ref(false)
+const editingStock = ref<ListenStockRow | null>(null)
+const editingStockConfig = ref<Record<string, any>>({})
+
+interface ListenStockRow {
+  ts_code: string
+  code: string
+  name: string
+  config: Record<string, any>
+}
 
 const paramEntries = computed(() => {
   if (!task.value) return []
@@ -248,10 +406,45 @@ const paramEntries = computed(() => {
 const hasRunningRun = computed(() => {
   return Boolean(task.value?.active_run_id || runs.value.some((run) => run.run_status === 'running'))
 })
+const isCustomStockListenTask = computed(() => {
+  return task.value?.scene_type === 'listen' && task.value.target_scope?.scope_type === 'custom_stock_list'
+})
+const currentStrategyDefinition = computed(() => {
+  if (!task.value) return null
+  return strategyDefinitions.value.find((item) => item.strategy_key === task.value?.strategy_key) || null
+})
+const editableStockParamSchema = computed<StrategyParamSchemaItem[]>(() => {
+  return (currentStrategyDefinition.value?.param_schema || []).filter((item) => !['stock_configs', 'query_text', 'cache_ttl_days'].includes(item.key))
+})
+const listenStocks = computed<ListenStockRow[]>(() => {
+  const scope = task.value?.target_scope
+  const tsCodes = scope?.scope_type === 'custom_stock_list' ? (scope.ts_codes || []) : []
+  const stockConfigs = ((task.value?.params?.stock_configs || {}) as Record<string, Record<string, any>>)
+  return tsCodes.map((tsCode) => {
+    const config = stockConfigs[tsCode] || {}
+    return {
+      ts_code: tsCode,
+      code: tsCode.split('.')[0],
+      name: String(config.name || config.stock_name || tsCode),
+      config,
+    }
+  })
+})
 
 onMounted(async () => {
+  await loadStrategyDefinitions()
   await loadTask()
 })
+
+async function loadStrategyDefinitions(): Promise<void> {
+  try {
+    strategyDefinitions.value = await listStrategyDefinitions()
+  }
+  catch (error) {
+    console.error(error)
+    strategyDefinitions.value = []
+  }
+}
 
 async function loadTask(): Promise<void> {
   const taskId = String(route.params.taskId || '').trim()
@@ -382,6 +575,129 @@ async function deleteCurrentTask(): Promise<void> {
   }
 }
 
+async function searchStocks(query: string): Promise<void> {
+  if (!query.trim()) {
+    stockOptions.value = []
+    return
+  }
+  stockSearchLoading.value = true
+  try {
+    stockOptions.value = await stockApi.searchStocks(query.trim(), 10)
+  }
+  catch (error) {
+    console.error(error)
+    stockOptions.value = []
+  }
+  finally {
+    stockSearchLoading.value = false
+  }
+}
+
+async function addSelectedStock(): Promise<void> {
+  if (!task.value || !selectedStock.value) return
+  stockAdding.value = true
+  try {
+    const updated = await addStockToStrategySceneTask(task.value.task_id, selectedStock.value)
+    task.value = updated
+    selectedStock.value = ''
+    stockOptions.value = []
+    ElMessage.success('监听股票已添加')
+  }
+  catch (error) {
+    console.error(error)
+    ElMessage.error('添加监听股票失败')
+  }
+  finally {
+    stockAdding.value = false
+  }
+}
+
+function openStockConfig(row: ListenStockRow): void {
+  editingStock.value = row
+  editingStockConfig.value = {
+    enabled: row.config.enabled ?? true,
+    note: row.config.note || '',
+  }
+  for (const param of editableStockParamSchema.value) {
+    editingStockConfig.value[param.key] = row.config[param.key] ?? param.default
+  }
+  stockConfigDialogVisible.value = true
+}
+
+async function toggleStockEnabled(tsCode: string, enabled: boolean): Promise<void> {
+  const row = listenStocks.value.find((item) => item.ts_code === tsCode)
+  if (!task.value || !row) return
+  stockConfigSaving.value = tsCode
+  try {
+    const updated = await updateStrategySceneTaskStockConfig(task.value.task_id, tsCode, {
+      ...row.config,
+      enabled,
+    })
+    task.value = updated
+    ElMessage.success(enabled ? '已启用监听' : '已关闭监听')
+  }
+  catch (error) {
+    console.error(error)
+    ElMessage.error('更新监听状态失败')
+  }
+  finally {
+    stockConfigSaving.value = ''
+  }
+}
+
+async function saveStockConfig(): Promise<void> {
+  if (!task.value || !editingStock.value) return
+  const tsCode = editingStock.value.ts_code
+  stockConfigSaving.value = tsCode
+  try {
+    const updated = await updateStrategySceneTaskStockConfig(task.value.task_id, tsCode, editingStockConfig.value)
+    task.value = updated
+    stockConfigDialogVisible.value = false
+    ElMessage.success('股票级参数已保存')
+  }
+  catch (error) {
+    console.error(error)
+    ElMessage.error('保存股票级参数失败')
+  }
+  finally {
+    stockConfigSaving.value = ''
+  }
+}
+
+async function removeListenStock(row: ListenStockRow): Promise<void> {
+  if (!task.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确认从「${task.value.name}」中移除 ${row.name || row.ts_code} 吗？股票级参数也会一并删除。`,
+      '移除监听股票',
+      {
+        type: 'warning',
+        confirmButtonText: '确认移除',
+        cancelButtonText: '取消',
+      },
+    )
+    const updated = await removeStockFromStrategySceneTask(task.value.task_id, row.ts_code)
+    task.value = updated
+    ElMessage.success('监听股票已移除')
+  }
+  catch (error) {
+    if (error === 'cancel') return
+    console.error(error)
+    ElMessage.error('移除监听股票失败')
+  }
+}
+
+function stockConfigSummary(config: Record<string, any>): string {
+  const entries = editableStockParamSchema.value
+    .map((param) => {
+      const value = config[param.key]
+      if (value === undefined || value === null || value === '') return ''
+      return `${param.label}: ${formatValue(value)}`
+    })
+    .filter(Boolean)
+  return entries.length > 0 ? entries.join('；') : '使用任务默认参数'
+}
+
 function openRun(runId: string): void {
   router.push({ name: 'StrategyRunDetailV2', params: { runId } })
 }
@@ -506,6 +822,13 @@ function formatJson(value: unknown): string {
   font-size: 16px;
 }
 
+.card-subtitle {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .summary-card p {
   margin: 8px 0 0;
   color: #64748b;
@@ -609,10 +932,51 @@ function formatJson(value: unknown): string {
   word-break: break-all;
 }
 
+.stock-add-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 320px;
+}
+
+.stock-search-select {
+  width: 240px;
+}
+
+.stock-option,
+.stock-name-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stock-option small,
+.stock-name-cell small {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.stock-name-cell {
+  justify-content: flex-start;
+  align-items: baseline;
+}
+
+.stock-config-form {
+  padding-top: 4px;
+}
+
 @media (max-width: 1080px) {
   .summary-main,
-  .detail-toolbar {
+  .detail-toolbar,
+  .card-head {
     flex-direction: column;
+  }
+
+  .stock-add-box,
+  .stock-search-select {
+    width: 100%;
+    min-width: 0;
   }
 
   .metric-grid,
