@@ -34,6 +34,13 @@ class TradeReviewService:
     BATCH_COLLECTION = "trade_review_import_batches"
     RECORD_COLLECTION = "trade_review_records"
     POSITION_COLLECTION = "trade_review_positions"
+    MAX_GROUPS_PER_USER = 500
+    MAX_POSITIONS_PER_GROUP = 10000
+    MAX_TRADE_RECORDS_FOR_ANALYSIS = 50000
+    MAX_IMPORT_DEDUPE_RECORDS = 100000
+    MAX_REVIEW_NAV_RECORDS = 10000
+    MAX_RELATED_STOCK_RECORDS = 500
+    MAX_DAILY_ROWS_PER_STOCK = 6000
 
     REQUIRED_HEADERS = [
         "日期",
@@ -160,6 +167,7 @@ class TradeReviewService:
             "stock_basic",
             {"symbol": {"$in": list(sorted(set(codes)))}},
             projection={"symbol": 1, "ts_code": 1},
+            limit=len(set(codes)),
         )
         return {
             str(doc.get("symbol", "")).zfill(6): str(doc.get("ts_code", "")).upper()
@@ -184,6 +192,7 @@ class TradeReviewService:
             self.GROUP_COLLECTION,
             {"user_id": user_id},
             sort=[("updated_at", -1)],
+            limit=self.MAX_GROUPS_PER_USER,
         )
         return [self._serialize_group(item) for item in groups]
 
@@ -239,7 +248,7 @@ class TradeReviewService:
                 }
             },
         ]
-        docs = await mongo_manager.aggregate("stock_daily", pipeline)
+        docs = await mongo_manager.aggregate("stock_daily", pipeline, limit=len(set(ts_codes)))
         return {
             str(doc.get("_id")): {
                 "latest_price": float(doc.get("close") or 0),
@@ -256,6 +265,7 @@ class TradeReviewService:
             "stock_basic",
             {"ts_code": {"$in": list(sorted(set(ts_codes)))}},
             projection={"ts_code": 1, "name": 1, "market": 1},
+            limit=len(set(ts_codes)),
         )
         return {
             str(doc.get("ts_code")): {
@@ -297,6 +307,19 @@ class TradeReviewService:
         if not group:
             raise ValueError("交割单分组不存在")
 
+        trade_record_count = await mongo_manager.count(
+            self.RECORD_COLLECTION,
+            {
+                "group_id": group_id,
+                "user_id": user_id,
+                "is_trade_record": True,
+                "side": {"$in": ["buy", "sell"]},
+                "ts_code": {"$ne": ""},
+            },
+        )
+        if trade_record_count > self.MAX_TRADE_RECORDS_FOR_ANALYSIS:
+            raise ValueError("交割单交易记录过多，请先按账户或时间拆分后再重建持仓")
+
         trade_records = await mongo_manager.find_many(
             self.RECORD_COLLECTION,
             {
@@ -306,7 +329,23 @@ class TradeReviewService:
                 "side": {"$in": ["buy", "sell"]},
                 "ts_code": {"$ne": ""},
             },
+            projection={
+                "ts_code": 1,
+                "code": 1,
+                "security_name": 1,
+                "trade_date": 1,
+                "side": 1,
+                "quantity": 1,
+                "amount": 1,
+                "commission": 1,
+                "stamp_tax": 1,
+                "other_fee": 1,
+                "transfer_fee": 1,
+                "clearing_fee": 1,
+                "_id": 0,
+            },
             sort=[("trade_date", 1), ("row_no", 1)],
+            limit=self.MAX_TRADE_RECORDS_FOR_ANALYSIS,
         )
 
         buckets: Dict[str, Dict[str, Any]] = {}
@@ -458,6 +497,7 @@ class TradeReviewService:
             self.POSITION_COLLECTION,
             {"group_id": group_id, "user_id": user_id},
             sort=[("market_value", -1), ("unrealized_pnl_pct", -1)],
+            limit=self.MAX_POSITIONS_PER_GROUP,
         )
         if not docs and int(group.get("trade_record_count", 0) or 0) > 0:
             return await self.rebuild_positions(user_id=user_id, group_id=group_id)
@@ -564,6 +604,10 @@ class TradeReviewService:
             seen_keys.add(item["dedupe_key"])
             deduped_prepared_records.append(item)
 
+        existing_count = await mongo_manager.count(self.RECORD_COLLECTION, {"group_id": group_id})
+        if existing_count > self.MAX_IMPORT_DEDUPE_RECORDS:
+            raise ValueError("交割单历史记录过多，请先拆分交割单分组后再继续导入")
+
         existing_docs = await mongo_manager.find_many(
             self.RECORD_COLLECTION,
             {"group_id": group_id},
@@ -574,6 +618,7 @@ class TradeReviewService:
                 "code": 1,
                 "trade_date": 1,
             },
+            limit=self.MAX_IMPORT_DEDUPE_RECORDS,
         )
         existing_exact_keys = set()
         existing_legacy_counts = defaultdict(int)
@@ -686,6 +731,41 @@ class TradeReviewService:
         records = await mongo_manager.find_many(
             self.RECORD_COLLECTION,
             filter_query,
+            projection={
+                "record_id": 1,
+                "group_id": 1,
+                "batch_id": 1,
+                "trade_date": 1,
+                "business_type": 1,
+                "shareholder_account": 1,
+                "code": 1,
+                "ts_code": 1,
+                "security_name": 1,
+                "quantity": 1,
+                "price": 1,
+                "commission": 1,
+                "stamp_tax": 1,
+                "other_fee": 1,
+                "transfer_fee": 1,
+                "clearing_fee": 1,
+                "amount": 1,
+                "balance": 1,
+                "currency": 1,
+                "remark": 1,
+                "source_label": 1,
+                "category": 1,
+                "side": 1,
+                "security_type": 1,
+                "is_trade_record": 1,
+                "reviewed": 1,
+                "operation_reason": 1,
+                "mindset": 1,
+                "market_context": 1,
+                "result_reasons": 1,
+                "updated_at": 1,
+                "created_at": 1,
+                "_id": 0,
+            },
             sort=[("trade_date", -1), ("row_no", -1)],
             skip=skip,
             limit=limit,
@@ -780,10 +860,38 @@ class TradeReviewService:
         return self._serialize_record(updated or {**record, **payload})
 
     async def get_stats(self, *, user_id: str, group_id: str) -> Dict[str, Any]:
+        record_count = await mongo_manager.count(
+            self.RECORD_COLLECTION,
+            {"group_id": group_id, "user_id": user_id},
+        )
+        if record_count > self.MAX_TRADE_RECORDS_FOR_ANALYSIS:
+            raise ValueError("交割单记录过多，请先拆分交割单后再进行统计分析")
+
         records = await mongo_manager.find_many(
             self.RECORD_COLLECTION,
             {"group_id": group_id, "user_id": user_id},
+            projection={
+                "trade_date": 1,
+                "category": 1,
+                "business_type": 1,
+                "security_name": 1,
+                "code": 1,
+                "ts_code": 1,
+                "is_trade_record": 1,
+                "reviewed": 1,
+                "side": 1,
+                "quantity": 1,
+                "amount": 1,
+                "commission": 1,
+                "stamp_tax": 1,
+                "other_fee": 1,
+                "transfer_fee": 1,
+                "clearing_fee": 1,
+                "result_reasons": 1,
+                "_id": 0,
+            },
             sort=[("trade_date", 1)],
+            limit=self.MAX_TRADE_RECORDS_FOR_ANALYSIS,
         )
         total_records = len(records)
         trade_records = [item for item in records if item.get("is_trade_record")]
@@ -971,6 +1079,7 @@ class TradeReviewService:
             navigation_filter,
             sort=[("trade_date", 1), ("row_no", 1)],
             projection={"record_id": 1},
+            limit=self.MAX_REVIEW_NAV_RECORDS,
         )
         navigation_ids = [str(item.get("record_id")) for item in navigation_records if item.get("record_id")]
         fallback_anchor = anchor_record_id or record_id
@@ -993,6 +1102,40 @@ class TradeReviewService:
                 "user_id": user_id,
             },
             sort=[("trade_date", 1), ("row_no", 1)],
+            projection={
+                "record_id": 1,
+                "trade_date": 1,
+                "business_type": 1,
+                "shareholder_account": 1,
+                "code": 1,
+                "ts_code": 1,
+                "security_name": 1,
+                "quantity": 1,
+                "price": 1,
+                "commission": 1,
+                "stamp_tax": 1,
+                "other_fee": 1,
+                "transfer_fee": 1,
+                "clearing_fee": 1,
+                "amount": 1,
+                "balance": 1,
+                "currency": 1,
+                "remark": 1,
+                "source_label": 1,
+                "category": 1,
+                "side": 1,
+                "security_type": 1,
+                "is_trade_record": 1,
+                "reviewed": 1,
+                "operation_reason": 1,
+                "mindset": 1,
+                "market_context": 1,
+                "result_reasons": 1,
+                "updated_at": 1,
+                "created_at": 1,
+                "_id": 0,
+            },
+            limit=self.MAX_RELATED_STOCK_RECORDS,
         )
 
         markers = [
@@ -1031,7 +1174,9 @@ class TradeReviewService:
                 daily = await mongo_manager.find_many(
                     "stock_daily",
                     {"ts_code": ts_code},
+                    projection={"_id": 0},
                     sort=[("trade_date", 1)],
+                    limit=self.MAX_DAILY_ROWS_PER_STOCK,
                 )
                 if not daily:
                     load_error = "本地没有该股票的日线数据"
