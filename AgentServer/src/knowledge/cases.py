@@ -309,12 +309,14 @@ class CasesKnowledgeBase:
     async def get_recent_cases(
         self,
         days: int = 30,
+        limit: int = 200,
     ) -> List[Dict[str, Any]]:
         """
         获取近期案例
         
         Args:
             days: 回溯天数
+            limit: 最大返回数量，避免案例库长期积累后一次性加载过多
         
         Returns:
             案例列表
@@ -325,9 +327,9 @@ class CasesKnowledgeBase:
         
         cursor = db[self.COLLECTION].find({
             "trade_date": {"$gte": cutoff_date},
-        }).sort("trade_date", -1)
-        
-        cases = await cursor.to_list(None)
+        }).sort("trade_date", -1).limit(limit)
+
+        cases = await cursor.to_list(limit)
         
         for case in cases:
             case["_id"] = str(case["_id"])

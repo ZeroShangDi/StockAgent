@@ -42,8 +42,9 @@ async def get_market_overview(trade_date: Optional[str] = None) -> dict:
         
         # 1. 获取指数数据
         indices = await db["review_index"].find(
-            {"trade_date": trade_date}
-        ).to_list(None)
+            {"trade_date": trade_date},
+            projection={"ts_code": 1, "close": 1, "change": 1, "pct_chg": 1, "vol": 1, "amount": 1, "_id": 0},
+        ).limit(20).to_list(20)
         
         index_names = {
             "000001.SH": "上证指数",

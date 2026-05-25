@@ -59,7 +59,7 @@ async def get_market_sentiment(
         # 2. 获取连板数据
         step_data = await db["review_limit_step"].find({
             "trade_date": trade_date
-        }).to_list(None)
+        }, projection={"step": 1, "_id": 0}).limit(6000).to_list(6000)
         
         first_board = sum(1 for s in step_data if s.get("step") == 1)
         continuous_board = sum(1 for s in step_data if s.get("step", 1) > 1)
@@ -69,7 +69,7 @@ async def get_market_sentiment(
         limit_list = await db["review_limit"].find({
             "trade_date": trade_date,
             "limit": "U"
-        }).to_list(None)
+        }, projection={"open_times": 1, "_id": 0}).limit(6000).to_list(6000)
         
         broken_count = sum(1 for item in limit_list if (item.get("open_times") or 0) > 0)
         broken_rate = round(broken_count / limit_up_count * 100, 1) if limit_up_count > 0 else 0
@@ -220,7 +220,7 @@ async def get_sentiment_history(
             {"$limit": limit},
         ]
         
-        limit_stats = await db["review_limit"].aggregate(pipeline).to_list(None)
+        limit_stats = await db["review_limit"].aggregate(pipeline, allowDiskUse=True).to_list(limit)
         
         # 查询连板数据
         result = []
@@ -229,7 +229,7 @@ async def get_sentiment_history(
             
             step_data = await db["review_limit_step"].find({
                 "trade_date": trade_date
-            }).to_list(None)
+            }, projection={"step": 1, "_id": 0}).limit(6000).to_list(6000)
             
             first_board = sum(1 for s in step_data if s.get("step") == 1)
             max_step = max((s.get("step", 1) for s in step_data), default=0)

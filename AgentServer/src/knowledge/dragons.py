@@ -164,6 +164,7 @@ class DragonsKnowledgeBase:
         sector: str,
         days: int = 90,
         role: Optional[str] = None,
+        limit: int = 200,
     ) -> List[Dict[str, Any]]:
         """
         获取板块的历史龙头
@@ -188,8 +189,8 @@ class DragonsKnowledgeBase:
         if role:
             query["role"] = role
         
-        cursor = db[self.COLLECTION].find(query).sort("start_date", -1)
-        records = await cursor.to_list(None)
+        cursor = db[self.COLLECTION].find(query).sort("start_date", -1).limit(limit)
+        records = await cursor.to_list(limit)
         
         for r in records:
             r["_id"] = str(r["_id"])
@@ -200,6 +201,7 @@ class DragonsKnowledgeBase:
         self,
         days: int = 30,
         min_step: int = 2,
+        limit: int = 200,
     ) -> List[Dict[str, Any]]:
         """
         获取近期龙头股
@@ -218,9 +220,9 @@ class DragonsKnowledgeBase:
         cursor = db[self.COLLECTION].find({
             "start_date": {"$gte": cutoff_date},
             "max_step": {"$gte": min_step},
-        }).sort([("max_step", -1), ("start_date", -1)])
-        
-        records = await cursor.to_list(None)
+        }).sort([("max_step", -1), ("start_date", -1)]).limit(limit)
+
+        records = await cursor.to_list(limit)
         
         for r in records:
             r["_id"] = str(r["_id"])
@@ -297,7 +299,7 @@ class DragonsKnowledgeBase:
         step_data = await db["review_limit_step"].find({
             "trade_date": trade_date,
             "step": {"$gte": 3},
-        }).to_list(None)
+        }).limit(1000).to_list(1000)
         
         if not step_data:
             return 0

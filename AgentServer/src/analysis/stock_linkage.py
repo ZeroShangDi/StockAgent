@@ -131,7 +131,16 @@ class StockLinkageAnalyzer:
         limit_stocks = await db["review_limit"].find({
             "trade_date": trade_date,
             "limit": "U",
-        }).to_list(None)
+        }, projection={
+            "ts_code": 1,
+            "name": 1,
+            "first_time": 1,
+            "close": 1,
+            "pct_chg": 1,
+            "amount": 1,
+            "turnover_rate": 1,
+            "_id": 0,
+        }).limit(6000).to_list(6000)
         
         # 过滤出板块内涨停股
         sector_limit_stocks = [

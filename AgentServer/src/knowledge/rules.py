@@ -140,6 +140,7 @@ class RulesKnowledgeBase:
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
         enabled_only: bool = True,
+        limit: int = 500,
     ) -> List[Dict[str, Any]]:
         """
         获取规则列表
@@ -148,6 +149,7 @@ class RulesKnowledgeBase:
             category: 规则分类
             tags: 标签过滤
             enabled_only: 只返回启用的规则
+            limit: 最大返回数量，避免规则库异常膨胀后无界加载
         
         Returns:
             规则列表
@@ -162,8 +164,8 @@ class RulesKnowledgeBase:
         if enabled_only:
             query["enabled"] = True
         
-        cursor = db[self.COLLECTION].find(query).sort("priority", -1)
-        rules = await cursor.to_list(None)
+        cursor = db[self.COLLECTION].find(query).sort("priority", -1).limit(limit)
+        rules = await cursor.to_list(limit)
         
         # 转换 ObjectId
         for rule in rules:
