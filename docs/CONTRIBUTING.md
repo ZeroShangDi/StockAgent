@@ -56,7 +56,7 @@
 从现在开始，本仓库后续提交信息采用：
 
 - `英文 type(scope)` 规范前缀
-- 后接中文说明
+- 冒号后必须使用中文说明
 
 推荐格式：
 
@@ -68,11 +68,18 @@
 - `test(listener): 补充监听相关验证`
 - `chore(config): 补充 .env.example 与配置项`
 
+禁止格式：
+
+- `fix(practice): restore trade markers on chart`
+- `feat(strategy-v2): add task run progress`
+- `refactor(frontend): simplify task center table`
+
 说明：
 
 - `type` 建议使用常见约定式提交前缀，例如 `feat`、`fix`、`docs`、`test`、`chore`、`refactor`
 - `scope` 用于标记改动范围，例如 `data-source`、`sync`、`listener`、`system-status`
-- 冒号后面的正文仍然优先使用中文，便于团队阅读
+- 冒号后面的正文必须使用中文，英文只能出现在专有名词、模块名、技术名或必要缩写中
+- 提交前必须自检 `git log -1 --pretty=%s` 的格式，确认正文不是英文短句
 
 ### 5. 文档统一使用中文
 
@@ -94,6 +101,6 @@
 
 - 提交按逻辑范围拆分
 - 每次提交前先更新 `docs/CHANGELOG.md`
-- 提交信息使用 `type(scope): 中文说明` 格式
+- 提交信息使用 `type(scope): 中文说明` 格式，冒号后的说明必须是中文
 - 文档使用中文
 - 推送由人工手动执行
