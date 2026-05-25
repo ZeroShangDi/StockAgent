@@ -113,6 +113,29 @@ DEEPSEEK_API_KEY=sk-xxx
 JWT_SECRET_KEY=your-production-secret-key
 ```
 
+## 4c8g 服务器建议
+
+当前 `deploy/docker-compose.yml` 已为 MongoDB、Redis、etcd、MinIO 和 Milvus 设置保守的 CPU / 内存边界，避免基础设施容器在数据增长或聚合查询时吃满整机资源。
+
+生产环境建议保持：
+
+```env
+DEBUG=false
+WEB_RELOAD=false
+WEB_WORKERS=1
+MONGO_MAX_POOL_SIZE=20
+REDIS_MAX_CONNECTIONS=30
+SYNC_PROFILE=conservative
+SYNC_RUN_INITIAL_SYNC=false
+SYNC_MAX_RUNNING_JOBS=1
+SYNC_MAX_PARALLEL_COLLECT_CONCURRENCY=2
+LISTENER_POLL_INTERVAL=60
+LISTENER_POLL_TIMEOUT_SECONDS=180
+LLM_MAX_CONCURRENT_REQUESTS=3
+```
+
+如暂时不使用 RAG / 向量检索，优先不要启动 Milvus 相关服务；4c8g 单机上更推荐先保证 Web、DataSync、Listener、MongoDB、Redis 稳定运行。
+
 ## 服务端口
 
 | 服务 | 端口 | 说明 |
