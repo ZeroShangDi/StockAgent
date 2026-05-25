@@ -163,6 +163,7 @@ async def get_stock_sector_context(ts_code: str) -> Dict[str, List[Dict[str, Any
         "ths_sectors",
         {"ts_code": {"$in": sector_codes}},
         projection={"ts_code": 1, "name": 1, "sector_type": 1, "type_name": 1, "_id": 0},
+        limit=len(sector_codes),
     )
     meta_map = {str(item.get("ts_code") or ""): item for item in meta_records}
 

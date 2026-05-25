@@ -21,6 +21,10 @@ from core.base import BaseTask
 from core.settings import settings
 from core.managers import data_source_manager, mongo_manager, analysis_manager
 
+MAX_DAILY_STOCK_ROWS = 8000
+MAX_DAILY_LIMIT_ROWS = 6000
+MAX_DAILY_SECTOR_ROWS = 2000
+
 
 class DailyStatsTask(BaseTask):
     """
@@ -230,6 +234,8 @@ class DailyStatsTask(BaseTask):
         industry_data = await mongo_manager.find_many(
             "moneyflow_industry",
             {"trade_date": trade_date},
+            projection={"ts_code": 1, "industry": 1, "name": 1, "pct_change": 1, "net_amount": 1, "lead_stock": 1, "_id": 0},
+            limit=MAX_DAILY_SECTOR_ROWS,
         )
         
         if industry_data:
@@ -267,6 +273,8 @@ class DailyStatsTask(BaseTask):
         concept_data = await mongo_manager.find_many(
             "moneyflow_concept",
             {"trade_date": trade_date},
+            projection={"ts_code": 1, "concept": 1, "name": 1, "pct_change": 1, "net_amount": 1, "lead_stock": 1, "_id": 0},
+            limit=MAX_DAILY_SECTOR_ROWS,
         )
         
         if concept_data:
@@ -378,6 +386,7 @@ class DailyStatsTask(BaseTask):
             "limit_list",
             {"trade_date": trade_date},
             projection={"ts_code": 1, "limit": 1, "limit_times": 1, "open_times": 1, "_id": 0},
+            limit=MAX_DAILY_LIMIT_ROWS,
         )
         
         if limit_data:
@@ -416,6 +425,7 @@ class DailyStatsTask(BaseTask):
             "stock_daily",
             {"trade_date": trade_date},
             projection={"ts_code": 1, "pct_chg": 1, "_id": 0},
+            limit=MAX_DAILY_STOCK_ROWS,
         )
         
         pct_chg_list = []  # 收集所有涨跌幅用于计算中位数
@@ -567,6 +577,7 @@ class DailyStatsTask(BaseTask):
             "limit_list",
             {"trade_date": prev_date, "limit": "U"},
             projection={"ts_code": 1, "_id": 0},
+            limit=MAX_DAILY_LIMIT_ROWS,
         )
         
         if not prev_limit_ups:
@@ -579,6 +590,7 @@ class DailyStatsTask(BaseTask):
             "limit_list",
             {"trade_date": trade_date, "limit": "U"},
             projection={"ts_code": 1, "_id": 0},
+            limit=MAX_DAILY_LIMIT_ROWS,
         )
         
         today_codes = {item["ts_code"] for item in today_limit_ups} if today_limit_ups else set()

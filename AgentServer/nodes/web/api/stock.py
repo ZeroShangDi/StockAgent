@@ -235,6 +235,7 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
             {"ts_code": normalized_ts_code},
             projection={"trade_date": 1, "_id": 0},
             sort=[("trade_date", 1)],
+            limit=10000,
         )
         existing_daily_start = existing_daily[0]["trade_date"] if existing_daily else None
         existing_basic_count = 1 if existing_basic else 0
@@ -372,6 +373,7 @@ async def _run_stock_repair_task(task_id: str, user_id: str, ts_code: str) -> No
             {"ts_code": normalized_ts_code},
             projection={"trade_date": 1, "_id": 0},
             sort=[("trade_date", 1)],
+            limit=10000,
         )
         refreshed_daily_start = refreshed_daily[0]["trade_date"] if refreshed_daily else None
         refreshed_daily_end = refreshed_daily[-1]["trade_date"] if refreshed_daily else None
@@ -526,6 +528,7 @@ async def get_stock_review_context(ts_code: str):
     daily_records = await mongo_manager.find_many(
         "stock_daily",
         {"ts_code": normalized_ts_code},
+        projection={"_id": 0},
         sort=[("trade_date", 1)],
         limit=5000,
     )

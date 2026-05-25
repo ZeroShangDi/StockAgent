@@ -124,6 +124,7 @@ async def _get_local_trade_dates(start_date: str, end_date: str) -> List[str]:
         },
         sort=[("trade_date", 1)],
         projection={"trade_date": 1, "_id": 0},
+        limit=800,
     )
     return sorted(
         {
@@ -272,6 +273,7 @@ async def _get_stock_basic_map(ts_codes: List[str]) -> Dict[str, Dict[str, Any]]
         "stock_basic",
         {"ts_code": {"$in": normalized_codes}},
         projection={"ts_code": 1, "name": 1, "industry": 1, "market": 1, "list_date": 1},
+        limit=len(normalized_codes),
     )
     return {str(item["ts_code"]).upper(): item for item in records if item.get("ts_code")}
 
@@ -459,6 +461,7 @@ async def _get_stock_sector_context(ts_code: str) -> Dict[str, List[Dict[str, An
         "ths_sectors",
         {"ts_code": {"$in": sector_codes}},
         projection={"ts_code": 1, "name": 1, "sector_type": 1, "type_name": 1, "_id": 0},
+        limit=len(sector_codes),
     )
     meta_map = {str(item.get("ts_code") or ""): item for item in meta_records}
 
@@ -525,6 +528,7 @@ async def list_stock_pools(user_id: str = Depends(get_current_user_id)) -> Dict[
         "stock_pools",
         {"user_id": user_id},
         sort=[("updated_at", -1)],
+        limit=500,
     )
     pools = await _cleanup_candidate_pools([dict(pool) for pool in pools])
     all_codes = [

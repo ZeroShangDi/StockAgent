@@ -143,6 +143,7 @@ class DeduplicationEngine:
                 collection,
                 {"content_hash": {"$in": content_hashes}},
                 projection={"content_hash": 1},
+                limit=len(content_hashes),
             )
             existing = {doc["content_hash"] for doc in docs}
             return {h: h in existing for h in content_hashes}

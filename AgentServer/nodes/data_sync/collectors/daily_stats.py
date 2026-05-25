@@ -18,6 +18,10 @@ from core.base import BaseCollector
 from core.settings import settings
 from core.managers import tushare_manager, mongo_manager, analysis_manager
 
+MAX_DAILY_STOCK_ROWS = 8000
+MAX_DAILY_LIMIT_ROWS = 6000
+MAX_DAILY_SECTOR_ROWS = 2000
+
 
 class DailyStatsCollector(BaseCollector):
     """
@@ -116,6 +120,8 @@ class DailyStatsCollector(BaseCollector):
         industry_data = await mongo_manager.find_many(
             "moneyflow_industry",
             {"trade_date": trade_date},
+            projection={"ts_code": 1, "industry": 1, "name": 1, "pct_change": 1, "net_amount": 1, "lead_stock": 1, "_id": 0},
+            limit=MAX_DAILY_SECTOR_ROWS,
         )
         
         if industry_data:
@@ -154,6 +160,8 @@ class DailyStatsCollector(BaseCollector):
         concept_data = await mongo_manager.find_many(
             "moneyflow_concept",
             {"trade_date": trade_date},
+            projection={"ts_code": 1, "concept": 1, "name": 1, "pct_change": 1, "net_amount": 1, "lead_stock": 1, "_id": 0},
+            limit=MAX_DAILY_SECTOR_ROWS,
         )
         
         if concept_data:
@@ -258,6 +266,7 @@ class DailyStatsCollector(BaseCollector):
             "limit_list",
             {"trade_date": trade_date},
             projection={"ts_code": 1, "limit": 1, "limit_times": 1, "open_times": 1, "_id": 0},
+            limit=MAX_DAILY_LIMIT_ROWS,
         )
         
         if limit_data:
@@ -299,6 +308,7 @@ class DailyStatsCollector(BaseCollector):
             "stock_daily",
             {"trade_date": trade_date},
             projection={"ts_code": 1, "pct_chg": 1, "_id": 0},
+            limit=MAX_DAILY_STOCK_ROWS,
         )
         
         if daily_data:
