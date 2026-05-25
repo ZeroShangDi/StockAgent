@@ -36,6 +36,9 @@ class MongoManager(BaseManager):
         self._client: Optional[AsyncIOMotorClient] = None
         self._db: Optional[AsyncIOMotorDatabase] = None
         self._config = settings.mongo
+        self._aggregate_default_limit = self._get_timeout_ms("MONGO_AGGREGATE_DEFAULT_LIMIT", 10000)
+        self._aggregate_batch_size = self._get_timeout_ms("MONGO_AGGREGATE_BATCH_SIZE", 1000)
+        self._aggregate_max_time_ms = self._get_timeout_ms("MONGO_AGGREGATE_MAX_TIME_MS", 30000)
 
     def _get_timeout_ms(self, env_key: str, default_ms: int) -> int:
         value = os.getenv(env_key)
@@ -566,11 +569,14 @@ class MongoManager(BaseManager):
     ) -> List[dict]:
         """聚合查询"""
         self._ensure_initialized()
+        effective_limit = limit if limit and limit > 0 else self._aggregate_default_limit
         cursor = self._db[collection].aggregate(
             pipeline,
             allowDiskUse=allow_disk_use,
+            batchSize=self._aggregate_batch_size,
+            maxTimeMS=self._aggregate_max_time_ms,
         )
-        return await cursor.to_list(length=limit or None)
+        return await cursor.to_list(length=effective_limit)
     
     # ==================== 高性能批量写入 ====================
     

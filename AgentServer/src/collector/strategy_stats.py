@@ -219,7 +219,12 @@ class StrategyStatsManager:
             }},
         ]
         
-        async for doc in mongo.db["news"].aggregate(pipeline):
+        async for doc in mongo.db["news"].aggregate(
+            pipeline,
+            allowDiskUse=True,
+            batchSize=1000,
+            maxTimeMS=30000,
+        ):
             source = doc["_id"].get("source", "unknown")
             priority = doc["_id"].get("priority", 2)
             count = doc["count"]
@@ -254,7 +259,12 @@ class StrategyStatsManager:
             }},
         ]
         
-        async for doc in mongo.db["collector_metrics"].aggregate(pipeline):
+        async for doc in mongo.db["collector_metrics"].aggregate(
+            pipeline,
+            allowDiskUse=True,
+            batchSize=1000,
+            maxTimeMS=30000,
+        ):
             stats.dedup_redis_hit = doc.get("redis_hit", 0) or 0
             stats.dedup_memory_hit = doc.get("memory_hit", 0) or 0
             stats.dedup_fingerprint_hit = doc.get("fingerprint_hit", 0) or 0
@@ -286,7 +296,12 @@ class StrategyStatsManager:
             }},
         ]
         
-        async for doc in mongo.db["news_events"].aggregate(pipeline):
+        async for doc in mongo.db["news_events"].aggregate(
+            pipeline,
+            allowDiskUse=True,
+            batchSize=1000,
+            maxTimeMS=30000,
+        ):
             stats.events_merged = doc.get("total_merged", 0)
     
     async def _collect_filter_stats(
@@ -330,7 +345,12 @@ class StrategyStatsManager:
             }},
         ]
         
-        async for doc in mongo.db["news_events"].aggregate(pipeline):
+        async for doc in mongo.db["news_events"].aggregate(
+            pipeline,
+            allowDiskUse=True,
+            batchSize=1000,
+            maxTimeMS=30000,
+        ):
             reason = doc["_id"] or "unknown"
             stats.filter_reasons[reason] = doc["count"]
     
@@ -355,7 +375,12 @@ class StrategyStatsManager:
             {"$group": {"_id": None, "total": {"$sum": "$event_count"}}},
         ]
         
-        async for doc in mongo.db["reports"].aggregate(pipeline):
+        async for doc in mongo.db["reports"].aggregate(
+            pipeline,
+            allowDiskUse=True,
+            batchSize=1000,
+            maxTimeMS=30000,
+        ):
             stats.events_in_report = doc.get("total", 0)
     
     async def _save_weekly_stats(

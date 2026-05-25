@@ -548,10 +548,17 @@ class EventClusterEngine:
                 if extract_count[0] % 10 == 0:
                     self.logger.info(f"[{trace_id}]   Fingerprint progress: {extract_count[0]}/{len(pending_news)}")
                 return news_doc, fingerprint, llm_result
-        
+
         t2 = time.time()
-        tasks = [extract_with_limit(doc) for doc in pending_news]
-        fingerprint_results = await asyncio.gather(*tasks, return_exceptions=True)
+        fingerprint_results = []
+        for start in range(0, len(pending_news), max_concurrent):
+            batch = pending_news[start:start + max_concurrent]
+            fingerprint_results.extend(
+                await asyncio.gather(
+                    *(extract_with_limit(doc) for doc in batch),
+                    return_exceptions=True,
+                )
+            )
         t3 = time.time()
         self.logger.info(f"[{trace_id}] Step 2 - Fingerprints extracted: {len(fingerprint_results)} items, {t3-t2:.2f}s")
         

@@ -667,7 +667,12 @@ class NewsLifecycleManager:
                 }}
             ]
             
-            async for doc in mongo.db["news"].aggregate(pipeline):
+            async for doc in mongo.db["news"].aggregate(
+                pipeline,
+                allowDiskUse=True,
+                batchSize=1000,
+                maxTimeMS=30000,
+            ):
                 category = doc["_id"]
                 count = doc["count"]
                 stats["by_category"][category] = count
@@ -681,7 +686,12 @@ class NewsLifecycleManager:
                 }}
             ]
             
-            async for doc in mongo.db["news"].aggregate(tier_pipeline):
+            async for doc in mongo.db["news"].aggregate(
+                tier_pipeline,
+                allowDiskUse=True,
+                batchSize=1000,
+                maxTimeMS=30000,
+            ):
                 tier = doc["_id"] or DataTier.HOT.value
                 stats["by_tier"][tier] = doc["count"]
                 
