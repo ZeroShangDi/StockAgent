@@ -323,9 +323,10 @@ class RPCSettings(BaseSettings):
 
 class DataSyncSettings(BaseSettings):
     """数据同步配置
-    
-    环境变量: SYNC_STOCK_BASIC_SCHEDULE, SYNC_STOCK_DAILY_SCHEDULE, 
-             SYNC_INDEX_BASIC_SCHEDULE, SYNC_INDEX_DAILY_SCHEDULE, 
+
+    环境变量: SYNC_PROFILE, SYNC_ENABLED_JOBS, SYNC_DISABLED_JOBS,
+             SYNC_STOCK_BASIC_SCHEDULE, SYNC_STOCK_DAILY_SCHEDULE,
+             SYNC_INDEX_BASIC_SCHEDULE, SYNC_INDEX_DAILY_SCHEDULE,
              SYNC_REVIEW_DATA_SCHEDULE, SYNC_THS_SECTOR_SCHEDULE,
              SYNC_NEWS_SCHEDULE, SYNC_MULTI_SOURCE_NEWS_SCHEDULE
     
@@ -342,7 +343,28 @@ class DataSyncSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
-    
+
+    # 运行档位：conservative=服务器保守默认，full=注册全部内置任务，custom=只注册 enabled_jobs
+    profile: Literal["conservative", "full", "custom"] = "conservative"
+
+    # 逗号分隔任务名白名单/黑名单；白名单存在时优先于 profile
+    enabled_jobs: Optional[str] = None
+    disabled_jobs: Optional[str] = None
+
+    # 是否在节点启动后立即跑一遍同步。服务器默认关闭，避免 debug=true 时全任务启动风暴。
+    run_initial_sync: bool = False
+
+    # DataSync 节点级执行保护
+    max_running_jobs: int = 1
+    max_parallel_collect_concurrency: int = 2
+    job_timeout_seconds: int = 1200
+    lock_timeout_seconds: int = 1200
+    scheduler_misfire_grace_seconds: int = 300
+
+    # 首次运行保护：默认禁止自动全历史回补，只补最近交易日或少量窗口。
+    prevent_initial_history_sync: bool = True
+    initial_backfill_days: int = 5
+
     # 股票基础信息采集时间 (默认: 每个交易日 9:00)
     stock_basic_schedule: Optional[str] = None
     
@@ -381,7 +403,13 @@ class DataSyncSettings(BaseSettings):
 
     # 股票关联关系构建时间 (默认: 每个交易日 16:20)
     stock_relations_schedule: Optional[str] = None
-    
+
+    # 市场晴雨表采集时间 (默认: 每个交易日 18:40)
+    market_weather_schedule: Optional[str] = None
+
+    # 市场统计缓存时间 (默认: 每个交易日 18:20)
+    market_statistics_cache_schedule: Optional[str] = None
+
     # 新闻采集时间 (默认: 每 2 小时)
     news_schedule: Optional[str] = None
     

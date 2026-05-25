@@ -124,6 +124,16 @@ class BaseCollector(ScheduledJob):
         last_sync_date = await mongo_manager.get_last_sync_date(self.name)
         
         if last_sync_date is None:
+            try:
+                from core.settings import settings
+                if settings.data_sync.prevent_initial_history_sync:
+                    self.logger.warning(
+                        f"First sync protected for {self.name}: only syncing latest trade date {latest_trade_date}"
+                    )
+                    return (latest_trade_date, latest_trade_date, False)
+            except Exception:
+                pass
+
             self.logger.info(f"First sync, starting from {history_start}")
             return (history_start, latest_trade_date, True)
         
@@ -167,6 +177,16 @@ class BaseCollector(ScheduledJob):
         last_sync_date = await mongo_manager.get_last_sync_date(self.name)
         
         if last_sync_date is None:
+            try:
+                from core.settings import settings
+                if settings.data_sync.prevent_initial_history_sync:
+                    self.logger.warning(
+                        f"First sync protected for {self.name}: only syncing latest trade date {latest_trade_date}"
+                    )
+                    return (latest_trade_date, latest_trade_date)
+            except Exception:
+                pass
+
             start_dt = datetime.now() - timedelta(days=initial_days)
             start_date = start_dt.strftime("%Y%m%d")
             self.logger.info(f"First sync, starting from {start_date} (last {initial_days} days)")
@@ -268,7 +288,13 @@ class BaseCollector(ScheduledJob):
                 retry_items = [f["item_id"] for f in pending_failures]
                 items = retry_items + new_items
         
-        semaphore = asyncio.Semaphore(max_concurrent)
+        try:
+            from core.settings import settings
+            max_concurrent = min(max_concurrent, settings.data_sync.max_parallel_collect_concurrency)
+        except Exception:
+            pass
+
+        max_concurrent = max(1, max_concurrent)
         results = []
         failed_items = []
         success_count = 0
@@ -279,25 +305,50 @@ class BaseCollector(ScheduledJob):
             nonlocal success_count, completed
             item_id = get_id(item)
             
-            async with semaphore:
+            try:
+                result = await collect_func(item)
+                success_count += 1
+                # 清除该项的失败记录（如果有）
+                await self._clear_failure(item_id)
+                return {"item_id": item_id, "success": True, "result": result}
+            except Exception as e:
+                self.logger.warning(f"Failed to collect {item_id}: {e}")
+                # 记录失败
+                await self._record_failure(item_id, str(e))
+                return {"item_id": item_id, "success": False, "error": str(e)}
+            finally:
+                completed += 1
+                if completed % max(1, total // 10) == 0 or completed == total:
+                    self.logger.info(f"Progress: {completed}/{total}")
+
+        if total == 0:
+            return {
+                "total": 0,
+                "success": 0,
+                "failed": 0,
+                "results": [],
+                "failed_items": [],
+            }
+
+        queue: asyncio.Queue[T] = asyncio.Queue()
+        for item in items:
+            queue.put_nowait(item)
+
+        task_results: List[Any] = []
+
+        async def worker() -> None:
+            while True:
                 try:
-                    result = await collect_func(item)
-                    success_count += 1
-                    # 清除该项的失败记录（如果有）
-                    await self._clear_failure(item_id)
-                    return {"item_id": item_id, "success": True, "result": result}
-                except Exception as e:
-                    self.logger.warning(f"Failed to collect {item_id}: {e}")
-                    # 记录失败
-                    await self._record_failure(item_id, str(e))
-                    return {"item_id": item_id, "success": False, "error": str(e)}
+                    item = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    task_results.append(await process_item(item))
                 finally:
-                    completed += 1
-                    if completed % max(1, total // 10) == 0 or completed == total:
-                        self.logger.info(f"Progress: {completed}/{total}")
-        
-        tasks = [process_item(item) for item in items]
-        task_results = await asyncio.gather(*tasks, return_exceptions=True)
+                    queue.task_done()
+
+        worker_count = min(max_concurrent, total)
+        await asyncio.gather(*(worker() for _ in range(worker_count)), return_exceptions=False)
         
         for r in task_results:
             if isinstance(r, Exception):

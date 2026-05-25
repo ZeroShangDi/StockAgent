@@ -196,7 +196,12 @@ class ReviewDataCollector(BaseCollector):
     async def _collect_initial_history(self) -> Dict[str, Any]:
         """首次运行时采集历史数据"""
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=self.INITIAL_SYNC_DAYS)
+        initial_days = (
+            max(1, settings.data_sync.initial_backfill_days)
+            if settings.data_sync.prevent_initial_history_sync
+            else self.INITIAL_SYNC_DAYS
+        )
+        start_date = end_date - timedelta(days=initial_days)
         start_str = start_date.strftime("%Y%m%d")
         end_str = end_date.strftime("%Y%m%d")
         

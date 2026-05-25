@@ -8,6 +8,7 @@ from .event_clustering import EventClusteringTask
 from .news_lifecycle import NewsLifecycleTask
 from .daily_stats import DailyStatsTask
 from .market_statistics_cache import MarketStatisticsCacheTask
+from .market_weather import MarketWeatherTask
 
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "NewsLifecycleTask",
     "DailyStatsTask",
     "MarketStatisticsCacheTask",
+    "MarketWeatherTask",
 ]

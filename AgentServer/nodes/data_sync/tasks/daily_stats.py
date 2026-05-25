@@ -100,8 +100,17 @@ class DailyStatsTask(BaseTask):
         Returns:
             {"backfilled": 回补的天数, "missing": 缺失的日期列表}
         """
+        backfill_days = max(0, settings.data_sync.initial_backfill_days)
+        if settings.data_sync.prevent_initial_history_sync:
+            backfill_days = min(backfill_days, self.INITIAL_SYNC_DAYS)
+        else:
+            backfill_days = self.INITIAL_SYNC_DAYS
+
+        if backfill_days <= 0:
+            return {"backfilled": 0, "missing": []}
+
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=self.INITIAL_SYNC_DAYS)
+        start_date = end_date - timedelta(days=backfill_days)
         start_str = start_date.strftime("%Y%m%d")
         end_str = end_date.strftime("%Y%m%d")
         

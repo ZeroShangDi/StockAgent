@@ -69,6 +69,13 @@ services:
     environment:
       NODE_TYPE: data_sync
       MILVUS_URI: "${MILVUS_URI:-./data/milvus_lite.db}"
+      SYNC_PROFILE: "${SYNC_PROFILE:-conservative}"
+      SYNC_RUN_INITIAL_SYNC: "${SYNC_RUN_INITIAL_SYNC:-false}"
+      SYNC_MAX_RUNNING_JOBS: "${SYNC_MAX_RUNNING_JOBS:-1}"
+      SYNC_MAX_PARALLEL_COLLECT_CONCURRENCY: "${SYNC_MAX_PARALLEL_COLLECT_CONCURRENCY:-2}"
+      SYNC_JOB_TIMEOUT_SECONDS: "${SYNC_JOB_TIMEOUT_SECONDS:-1200}"
+      SYNC_PREVENT_INITIAL_HISTORY_SYNC: "${SYNC_PREVENT_INITIAL_HISTORY_SYNC:-true}"
+      SYNC_INITIAL_BACKFILL_DAYS: "${SYNC_INITIAL_BACKFILL_DAYS:-5}"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -83,7 +90,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          cpus: "${DATA_SYNC_CPUS:-0.75}"
+          memory: "${DATA_SYNC_MEM_LIMIT:-512M}"
         reservations:
           memory: 256M
 

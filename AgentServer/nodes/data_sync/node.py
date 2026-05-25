@@ -6,7 +6,7 @@
 """
 
 import asyncio
-from typing import Optional, List, Type, Union
+from typing import Optional, List, Type, Dict, Set
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -40,6 +40,7 @@ from .tasks import (
     DailyStatsTask,
     EventClusteringTask,
     MarketStatisticsCacheTask,
+    MarketWeatherTask,
     NewsLifecycleTask,
 )
 
@@ -71,9 +72,10 @@ class DataSyncNode(BaseNode):
     def __init__(self, node_id: Optional[str] = None, rpc_port: int = 0):
         from core.settings import settings
         super().__init__(node_id, rpc_port or settings.rpc.data_sync_port)
-        
+
         self._scheduler: Optional[AsyncIOScheduler] = None
         self._jobs: List[ScheduledJob] = []
+        self._job_semaphore = asyncio.Semaphore(max(1, settings.data_sync.max_running_jobs))
     
     async def start(self) -> None:
         """启动数据同步节点"""
@@ -92,7 +94,13 @@ class DataSyncNode(BaseNode):
         self._register_jobs()
         
         # 创建调度器
-        self._scheduler = AsyncIOScheduler()
+        self._scheduler = AsyncIOScheduler(
+            job_defaults={
+                "coalesce": True,
+                "max_instances": 1,
+                "misfire_grace_time": max(1, self.settings.data_sync.scheduler_misfire_grace_seconds),
+            }
+        )
         
         # 注册采集任务
         for job in self._jobs:
@@ -111,7 +119,7 @@ class DataSyncNode(BaseNode):
     async def run(self) -> None:
         """节点主循环"""
         # 首次启动时执行一次同步
-        if self.settings.debug:
+        if self.settings.data_sync.run_initial_sync:
             self.logger.info("Running initial sync...")
             await self._run_all_jobs()
         
@@ -121,8 +129,7 @@ class DataSyncNode(BaseNode):
     
     def _register_jobs(self) -> None:
         """注册所有定时任务"""
-        job_classes: List[Type[ScheduledJob]] = [
-            # 数据采集 (Collectors)
+        all_job_classes: List[Type[ScheduledJob]] = [
             StockBasicCollector,
             StockDailyCollector,
             DailyBasicCollector,
@@ -144,18 +151,69 @@ class DataSyncNode(BaseNode):
             # 处理任务 (Tasks)
             DailyStatsTask,         # 统计，确保依赖数据已同步
             MarketStatisticsCacheTask,  # 统计缓存预聚合
-            # EventClusteringTask,    # 事件聚类 (LLM 深度去重)
-            # NewsLifecycleTask,      # 数据生命周期管理
-            
+            MarketWeatherTask,      # 市场晴雨表
+            EventClusteringTask,    # 事件聚类 (LLM 深度去重)
+            NewsLifecycleTask,      # 数据生命周期管理
+
             # 生成任务 (Generators)
-            # MorningReportGenerator,  # 早报 (8:50)
-            # NoonReportGenerator,     # 午报 (13:50)
+            MorningReportGenerator,  # 早报 (8:50)
+            NoonReportGenerator,     # 午报 (13:50)
         ]
-        
+
+        conservative_names = {
+            "stock_basic",
+            "stock_daily",
+            "index_basic",
+            "index_daily",
+            "moneyflow_industry",
+            "moneyflow_concept",
+            "limit_list",
+            "review_data",
+            "daily_stats",
+            "market_statistics_cache",
+            "market_weather",
+        }
+        job_classes = self._select_job_classes(all_job_classes, conservative_names)
+
         for cls in job_classes:
             job = cls()
             self._jobs.append(job)
             self.logger.info(f"Registered job: {job.name}")
+
+        skipped = sorted({cls.name for cls in all_job_classes} - {job.name for job in self._jobs})
+        if skipped:
+            self.logger.info(f"Skipped jobs by data-sync profile: {', '.join(skipped)}")
+
+    def _csv_set(self, value: Optional[str]) -> Set[str]:
+        if not value:
+            return set()
+        return {item.strip() for item in value.split(",") if item.strip()}
+
+    def _select_job_classes(
+        self,
+        all_job_classes: List[Type[ScheduledJob]],
+        conservative_names: Set[str],
+    ) -> List[Type[ScheduledJob]]:
+        """根据运行档位和白/黑名单选择要注册的任务。"""
+        job_map: Dict[str, Type[ScheduledJob]] = {cls.name: cls for cls in all_job_classes}
+        enabled = self._csv_set(self.settings.data_sync.enabled_jobs)
+        disabled = self._csv_set(self.settings.data_sync.disabled_jobs)
+
+        unknown = sorted((enabled | disabled) - set(job_map))
+        if unknown:
+            self.logger.warning(f"Unknown data-sync job names ignored: {', '.join(unknown)}")
+
+        if enabled:
+            selected_names = enabled & set(job_map)
+        elif self.settings.data_sync.profile == "full":
+            selected_names = set(job_map)
+        elif self.settings.data_sync.profile == "custom":
+            selected_names = set()
+        else:
+            selected_names = conservative_names & set(job_map)
+
+        selected_names -= disabled
+        return [cls for cls in all_job_classes if cls.name in selected_names]
     
     def _schedule_job(self, job: ScheduledJob) -> None:
         """调度任务"""
@@ -171,6 +229,9 @@ class DataSyncNode(BaseNode):
             id=job.name,
             name=f"Job: {job.name}",
             replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=max(1, self.settings.data_sync.scheduler_misfire_grace_seconds),
         )
     
     async def _run_job_with_lock(self, job: ScheduledJob) -> dict:
@@ -184,36 +245,48 @@ class DataSyncNode(BaseNode):
         today = date.today().strftime("%Y%m%d")
         lock_key = f"sync:{job.name}:{today}"
         
-        # 尝试获取锁
-        lock = await redis_manager.try_lock(lock_key, timeout=600)  # 10 分钟超时
-        
-        if lock is None:
-            self.logger.info(
-                f"Job {job.name} skipped: "
-                f"another node is running (lock={lock_key})"
+        async with self._job_semaphore:
+            # 尝试获取锁
+            lock = await redis_manager.try_lock(
+                lock_key,
+                timeout=max(1, self.settings.data_sync.lock_timeout_seconds),
             )
-            return {"success": False, "skipped": True, "reason": "lock_held"}
-        
-        try:
-            self.logger.info(f"Running job: {job.name} (lock acquired)")
-            result = await job.run()
-            
-            if result["success"]:
+
+            if lock is None:
                 self.logger.info(
-                    f"Job {job.name} completed: "
-                    f"{result['count']} records, {result['duration_ms']:.2f}ms"
+                    f"Job {job.name} skipped: "
+                    f"another node is running (lock={lock_key})"
                 )
-            else:
+                return {"success": False, "skipped": True, "reason": "lock_held"}
+
+            try:
+                self.logger.info(f"Running job: {job.name} (lock acquired)")
+                timeout = self.settings.data_sync.job_timeout_seconds
+                if timeout and timeout > 0:
+                    result = await asyncio.wait_for(job.run(), timeout=timeout)
+                else:
+                    result = await job.run()
+
+                if result["success"]:
+                    self.logger.info(
+                        f"Job {job.name} completed: "
+                        f"{result['count']} records, {result['duration_ms']:.2f}ms"
+                    )
+                else:
+                    self.logger.error(
+                        f"Job {job.name} failed: {result.get('error')}"
+                    )
+
+                return result
+            except asyncio.TimeoutError:
                 self.logger.error(
-                    f"Job {job.name} failed: {result.get('error')}"
+                    f"Job {job.name} timed out after {self.settings.data_sync.job_timeout_seconds}s"
                 )
-            
-            return result
-            
-        finally:
-            # 释放锁
-            await lock.release()
-            self.logger.debug(f"Lock released: {lock_key}")
+                return {"success": False, "error": "timeout", "duration_ms": timeout * 1000}
+            finally:
+                # 释放锁
+                await lock.release()
+                self.logger.debug(f"Lock released: {lock_key}")
     
     async def _run_all_jobs(self) -> None:
         """运行所有任务（跳过 run_at_startup=False 的任务）"""

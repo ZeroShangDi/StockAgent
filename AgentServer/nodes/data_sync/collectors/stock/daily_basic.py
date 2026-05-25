@@ -310,6 +310,12 @@ class DailyBasicCollector(BaseCollector):
         last_sync_date = await mongo_manager.get_last_sync_date(sync_type)
 
         if last_sync_date is None:
+            if settings.data_sync.prevent_initial_history_sync:
+                self.logger.warning(
+                    f"First sync protected ({sync_type}): only syncing latest trade date {latest_trade_date}"
+                )
+                return (latest_trade_date, latest_trade_date, False)
+
             self.logger.info(f"First sync ({sync_type}), starting from {self.HISTORY_START_DATE}")
             return (self.HISTORY_START_DATE, latest_trade_date, True)
 
