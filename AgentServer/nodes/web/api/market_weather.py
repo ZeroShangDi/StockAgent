@@ -74,6 +74,7 @@ async def _load_index_rows(start_date: str, end_date: str) -> List[Dict[str, Any
             "pct_chg": 1,
         },
         sort=[("trade_date", 1)],
+        limit=len(CORE_BENCHMARKS) * 700,
     )
 
 
@@ -240,7 +241,7 @@ async def get_market_weather_dashboard(
     end_date: Optional[str] = Query(default=None, description="结束日期 YYYYMMDD"),
     benchmark: str = Query(default="composite", description="基准: composite / 000001.SH / 399001.SZ / 399006.SZ"),
 ) -> Dict[str, Any]:
-    history = await market_weather_service.list_history_range(start_date=start_date, end_date=end_date)
+    history = await market_weather_service.list_history_range(start_date=start_date, end_date=end_date, limit=600)
     serialized_history = [_serialize_record(item) for item in history]
     coverage = await market_weather_service.get_coverage_summary()
 

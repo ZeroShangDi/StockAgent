@@ -107,6 +107,7 @@ async def get_report_dates(
         {},
         sort=[("date", -1)],
         projection={"date": 1, "_id": 0},
+        limit=limit * 4,
     )
     
     unique_dates = list(dict.fromkeys(d.get("date") for d in docs if d.get("date")))

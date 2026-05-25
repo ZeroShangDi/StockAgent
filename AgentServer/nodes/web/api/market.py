@@ -26,6 +26,12 @@ router = APIRouter(prefix="/market", tags=["Market Analysis"])
 
 # 数据源切换时间点 (18:00)
 DATA_SOURCE_SWITCH_HOUR = 18
+MAX_STOCK_UNIVERSE_ROWS = 8000
+MAX_SECTOR_RANKING_ROWS_PER_DAY = 500
+MAX_DAILY_LIMIT_ROWS = 6000
+MAX_PERIOD_LIMIT_ROWS = 60000
+MAX_PERIOD_DAILY_ROWS = 60000
+
 PERIOD_DAY_MAP = {
     "1w": 5,
     "1m": 22,
@@ -211,6 +217,7 @@ async def _get_stock_meta_map(ts_codes: List[str]) -> Dict[str, Dict[str, Any]]:
         "stock_basic",
         {"ts_code": {"$in": ts_codes}},
         projection={"ts_code": 1, "symbol": 1, "name": 1, "industry": 1, "market": 1, "_id": 0},
+        limit=min(len(ts_codes), MAX_STOCK_UNIVERSE_ROWS),
     )
     return {str(doc.get("ts_code")): doc for doc in docs if doc.get("ts_code")}
 
@@ -757,6 +764,7 @@ async def get_market_history(
     analysis_list = await mongo_manager.find_many(
         "market_analysis",
         {"trade_date": {"$in": trade_dates}},
+        limit=len(trade_dates),
     )
     
     # 构建分析数据映射
@@ -836,6 +844,7 @@ async def get_sector_ranking(
         {"trade_date": trade_date, "ranking_type": ranking_type},
         projection={"rank": 1, "ts_code": 1, "name": 1, "pct_change": 1, "net_amount": 1, "lead_stock": 1, "_id": 0},
         sort=[("rank", 1)],  # 按排名升序
+        limit=MAX_SECTOR_RANKING_ROWS_PER_DAY,
     )
     
     # 直接返回预排序的数据
@@ -861,6 +870,7 @@ async def get_sector_ranking(
                 {"trade_date": dt, "ranking_type": ranking_type},
                 projection={"rank": 1, "ts_code": 1, "name": 1, "pct_change": 1, "lead_stock": 1, "_id": 0},
                 sort=[("rank", 1)],
+                limit=MAX_SECTOR_RANKING_ROWS_PER_DAY,
             )
             history.append({
                 "trade_date": dt,
@@ -901,6 +911,7 @@ async def get_stats_table(
     analysis_list = await mongo_manager.find_many(
         "market_analysis",
         {"trade_date": {"$in": trade_dates}},
+        limit=len(trade_dates),
     )
     analysis_map = {a.get("trade_date"): a for a in analysis_list}
     
@@ -964,6 +975,7 @@ async def _build_statistics_limit_snapshot_payload(normalized_trade_date: str) -
             "_id": 0,
         },
         sort=[("limit_times", -1), ("first_time", 1)],
+        limit=MAX_DAILY_LIMIT_ROWS,
     )
 
     meta_map = await _get_stock_meta_map([
@@ -1054,6 +1066,7 @@ async def _build_statistics_leader_cycle_payload(period: str) -> Dict[str, Any]:
         "limit_list",
         {"trade_date": {"$gte": start_trade_date, "$lte": end_trade_date}, "limit": "U"},
         projection={"ts_code": 1, "trade_date": 1, "name": 1, "industry": 1, "market": 1, "limit_times": 1, "_id": 0},
+        limit=min(MAX_PERIOD_LIMIT_ROWS, len(period_trade_dates) * MAX_DAILY_LIMIT_ROWS),
     )
 
     stock_summary: Dict[str, Dict[str, Any]] = {}
@@ -1161,15 +1174,18 @@ async def _build_statistics_sentiment_payload(period: str) -> Dict[str, Any]:
         "daily_stats",
         {"trade_date": {"$in": needed_dates}},
         sort=[("trade_date", 1)],
+        limit=len(needed_dates),
     )
     analysis_docs = await mongo_manager.find_many(
         "market_analysis",
         {"trade_date": {"$in": needed_dates}},
+        limit=len(needed_dates),
     )
     limit_docs = await mongo_manager.find_many(
         "limit_list",
         {"trade_date": {"$in": needed_dates}, "limit": "U"},
         projection={"ts_code": 1, "trade_date": 1, "close": 1, "_id": 0},
+        limit=min(MAX_PERIOD_LIMIT_ROWS, len(needed_dates) * MAX_DAILY_LIMIT_ROWS),
     )
 
     stats_map = {str(doc.get("trade_date")): doc for doc in stats_docs if doc.get("trade_date")}
@@ -1189,6 +1205,7 @@ async def _build_statistics_sentiment_payload(period: str) -> Dict[str, Any]:
         "stock_daily",
         {"trade_date": {"$in": current_trade_dates}, "ts_code": {"$in": sorted({code for values in limit_ts_codes.values() for code in values})}},
         projection={"ts_code": 1, "trade_date": 1, "open": 1, "high": 1, "close": 1, "_id": 0},
+        limit=MAX_PERIOD_DAILY_ROWS,
     ) if limit_ts_codes else []
     daily_map: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
     for doc in current_daily_docs:
@@ -1489,7 +1506,9 @@ async def get_sector_timeline(
     rankings = await mongo_manager.find_many(
         "sector_ranking",
         {"trade_date": {"$in": unique_dates}, "ranking_type": ranking_type},
+        projection={"trade_date": 1, "rank": 1, "name": 1, "_id": 0},
         sort=[("trade_date", -1), ("rank", 1)],
+        limit=days * MAX_SECTOR_RANKING_ROWS_PER_DAY,
     )
     
     # 构建时间线数据

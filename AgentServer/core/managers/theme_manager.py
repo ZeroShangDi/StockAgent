@@ -13,6 +13,10 @@ from datetime import datetime
 from core.base import BaseManager
 from common.enums import ThemeStatus
 
+MAX_RANKING_ROWS_PER_DAY = 500
+MAX_DAILY_LIMIT_ROWS = 6000
+MAX_DAILY_MONEYFLOW_ROWS = 1000
+
 
 class ThemeManager(BaseManager):
     """
@@ -119,7 +123,9 @@ class ThemeManager(BaseManager):
                 "trade_date": {"$in": unique_dates},
                 "ranking_type": {"$in": ["industry_top", "concept_top"]},
             },
+            projection={"trade_date": 1, "ranking_type": 1, "rank": 1, "ts_code": 1, "name": 1, "pct_change": 1, "net_amount": 1, "_id": 0},
             sort=[("trade_date", -1), ("rank", 1)],
+            limit=len(unique_dates) * MAX_RANKING_ROWS_PER_DAY * 2,
         )
         
         return rankings
@@ -155,6 +161,8 @@ class ThemeManager(BaseManager):
         limit_data = await mongo_manager.find_many(
             "limit_list",
             {"trade_date": trade_date, "limit_times": {"$gte": 3}},
+            projection={"industry": 1, "_id": 0},
+            limit=MAX_DAILY_LIMIT_ROWS,
         )
         
         # 统计每个行业的高板个数
@@ -415,12 +423,16 @@ class ThemeManager(BaseManager):
                 "trade_date": {"$in": unique_dates},
                 "ranking_type": "industry_top",
             },
+            projection={"trade_date": 1, "rank": 1, "name": 1, "pct_change": 1, "net_amount": 1, "_id": 0},
+            limit=len(unique_dates) * MAX_RANKING_ROWS_PER_DAY,
         )
-        
+
         # 2. 获取涨停板数据（用于连板系数）
         limit_data = await mongo_manager.find_many(
             "limit_list",
             {"trade_date": trade_date},
+            projection={"industry": 1, "limit_times": 1, "_id": 0},
+            limit=MAX_DAILY_LIMIT_ROWS,
         )
         
         # 统计每个行业的连板数
@@ -441,6 +453,8 @@ class ThemeManager(BaseManager):
         moneyflow = await mongo_manager.find_many(
             "moneyflow_industry",
             {"trade_date": trade_date},
+            projection={"industry": 1, "net_amount": 1, "net_amount_rate": 1, "_id": 0},
+            limit=MAX_DAILY_MONEYFLOW_ROWS,
         )
         moneyflow_map = {m.get("industry"): m for m in moneyflow}
         
