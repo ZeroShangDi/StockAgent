@@ -14,7 +14,7 @@ import re
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Path, Body, Depends
+from fastapi import APIRouter, HTTPException, Path, Body, Depends, Query
 from pydantic import BaseModel, Field
 
 from core.managers import mongo_manager
@@ -477,6 +477,7 @@ async def _get_stock_names(ts_codes: List[str]) -> dict:
         "stock_basic",
         {"ts_code": {"$in": ts_codes}},
         projection={"ts_code": 1, "name": 1},
+        limit=len(ts_codes),
     )
     
     return {s["ts_code"]: s.get("name", s["ts_code"]) for s in stocks}
@@ -499,6 +500,7 @@ async def _get_position_watch_codes_from_record(record: dict) -> List[str]:
             ],
         },
         projection={"ts_code": 1},
+        limit=5000,
     )
     return [
         str(doc.get("ts_code")).upper()
@@ -529,6 +531,7 @@ async def _get_transition_source_watch_codes_from_record(record: dict) -> List[s
         "stock_pools",
         {"pool_id": {"$in": list(source_pool_ids)}},
         projection={"stocks.ts_code": 1},
+        limit=max(1, len(source_pool_ids)),
     )
 
     codes: set[str] = set()
@@ -1220,6 +1223,7 @@ async def get_available_strategy_types():
 async def get_subscriptions(
     is_active: Optional[bool] = None,
     strategy_type: Optional[str] = None,
+    limit: int = Query(default=200, ge=1, le=1000),
 ):
     """
     获取策略订阅列表
@@ -1237,6 +1241,7 @@ async def get_subscriptions(
         "strategy_subscriptions",
         filter_query,
         sort=[("strategy_type", 1)],
+        limit=limit,
     )
     
     # 使用 asyncio.gather 并行获取股票名称

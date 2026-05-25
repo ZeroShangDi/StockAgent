@@ -214,6 +214,7 @@ class ListenerNode(BaseNode):
             records = await mongo_manager.find_many(
                 "strategy_subscriptions",
                 {"is_active": True},
+                limit=2000,
             )
             
             self._subscriptions = []
@@ -539,6 +540,7 @@ class ListenerNode(BaseNode):
                 "total_cost": 1,
                 "_id": 0,
             },
+            limit=5000,
         )
         position_map = {
             str(doc.get("ts_code")).upper(): doc
@@ -578,6 +580,7 @@ class ListenerNode(BaseNode):
             "stock_pools",
             {"pool_id": {"$in": list(source_pool_ids)}},
             projection={"stocks.ts_code": 1},
+            limit=max(1, len(source_pool_ids)),
         )
 
         codes: set[str] = set()
@@ -1038,6 +1041,7 @@ class ListenerNode(BaseNode):
             source_pools = await mongo_manager.find_many(
                 "stock_pools",
                 {"pool_id": {"$in": source_pool_ids}},
+                limit=max(1, len(source_pool_ids)),
             )
             for pool in source_pools:
                 stocks = pool.get("stocks", [])
@@ -1285,7 +1289,8 @@ class ListenerNode(BaseNode):
             stocks = await mongo_manager.find_many(
                 "stock_basic",
                 {"list_status": "L"},  # 只获取上市状态的股票
-                projection={"ts_code": 1, "name": 1, "industry": 1, "_id": 0}
+                projection={"ts_code": 1, "name": 1, "industry": 1, "_id": 0},
+                limit=8000,
             )
             return {
                 stock["ts_code"]: stock

@@ -706,6 +706,7 @@ async def get_realtime_quotes(body: RealtimeQuoteRequest):
     stocks = await mongo_manager.find_many(
         "stock_basic",
         {"ts_code": {"$in": ts_codes}},
+        limit=len(ts_codes),
     )
     stock_map = {s["ts_code"]: s for s in stocks}
     

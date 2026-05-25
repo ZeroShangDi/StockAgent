@@ -26,6 +26,7 @@ async def get_focus_stock_codes(max_count: int | None = None) -> List[str]:
         "users",
         {},
         projection={"watchlist": 1},
+        limit=5000,
     )
     for user in users:
         for ts_code in user.get("watchlist", []) or []:
@@ -40,6 +41,7 @@ async def get_focus_stock_codes(max_count: int | None = None) -> List[str]:
         "strategy_subscriptions",
         {"is_active": True},
         projection={"watch_list": 1},
+        limit=2000,
     )
     for subscription in subscriptions:
         for ts_code in subscription.get("watch_list", []) or []:

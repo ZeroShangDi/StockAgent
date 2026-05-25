@@ -1045,8 +1045,8 @@ async def _build_datasets_context() -> Dict[str, Any]:
     )
 
     watchlist_stock_docs, strategy_watch_docs = await asyncio.gather(
-        mongo_manager.find_many("users", {}, projection={"watchlist": 1}),
-        mongo_manager.find_many("strategy_subscriptions", {"is_active": True}, projection={"watch_list": 1}),
+        mongo_manager.find_many("users", {}, projection={"watchlist": 1}, limit=5000),
+        mongo_manager.find_many("strategy_subscriptions", {"is_active": True}, projection={"watch_list": 1}, limit=2000),
     )
     watchlist_codes = {
         str(ts_code).upper()

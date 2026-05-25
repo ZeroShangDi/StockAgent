@@ -113,6 +113,7 @@ async def _get_stock_names(ts_codes: List[str]) -> Dict[str, str]:
             "stock_basic",
             {"ts_code": {"$in": codes_to_fetch}},
             projection={"ts_code": 1, "name": 1, "_id": 0},
+            limit=len(codes_to_fetch),
         )
         
         # 构建查询结果映射

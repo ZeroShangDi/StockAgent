@@ -803,12 +803,14 @@ class AssistantService:
             "stock_daily",
             {"trade_date": latest_trade_date},
             projection={"ts_code": 1, "trade_date": 1, "close": 1},
+            limit=8000,
         )
         baseline_raw_docs = await mongo_manager.find_many(
             "stock_daily",
             {"trade_date": {"$in": baseline_candidate_dates}},
             projection={"ts_code": 1, "trade_date": 1, "close": 1},
             sort=[("ts_code", 1), ("trade_date", -1)],
+            limit=40000,
         )
 
         baseline_map: Dict[str, Dict[str, Any]] = {}
@@ -912,6 +914,7 @@ class AssistantService:
             "stock_basic",
             {"ts_code": {"$in": unique_codes}},
             projection={"ts_code": 1, "name": 1},
+            limit=len(unique_codes),
         )
         return {
             str(doc.get("ts_code") or "").upper(): str(doc.get("name") or "").strip()
