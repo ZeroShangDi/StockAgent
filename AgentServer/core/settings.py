@@ -465,6 +465,9 @@ class ListenerSettings(BaseSettings):
     
     # 轮询间隔 (秒)
     poll_interval: int = 60
+
+    # 单轮轮询最大耗时 (秒)，防止行情源或通知链路卡住后拖垮长期循环
+    poll_timeout_seconds: int = 180
     
     # 每日涨跌停数据获取时间 (格式: HH:MM)
     limit_fetch_time: str = "09:15"

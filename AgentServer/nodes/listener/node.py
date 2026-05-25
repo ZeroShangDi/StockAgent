@@ -68,7 +68,8 @@ class ListenerNode(BaseNode):
 
         # 配置
         self._config = settings.listener
-        self._poll_interval = self._config.poll_interval
+        self._poll_interval = max(30, self._config.poll_interval)
+        self._poll_timeout = max(self._poll_interval, self._config.poll_timeout_seconds)
         self._large_watch_batch = max(50, self._config.large_watch_batch)
         self._large_watch_threshold = max(self._large_watch_batch, self._config.large_watch_threshold)
 
@@ -141,9 +142,14 @@ class ListenerNode(BaseNode):
                         await asyncio.sleep(self._poll_interval)
                         continue
                 
-                # 执行轮询
-                await self._poll_cycle(trace_id)
-                
+                # 执行轮询，给单轮行情源与通知链路设置外层边界，避免长期运行卡死。
+                await asyncio.wait_for(self._poll_cycle(trace_id), timeout=self._poll_timeout)
+
+            except asyncio.TimeoutError:
+                self.logger.error(
+                    f"Poll cycle timed out after {self._poll_timeout}s, "
+                    "skipping current cycle"
+                )
             except Exception as e:
                 self.logger.error(f"Poll cycle error: {e}", exc_info=True)
             finally:

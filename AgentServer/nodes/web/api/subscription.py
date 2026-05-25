@@ -27,6 +27,9 @@ logger = logging.getLogger("api.subscription")
 
 
 router = APIRouter()
+_REFRESH_NOTIFY_DEBOUNCE_SECONDS = 1.0
+_refresh_notify_task: Optional[asyncio.Task] = None
+_refresh_notify_pending_types: set[str] = set()
 
 
 # ==================== 已实现的策略类型 ====================
@@ -391,6 +394,37 @@ async def _notify_listeners_refresh(strategy_type: Optional[str] = None) -> None
         logger.warning(f"Failed to notify Listener nodes: {e}")
 
 
+def _schedule_listeners_refresh(strategy_type: Optional[str] = None) -> None:
+    """合并短时间内的多次刷新通知，避免批量增删股票时堆积 RPC 后台任务。"""
+    global _refresh_notify_task
+    if strategy_type:
+        _refresh_notify_pending_types.add(strategy_type)
+    else:
+        _refresh_notify_pending_types.clear()
+        _refresh_notify_pending_types.add("*")
+
+    if _refresh_notify_task and not _refresh_notify_task.done():
+        return
+    _refresh_notify_task = asyncio.create_task(_flush_listeners_refresh())
+
+
+async def _flush_listeners_refresh() -> None:
+    await asyncio.sleep(_REFRESH_NOTIFY_DEBOUNCE_SECONDS)
+    while True:
+        pending = set(_refresh_notify_pending_types)
+        _refresh_notify_pending_types.clear()
+        if not pending:
+            return
+        if "*" in pending or len(pending) > 3:
+            await _notify_listeners_refresh(None)
+        else:
+            for strategy_type in sorted(pending):
+                await _notify_listeners_refresh(strategy_type)
+        if not _refresh_notify_pending_types:
+            return
+        await asyncio.sleep(_REFRESH_NOTIFY_DEBOUNCE_SECONDS)
+
+
 # ==================== 请求/响应模型 ====================
 
 
@@ -560,7 +594,7 @@ async def _to_response(record: dict) -> SubscriptionResponse:
         *position_watch_codes,
         *transition_watch_codes,
     }
-    
+
     # 获取股票名称
     display_watch_list = [code for code in watch_list if str(code).strip().upper() != "ALL"]
     stock_names = await _get_stock_names(display_watch_list)
@@ -1295,7 +1329,7 @@ async def update_strategy_params(
     updated_params = await _normalize_position_group_params(admin.user_id, updated_params)
     updated_params = await _normalize_notification_channel_params(admin.user_id, updated_params)
     updated_params = _normalize_alert_frequency(updated_params)
-    
+
     # 更新参数
     await mongo_manager.update_one(
         "strategy_subscriptions",
@@ -1310,7 +1344,7 @@ async def update_strategy_params(
     )
     
     # 通知 Listener 节点刷新
-    asyncio.create_task(_notify_listeners_refresh(strategy_type))
+    _schedule_listeners_refresh(strategy_type)
     
     # 获取更新后的记录
     updated = await mongo_manager.find_one(
@@ -1352,7 +1386,7 @@ async def toggle_subscription(
     )
     
     # 通知 Listener 节点刷新
-    asyncio.create_task(_notify_listeners_refresh(strategy_type))
+    _schedule_listeners_refresh(strategy_type)
     
     return {
         "strategy_type": strategy_type,
@@ -1419,7 +1453,7 @@ async def add_stock_to_strategy(
     )
     
     # 通知 Listener 节点刷新
-    asyncio.create_task(_notify_listeners_refresh(strategy_type))
+    _schedule_listeners_refresh(strategy_type)
     
     stock_name = stock.get("name", ts_code)
     suffix = ""
@@ -1536,7 +1570,7 @@ async def batch_add_stocks_to_strategy(
                 }
             },
         )
-        asyncio.create_task(_notify_listeners_refresh(strategy_type))
+        _schedule_listeners_refresh(strategy_type)
 
     message = f"已添加 {len(added)} 只股票"
     if skipped:
@@ -1592,7 +1626,7 @@ async def remove_stock_from_strategy(
     if ts_code in stock_configs:
         stock_configs.pop(ts_code, None)
         params["stock_configs"] = stock_configs
-    
+
     await mongo_manager.update_one(
         "strategy_subscriptions",
         {"strategy_type": strategy_type},
@@ -1606,7 +1640,7 @@ async def remove_stock_from_strategy(
     )
     
     # 通知 Listener 节点刷新
-    asyncio.create_task(_notify_listeners_refresh(strategy_type))
+    _schedule_listeners_refresh(strategy_type)
     
     return AddStockResponse(
         success=True,
@@ -1679,7 +1713,7 @@ async def update_stock_config(
         },
     )
 
-    asyncio.create_task(_notify_listeners_refresh(strategy_type))
+    _schedule_listeners_refresh(strategy_type)
     updated = await mongo_manager.find_one(
         "strategy_subscriptions",
         {"strategy_type": strategy_type},

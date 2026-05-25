@@ -342,11 +342,22 @@ class DataSyncNode(BaseNode):
         hot_news_collector = self._get_job("hot_news")
         if not hot_news_collector:
             return {"success": False, "error": "HotNewsCollector not found"}
-        
+
         try:
-            result = await hot_news_collector.refresh(source_id)
+            result = await asyncio.wait_for(
+                hot_news_collector.refresh(source_id),
+                timeout=max(1, self.settings.data_sync.job_timeout_seconds),
+            )
             self.logger.info(f"[{trace_id}] refresh_hot_news done: {result}")
             return result
+        except asyncio.TimeoutError:
+            self.logger.error(f"[{trace_id}] refresh_hot_news timed out")
+            return {
+                "success_count": 0,
+                "fail_count": 1,
+                "total_news": 0,
+                "error": "timeout",
+            }
         except Exception as e:
             self.logger.exception(f"[{trace_id}] refresh_hot_news failed: {e}")
             return {
