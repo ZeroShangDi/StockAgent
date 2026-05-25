@@ -49,10 +49,11 @@ class EventClusteringTask(BaseTask):
         trace_id = uuid.uuid4().hex[:8]
         
         self.logger.info(f"[{trace_id}] Starting event clustering...")
-        
+
         result = await self._engine.process_pending_news(
-            batch_size=100,
+            batch_size=max(1, settings.data_sync.event_clustering_batch_size),
             trace_id=trace_id,
+            max_concurrent=max(1, settings.data_sync.event_clustering_max_concurrent),
         )
         
         self.logger.info(

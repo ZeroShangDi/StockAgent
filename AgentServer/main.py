@@ -22,8 +22,8 @@ StockAgent 统一入口
     # 启动数据同步节点
     NODE_TYPE=data_sync python main.py
     
-    # 启动推理节点 (可启动多个)
-    NODE_TYPE=inference MAX_CONCURRENT_TASKS=10 python main.py
+    # 启动推理节点 (可按服务器资源调整并发)
+    NODE_TYPE=inference MAX_CONCURRENT_TASKS=2 python main.py
     
     # 启动监听节点
     NODE_TYPE=listener python main.py
@@ -161,7 +161,7 @@ def main():
         
     elif node_type == NodeType.INFERENCE:
         from nodes.inference.node import InferenceNode
-        max_tasks = int(os.environ.get("MAX_CONCURRENT_TASKS", 5))
+        max_tasks = int(os.environ.get("MAX_CONCURRENT_TASKS", 2))
         node = InferenceNode(max_concurrent_tasks=max_tasks)
     
     elif node_type == NodeType.LISTENER:

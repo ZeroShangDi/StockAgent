@@ -269,20 +269,25 @@ class MarketWeatherService:
                     continue
             pending_dates.append(trade_date)
 
-        semaphore = asyncio.Semaphore(4)
+        max_concurrent = max(1, settings.data_sync.market_weather_max_concurrent)
 
         async def _fetch(trade_date: str) -> Dict[str, Any]:
-            async with semaphore:
-                return await self.fetch_one(trade_date)
+            return await self.fetch_one(trade_date)
 
-        tasks = {trade_date: asyncio.create_task(_fetch(trade_date)) for trade_date in pending_dates}
-        for trade_date, task in tasks.items():
-            try:
-                records.append(await task)
+        # 分块执行，避免历史补采时一次性创建大量 task 和工作流请求。
+        for start in range(0, len(pending_dates), max_concurrent):
+            batch_dates = pending_dates[start:start + max_concurrent]
+            results = await asyncio.gather(
+                *(_fetch(trade_date) for trade_date in batch_dates),
+                return_exceptions=True,
+            )
+            for trade_date, result in zip(batch_dates, results):
+                if isinstance(result, Exception):
+                    failed += 1
+                    errors.append({"trade_date": trade_date, "error": str(result)})
+                    continue
+                records.append(result)
                 success += 1
-            except Exception as exc:
-                failed += 1
-                errors.append({"trade_date": trade_date, "error": str(exc)})
 
         if records:
             await mongo_manager.bulk_upsert(

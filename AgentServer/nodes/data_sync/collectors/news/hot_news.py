@@ -935,8 +935,14 @@ class HotNewsCollector(BaseCollector):
         # 创建所有来源实例
         sources = [cls() for cls in self.SOURCE_CLASSES]
         
-        # 并发抓取
-        tasks = [self._fetch_source(source) for source in sources]
+        # 限制来源并发，全量档位下避免十几个 HTTP 源同时打满连接和 CPU。
+        semaphore = asyncio.Semaphore(max(1, settings.data_sync.hot_news_max_concurrency))
+
+        async def fetch_with_limit(source: HotNewsSource) -> Dict[str, Any]:
+            async with semaphore:
+                return await self._fetch_source(source)
+
+        tasks = [fetch_with_limit(source) for source in sources]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # 统计结果

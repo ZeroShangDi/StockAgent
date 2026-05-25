@@ -407,17 +407,27 @@ class DataSyncSettings(BaseSettings):
     # 市场晴雨表采集时间 (默认: 每个交易日 18:40)
     market_weather_schedule: Optional[str] = None
 
+    # 市场晴雨表历史补采并发，避免一次性创建大量工作流请求
+    market_weather_max_concurrent: int = 2
+
     # 市场统计缓存时间 (默认: 每个交易日 18:20)
     market_statistics_cache_schedule: Optional[str] = None
 
     # 新闻采集时间 (默认: 每 2 小时)
     news_schedule: Optional[str] = None
+
+    # 热点新闻来源并发数，全量档位下用于限制外部 HTTP 尖峰
+    hot_news_max_concurrency: int = 3
     
     # 多源新闻采集检查时间 (默认: 每分钟检查，内部按分组差异化调度)
     multi_source_news_schedule: Optional[str] = None
     
     # 事件聚类时间 (默认: 每 30 分钟，LLM 深度去重)
     event_clustering_schedule: Optional[str] = None
+
+    # 事件聚类批量与 LLM 并发，默认偏保守，避免新闻任务挤占主业务资源
+    event_clustering_batch_size: int = 30
+    event_clustering_max_concurrent: int = 3
     
     # 数据生命周期管理时间 (默认: 每天凌晨 3:00)
     news_lifecycle_schedule: Optional[str] = None
@@ -465,6 +475,10 @@ class ListenerSettings(BaseSettings):
     
     # 是否在非交易时间静默
     silent_outside_trading: bool = True
+
+    # 大股票列表监听分批参数，降低单轮行情拉取的内存和 API 压力
+    large_watch_batch: int = 400
+    large_watch_threshold: int = 600
 
 
 class NotificationSettings(BaseSettings):

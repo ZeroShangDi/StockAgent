@@ -62,10 +62,6 @@ class ListenerNode(BaseNode):
     node_type = NodeType.LISTENER
     DEFAULT_RPC_PORT = 50053  # ListenerNode 默认 RPC 端口
 
-    # 全市场分批拉取配置
-    LARGE_WATCH_BATCH = 800       # 单批最大股票数
-    LARGE_WATCH_THRESHOLD = 1000  # 超过此阈值启用分批模式
-
     def __init__(self, node_id: Optional[str] = None, rpc_port: int = 0):
         super().__init__(node_id, rpc_port or settings.rpc.listener_port)
         self.logger = logging.getLogger(f"node.listener.{self.node_id}")
@@ -73,6 +69,8 @@ class ListenerNode(BaseNode):
         # 配置
         self._config = settings.listener
         self._poll_interval = self._config.poll_interval
+        self._large_watch_batch = max(50, self._config.large_watch_batch)
+        self._large_watch_threshold = max(self._large_watch_batch, self._config.large_watch_threshold)
 
         # 状态
         self._current_snapshot: Optional[MarketSnapshot] = None
@@ -284,16 +282,16 @@ class ListenerNode(BaseNode):
 
         # 5. 分批拉取实时行情 (全市场模式下降级为分批，减轻 API 和内存压力)
         total_codes = len(watch_codes)
-        if total_codes > self.LARGE_WATCH_THRESHOLD:
+        if total_codes > self._large_watch_threshold:
             self.logger.info(
                 f"[poll] Large watch list ({total_codes} stocks), "
-                f"using batch mode (batch={self.LARGE_WATCH_BATCH})"
+                f"using batch mode (batch={self._large_watch_batch})"
             )
             all_quotes: Dict[str, Dict[str, Any]] = {}
             quote_source = None
 
-            for batch_start in range(0, total_codes, self.LARGE_WATCH_BATCH):
-                batch_codes = watch_codes[batch_start:batch_start + self.LARGE_WATCH_BATCH]
+            for batch_start in range(0, total_codes, self._large_watch_batch):
+                batch_codes = watch_codes[batch_start:batch_start + self._large_watch_batch]
                 batch_quotes, batch_source = await data_source_manager.get_realtime_quotes(
                     batch_codes,
                     batch_size=50,
@@ -302,7 +300,7 @@ class ListenerNode(BaseNode):
                 if batch_quotes:
                     all_quotes.update(batch_quotes)
                 self.logger.debug(
-                    f"[poll] Batch {batch_start // self.LARGE_WATCH_BATCH + 1}: "
+                    f"[poll] Batch {batch_start // self._large_watch_batch + 1}: "
                     f"{len(batch_codes)} codes → {len(batch_quotes or {})} quotes"
                 )
 

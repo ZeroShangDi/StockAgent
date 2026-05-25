@@ -277,7 +277,7 @@ def main():
     """入口函数"""
     import os
     
-    max_tasks = int(os.environ.get("MAX_CONCURRENT_TASKS", 5))
+    max_tasks = int(os.environ.get("MAX_CONCURRENT_TASKS", 2))
     
     node = InferenceNode(max_concurrent_tasks=max_tasks)
     asyncio.run(node.main())

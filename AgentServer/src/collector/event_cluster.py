@@ -500,7 +500,7 @@ class EventClusterEngine:
         self,
         batch_size: int = 50,
         trace_id: Optional[str] = None,
-        max_concurrent: int = 20,
+        max_concurrent: int = 5,
     ) -> ClusterResult:
         """
         处理待聚类的新闻
