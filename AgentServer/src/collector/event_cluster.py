@@ -923,94 +923,76 @@ class EventClusterEngine:
         self.logger.info(f"[{trace_id}] Tiered enriching {len(events)} events...")
         
         stats = {"full": 0, "partial": 0, "rule": 0, "skip": 0}
-        semaphore = asyncio.Semaphore(5)
-        
+        max_concurrent = 5
+
         async def enrich_single(event_doc) -> str:
             """返回增强类型: full/partial/rule/skip"""
-            async with semaphore:
-                priority = event_doc.get("primary_news_priority", 2)
-                event_id = event_doc.get("id", "")
-                title = event_doc.get("title", "")
-                existing_sectors = event_doc.get("related_sectors", [])
-                
-                try:
-                    # P1/P2: 全量 LLM 增强
-                    if priority in full_priorities:
-                        result = await llm.invoke_and_parse(
-                            template_name="event_enrich",
-                            title=title,
-                            summary=event_doc.get("summary", ""),
-                            category=event_doc.get("category", ""),
-                            sources=", ".join(event_doc.get("sources", [])),
+            priority = event_doc.get("primary_news_priority", 2)
+            event_id = event_doc.get("id", "")
+            title = event_doc.get("title", "")
+            existing_sectors = event_doc.get("related_sectors", [])
+
+            try:
+                # P1/P2: 全量 LLM 增强
+                if priority in full_priorities:
+                    result = await llm.invoke_and_parse(
+                        template_name="event_enrich",
+                        title=title,
+                        summary=event_doc.get("summary", ""),
+                        category=event_doc.get("category", ""),
+                        sources=", ".join(event_doc.get("sources", [])),
+                    )
+
+                    if result:
+                        update_fields = {
+                            "sentiment": result.get("sentiment"),
+                            "sentiment_score": result.get("sentiment_score", 0.0),
+                            "impact_scope": result.get("impact_scope"),
+                            "related_sectors": result.get("related_sectors", []),
+                            "policy_level": result.get("policy_level"),
+                            "enriched_at": datetime.utcnow(),
+                            "enrich_type": "full",
+                        }
+                        await mongo.update_one(
+                            "news_events",
+                            {"id": event_id},
+                            {"$set": update_fields}
                         )
-                        
-                        if result:
-                            update_fields = {
-                                "sentiment": result.get("sentiment"),
-                                "sentiment_score": result.get("sentiment_score", 0.0),
-                                "impact_scope": result.get("impact_scope"),
-                                "related_sectors": result.get("related_sectors", []),
-                                "policy_level": result.get("policy_level"),
-                                "enriched_at": datetime.utcnow(),
-                                "enrich_type": "full",
-                            }
-                            await mongo.update_one(
-                                "news_events",
-                                {"id": event_id},
-                                {"$set": update_fields}
-                            )
-                            return "full"
-                    
-                    # P3: 仅未识别板块时调用简化 LLM
-                    elif priority in partial_priorities:
-                        if not existing_sectors:
-                            result = await llm.invoke_and_parse(
-                                template_name="event_sector_only",
-                                title=title,
-                            )
-                            
-                            if result and result.get("sectors"):
-                                # 使用规则补充其他字段
-                                rule_result = self._apply_keyword_rules(title, keyword_rules)
-                                update_fields = {
-                                    "related_sectors": result.get("sectors", []),
-                                    "sentiment": rule_result.get("sentiment", "neutral"),
-                                    "sentiment_score": 0.0,
-                                    "impact_scope": "sector",
-                                    "enriched_at": datetime.utcnow(),
-                                    "enrich_type": "partial",
-                                }
-                                await mongo.update_one(
-                                    "news_events",
-                                    {"id": event_id},
-                                    {"$set": update_fields}
-                                )
-                                return "partial"
-                        else:
-                            # 已有板块，规则填充其他字段
+
+                        return "full"
+
+                # P3: 仅未识别板块时调用简化 LLM
+                elif priority in partial_priorities:
+                    if not existing_sectors:
+                        result = await llm.invoke_and_parse(
+                            template_name="event_sector_only",
+                            title=title,
+                        )
+
+                        if result and result.get("sectors"):
+                            # 使用规则补充其他字段
                             rule_result = self._apply_keyword_rules(title, keyword_rules)
                             update_fields = {
+                                "related_sectors": result.get("sectors", []),
                                 "sentiment": rule_result.get("sentiment", "neutral"),
                                 "sentiment_score": 0.0,
                                 "impact_scope": "sector",
                                 "enriched_at": datetime.utcnow(),
-                                "enrich_type": "rule",
+                                "enrich_type": "partial",
                             }
                             await mongo.update_one(
                                 "news_events",
                                 {"id": event_id},
                                 {"$set": update_fields}
                             )
-                            return "rule"
-                    
-                    # P4/P5: 纯规则填充
-                    elif priority in rule_priorities:
+                            return "partial"
+                    else:
+                        # 已有板块，规则填充其他字段
                         rule_result = self._apply_keyword_rules(title, keyword_rules)
                         update_fields = {
                             "sentiment": rule_result.get("sentiment", "neutral"),
                             "sentiment_score": 0.0,
-                            "impact_scope": rule_result.get("impact_scope", "stock"),
-                            "related_sectors": rule_result.get("sectors", []),
+                            "impact_scope": "sector",
                             "enriched_at": datetime.utcnow(),
                             "enrich_type": "rule",
                         }
@@ -1020,18 +1002,36 @@ class EventClusterEngine:
                             {"$set": update_fields}
                         )
                         return "rule"
-                    
-                    return "skip"
-                    
-                except Exception as e:
-                    self.logger.warning(f"[{trace_id}] Enrich event {event_id} failed: {e}")
-                    return "skip"
-        
-        tasks = [enrich_single(doc) for doc in events]
-        results = await asyncio.gather(*tasks)
-        
-        for r in results:
-            stats[r] = stats.get(r, 0) + 1
+
+                # P4/P5: 纯规则填充
+                elif priority in rule_priorities:
+                    rule_result = self._apply_keyword_rules(title, keyword_rules)
+                    update_fields = {
+                        "sentiment": rule_result.get("sentiment", "neutral"),
+                        "sentiment_score": 0.0,
+                        "impact_scope": rule_result.get("impact_scope", "stock"),
+                        "related_sectors": rule_result.get("sectors", []),
+                        "enriched_at": datetime.utcnow(),
+                        "enrich_type": "rule",
+                    }
+                    await mongo.update_one(
+                        "news_events",
+                        {"id": event_id},
+                        {"$set": update_fields}
+                    )
+                    return "rule"
+
+                return "skip"
+
+            except Exception as e:
+                self.logger.warning(f"[{trace_id}] Enrich event {event_id} failed: {e}")
+                return "skip"
+
+        for start in range(0, len(events), max_concurrent):
+            batch = events[start:start + max_concurrent]
+            results = await asyncio.gather(*(enrich_single(doc) for doc in batch))
+            for r in results:
+                stats[r] = stats.get(r, 0) + 1
         
         self.logger.info(
             f"[{trace_id}] Tiered enrichment done: "

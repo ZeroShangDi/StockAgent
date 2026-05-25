@@ -16,6 +16,10 @@ from src.analysis.stock_picker import stock_picker_service
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+MAX_STRATEGY_KLINE_ROWS = 260
+MAX_DOUBLE_CANNON_LOOKBACK = 120
+MAX_STRATEGY_MA_WINDOW = 120
+MAX_TURTLE_WINDOW = 120
 
 
 @dataclass(frozen=True)
@@ -200,6 +204,10 @@ def _to_int(value: Any, default: int) -> int:
         return default
 
 
+def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    return min(max(_to_int(value, default), minimum), maximum)
+
+
 def _is_enabled(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -257,12 +265,12 @@ def evaluate_turtle_trading_from_candles(
 ) -> StrategyV2EvaluationResult:
     """Evaluate a simplified Turtle/Donchian breakout strategy from ascending daily candles."""
     params = params or {}
-    entry_window = max(_to_int(params.get("entry_window"), 20), 2)
-    exit_window = max(_to_int(params.get("exit_window"), 10), 2)
-    atr_period = max(_to_int(params.get("atr_period"), 20), 1)
+    entry_window = _bounded_int(params.get("entry_window"), 20, 2, MAX_TURTLE_WINDOW)
+    exit_window = _bounded_int(params.get("exit_window"), 10, 2, MAX_TURTLE_WINDOW)
+    atr_period = _bounded_int(params.get("atr_period"), 20, 1, MAX_TURTLE_WINDOW)
     use_close_confirmation = _is_enabled(params.get("use_close_confirmation", True))
     require_volume_confirm = _is_enabled(params.get("require_volume_confirm", False))
-    volume_window = max(_to_int(params.get("volume_window"), 20), 2)
+    volume_window = _bounded_int(params.get("volume_window"), 20, 2, MAX_TURTLE_WINDOW)
     volume_multiplier = max(_to_float(params.get("volume_multiplier"), 1.2), 0)
     min_atr_pct = max(_to_float(params.get("min_atr_pct"), 0), 0)
     max_atr_pct = max(_to_float(params.get("max_atr_pct"), 0), 0)
@@ -346,15 +354,15 @@ def evaluate_double_cannon_from_candles(
 ) -> StrategyV2EvaluationResult:
     """Evaluate the double-cannon pattern from ascending daily candles."""
     params = params or {}
-    lookback_days = max(_to_int(params.get("lookback_days"), 22), 5)
+    lookback_days = _bounded_int(params.get("lookback_days"), 22, 5, MAX_DOUBLE_CANNON_LOOKBACK)
     min_bull_pct = _to_float(params.get("min_bull_pct"), 5.0)
-    max_second_age_days = max(_to_int(params.get("max_second_age_days"), 5), 0)
+    max_second_age_days = _bounded_int(params.get("max_second_age_days"), 5, 0, MAX_DOUBLE_CANNON_LOOKBACK)
     require_second_volume_gt_first = _is_enabled(params.get("require_second_volume_gt_first"))
     require_bullish_ma = _is_enabled(params.get("require_bullish_ma"))
     require_pullback_shrink_volume = _is_enabled(params.get("require_pullback_shrink_volume"))
-    ma_short = max(_to_int(params.get("ma_short"), 5), 1)
-    ma_mid = max(_to_int(params.get("ma_mid"), 10), 1)
-    ma_long = max(_to_int(params.get("ma_long"), 20), 1)
+    ma_short = _bounded_int(params.get("ma_short"), 5, 1, MAX_STRATEGY_MA_WINDOW)
+    ma_mid = _bounded_int(params.get("ma_mid"), 10, 1, MAX_STRATEGY_MA_WINDOW)
+    ma_long = _bounded_int(params.get("ma_long"), 20, 1, MAX_STRATEGY_MA_WINDOW)
 
     rows = [row for row in candles if row.get("trade_date") and _to_float(row.get("close")) > 0]
     rows.sort(key=lambda item: str(item.get("trade_date")))
@@ -441,9 +449,9 @@ class DoubleCannonStrategy:
         if not ts_code:
             return StrategyV2EvaluationResult(signal=0, reason="缺少股票代码，无法读取历史 K 线")
 
-        lookback_days = max(_to_int(params.get("lookback_days"), 22), 5)
-        ma_long = max(_to_int(params.get("ma_long"), 20), 1)
-        load_limit = max(lookback_days + ma_long + 5, 40)
+        lookback_days = _bounded_int(params.get("lookback_days"), 22, 5, MAX_DOUBLE_CANNON_LOOKBACK)
+        ma_long = _bounded_int(params.get("ma_long"), 20, 1, MAX_STRATEGY_MA_WINDOW)
+        load_limit = min(max(lookback_days + ma_long + 5, 40), MAX_STRATEGY_KLINE_ROWS)
         records = await mongo_manager.find_many(
             "stock_daily",
             {"ts_code": ts_code},
@@ -485,11 +493,11 @@ class TurtleTradingStrategy:
         if not ts_code:
             return StrategyV2EvaluationResult(signal=0, reason="缺少股票代码，无法读取历史 K 线")
 
-        entry_window = max(_to_int(params.get("entry_window"), 20), 2)
-        exit_window = max(_to_int(params.get("exit_window"), 10), 2)
-        atr_period = max(_to_int(params.get("atr_period"), 20), 1)
-        volume_window = max(_to_int(params.get("volume_window"), 20), 2)
-        load_limit = max(entry_window, exit_window, atr_period, volume_window) + 5
+        entry_window = _bounded_int(params.get("entry_window"), 20, 2, MAX_TURTLE_WINDOW)
+        exit_window = _bounded_int(params.get("exit_window"), 10, 2, MAX_TURTLE_WINDOW)
+        atr_period = _bounded_int(params.get("atr_period"), 20, 1, MAX_TURTLE_WINDOW)
+        volume_window = _bounded_int(params.get("volume_window"), 20, 2, MAX_TURTLE_WINDOW)
+        load_limit = min(max(entry_window, exit_window, atr_period, volume_window) + 5, MAX_STRATEGY_KLINE_ROWS)
         records = await mongo_manager.find_many(
             "stock_daily",
             {"ts_code": ts_code},
