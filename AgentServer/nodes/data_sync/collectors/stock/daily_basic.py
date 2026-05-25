@@ -290,6 +290,7 @@ class DailyBasicCollector(BaseCollector):
                 "daily_basic",
                 {"trade_date": trade_date, "ts_code": {"$in": focus_codes}},
                 projection={"ts_code": 1},
+                limit=len(focus_codes),
             )
             covered = {row.get("ts_code") for row in rows if row.get("ts_code")}
             return all(code in covered for code in focus_codes)

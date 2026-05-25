@@ -134,6 +134,7 @@ class IndexDailyCollector(BaseCollector):
             "index_daily",
             {"trade_date": trade_date, "ts_code": {"$in": self.CORE_INDICES}},
             projection={"ts_code": 1},
+            limit=len(self.CORE_INDICES),
         )
         covered = {row.get("ts_code") for row in rows if row.get("ts_code")}
         return all(code in covered for code in self.CORE_INDICES)

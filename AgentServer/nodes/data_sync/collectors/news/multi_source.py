@@ -147,6 +147,7 @@ class MultiSourceCollector(BaseCollector):
             docs = await mongo_manager.find_many(
                 self.METADATA_COLLECTION,
                 {"type": "group_collect_time"},
+                limit=max(10, len(GROUP_INTERVALS) * 2),
             )
             for doc in docs:
                 group = doc.get("group")

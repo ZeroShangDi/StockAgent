@@ -24,6 +24,8 @@ from core.protocols import MarketSnapshot, StrategyAlert, StrategySubscription
 
 from .base import BaseStrategy
 
+MAX_TRADE_DATE_ROWS_PER_STOCK = 6000
+
 
 @dataclass
 class LineDefinition:
@@ -214,6 +216,7 @@ class SupportResistanceStrategy(BaseStrategy):
                 query,
                 projection={"trade_date": 1, "_id": 0},
                 sort=[("trade_date", 1)],
+                limit=MAX_TRADE_DATE_ROWS_PER_STOCK,
             )
             dates = [record.get("trade_date") for record in records if record.get("trade_date")]
             self._trade_date_cache[cache_key] = dates

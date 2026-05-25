@@ -18,6 +18,8 @@ from core.base import BaseCollector
 from core.settings import settings
 from core.managers import data_source_manager, mongo_manager
 
+MAX_STOCK_UNIVERSE_ROWS = 8000
+
 
 class StockDailyCollector(BaseCollector):
     """
@@ -83,6 +85,7 @@ class StockDailyCollector(BaseCollector):
             "stock_basic",
             {"list_status": "L"},
             projection={"ts_code": 1},
+            limit=MAX_STOCK_UNIVERSE_ROWS,
         )
         
         if not stocks:

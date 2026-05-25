@@ -18,6 +18,8 @@ from core.base import BaseCollector
 from core.settings import settings
 from core.managers import data_source_manager, mongo_manager
 
+MAX_STOCK_UNIVERSE_ROWS = 8000
+
 
 # 财务数据集合配置
 FINA_COLLECTIONS = [
@@ -92,6 +94,7 @@ class FinaIndicatorCollector(BaseCollector):
             "stock_basic",
             query,
             projection={"ts_code": 1},
+            limit=MAX_STOCK_UNIVERSE_ROWS,
         )
         ts_codes = [s["ts_code"] for s in stocks]
         

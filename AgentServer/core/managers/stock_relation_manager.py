@@ -19,6 +19,10 @@ class StockRelationManager(BaseManager):
 
     COLLECTION = "stock_relations"
     STATIC_SOURCES = ("stock_basic", "ths_sector")
+    MAX_RELATION_ROWS = 30000
+    MAX_STOCK_UNIVERSE_ROWS = 8000
+    MAX_SECTOR_MAP_ROWS = 8000
+    MAX_DAILY_LIMIT_ROWS = 6000
 
     async def initialize(self) -> None:
         self._initialized = True
@@ -122,6 +126,7 @@ class StockRelationManager(BaseManager):
             query,
             projection={"_id": 0},
             sort=[("relation_type", 1), ("source_trade_date", -1), ("relation_name", 1)],
+            limit=self.MAX_RELATION_ROWS,
         )
 
     async def _build_static_relation_docs(
@@ -140,6 +145,7 @@ class StockRelationManager(BaseManager):
                 "exchange": 1,
                 "_id": 0,
             },
+            limit=self.MAX_STOCK_UNIVERSE_ROWS,
         )
 
         stock_index: Dict[str, Dict[str, Any]] = {}
@@ -175,6 +181,7 @@ class StockRelationManager(BaseManager):
             "stock_sector_map",
             {},
             projection={"code": 1, "sectors": 1, "_id": 0},
+            limit=self.MAX_SECTOR_MAP_ROWS,
         )
 
         sector_codes = sorted({
@@ -190,6 +197,7 @@ class StockRelationManager(BaseManager):
                 "ths_sectors",
                 {"ts_code": {"$in": sector_codes}},
                 projection={"ts_code": 1, "name": 1, "sector_type": 1, "type_name": 1, "_id": 0},
+                limit=len(sector_codes),
             )
             sector_meta_map = {
                 str(item.get("ts_code") or "").strip(): item
@@ -255,6 +263,7 @@ class StockRelationManager(BaseManager):
                 "fd_amount": 1,
                 "_id": 0,
             },
+            limit=self.MAX_DAILY_LIMIT_ROWS,
         )
 
         relation_docs: List[Dict[str, Any]] = []

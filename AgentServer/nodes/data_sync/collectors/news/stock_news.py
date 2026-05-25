@@ -19,6 +19,8 @@ from core.settings import settings
 from core.managers import mongo_manager, data_source_manager
 from core.managers.milvus_manager import milvus_manager
 
+MAX_DAILY_LIMIT_STOCKS = 6000
+
 
 class StockNewsCollector(BaseCollector):
     """
@@ -167,6 +169,7 @@ class StockNewsCollector(BaseCollector):
             "limit_list",
             {"trade_date": trade_date},
             projection={"ts_code": 1, "limit": 1, "_id": 0},
+            limit=MAX_DAILY_LIMIT_STOCKS,
         )
         
         if not limit_records:
@@ -184,6 +187,7 @@ class StockNewsCollector(BaseCollector):
                     "limit_list",
                     {"trade_date": latest_date},
                     projection={"ts_code": 1, "limit": 1, "_id": 0},
+                    limit=MAX_DAILY_LIMIT_STOCKS,
                 )
         
         # 提取股票代码 (涨停U和跌停D都采集)

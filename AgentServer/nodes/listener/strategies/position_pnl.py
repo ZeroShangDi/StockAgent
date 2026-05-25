@@ -16,6 +16,8 @@ from core.protocols import MarketSnapshot, StrategyAlert, StrategySubscription
 
 from .base import BaseStrategy
 
+MAX_POSITION_ROWS = 5000
+
 
 class PositionPnlStrategy(BaseStrategy):
     @property
@@ -154,6 +156,7 @@ class PositionPnlStrategy(BaseStrategy):
                 "quantity": 1,
                 "total_cost": 1,
             },
+            limit=MAX_POSITION_ROWS,
         )
         return {
             str(doc.get("ts_code")): doc

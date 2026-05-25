@@ -19,6 +19,8 @@ from core.base import BaseCollector
 from core.settings import settings
 from core.managers import tushare_manager, mongo_manager
 
+MAX_STOCK_UNIVERSE_ROWS = 8000
+
 
 class FinaIndicatorCollector(BaseCollector):
     """
@@ -121,6 +123,7 @@ class FinaIndicatorCollector(BaseCollector):
             "stock_basic",
             query,
             projection={"ts_code": 1},
+            limit=MAX_STOCK_UNIVERSE_ROWS,
         )
         ts_codes = [s["ts_code"] for s in stocks]
         
