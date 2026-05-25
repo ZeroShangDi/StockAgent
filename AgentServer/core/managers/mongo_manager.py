@@ -561,11 +561,16 @@ class MongoManager(BaseManager):
         self,
         collection: str,
         pipeline: List[dict],
+        limit: int = 0,
+        allow_disk_use: bool = True,
     ) -> List[dict]:
         """聚合查询"""
         self._ensure_initialized()
-        cursor = self._db[collection].aggregate(pipeline)
-        return await cursor.to_list(length=None)
+        cursor = self._db[collection].aggregate(
+            pipeline,
+            allowDiskUse=allow_disk_use,
+        )
+        return await cursor.to_list(length=limit or None)
     
     # ==================== 高性能批量写入 ====================
     

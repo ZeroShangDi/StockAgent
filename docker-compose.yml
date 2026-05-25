@@ -32,6 +32,7 @@ services:
       WEB_HOST: 0.0.0.0
       WEB_PORT: 8000
       MILVUS_URI: "${MILVUS_URI:-./data/milvus_lite.db}"
+      STRATEGY_V2_MAX_CONCURRENT_RUNS: "${STRATEGY_V2_MAX_CONCURRENT_RUNS:-1}"
     depends_on:
       mongodb:
         condition: service_healthy

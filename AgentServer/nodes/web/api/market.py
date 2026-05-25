@@ -168,6 +168,30 @@ async def _get_index_trade_dates(limit: int = 260) -> List[str]:
     return unique[-limit:]
 
 
+async def _get_recent_sector_ranking_dates(
+    ranking_type: str,
+    limit: int,
+    latest_trade_date: Optional[str] = None,
+) -> List[str]:
+    """在数据库端按日期去重取最近 N 天，避免把 sector_ranking 全表拉到 Web 进程。"""
+    match: Dict[str, Any] = {"ranking_type": ranking_type}
+    if latest_trade_date:
+        match["trade_date"] = {"$lte": latest_trade_date}
+
+    rows = await mongo_manager.aggregate(
+        "sector_ranking",
+        [
+            {"$match": match},
+            {"$group": {"_id": "$trade_date"}},
+            {"$sort": {"_id": -1}},
+            {"$limit": limit},
+            {"$project": {"trade_date": "$_id", "_id": 0}},
+        ],
+        limit=limit,
+    )
+    return [str(row.get("trade_date") or "") for row in rows if row.get("trade_date")]
+
+
 def _build_period_coverage_warning(trade_dates: List[str], period: str, source_label: str) -> List[str]:
     expected_days = _resolve_period_days(period)
     if len(trade_dates) >= expected_days:
@@ -829,15 +853,7 @@ async def get_sector_ranking(
     # 如果需要获取多天历史数据
     history = []
     if days > 1:
-        # 获取最近 N 天的交易日（从 sector_ranking 表）
-        all_dates = await mongo_manager.find_many(
-            "sector_ranking",
-            {"ranking_type": ranking_type},
-            projection={"trade_date": 1, "_id": 0},
-            sort=[("trade_date", -1)],
-        )
-        # 去重并排序
-        unique_dates = sorted(list(set(d.get("trade_date") for d in all_dates if d.get("trade_date"))), reverse=True)[:days]
+        unique_dates = await _get_recent_sector_ranking_dates(ranking_type, days)
         
         for dt in unique_dates:
             dt_data = await mongo_manager.find_many(
@@ -1464,16 +1480,7 @@ async def get_sector_timeline(
     
     用于展示板块在过去N天的位次迁移
     """
-    # 获取最近N天的排名数据
-    all_dates = await mongo_manager.find_many(
-        "sector_ranking",
-        {"ranking_type": ranking_type},
-        projection={"trade_date": 1, "_id": 0},
-    )
-    unique_dates = sorted(
-        list(set(d.get("trade_date") for d in all_dates if d.get("trade_date"))),
-        reverse=True
-    )[:days]
+    unique_dates = await _get_recent_sector_ranking_dates(ranking_type, days)
     
     if not unique_dates:
         return {"dates": [], "sectors": []}

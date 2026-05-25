@@ -446,9 +446,9 @@ class BaseCollector(ScheduledJob):
             cursor = collection.find({
                 "collector": self.name,
                 "retry_count": {"$lt": max_count},
-            }).sort("created_at", 1)
-            
-            return await cursor.to_list(None)
+            }).sort("created_at", 1).limit(200)
+
+            return await cursor.to_list(200)
             
         except Exception as e:
             self.logger.error(f"Failed to get pending failures: {e}")

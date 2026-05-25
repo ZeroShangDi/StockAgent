@@ -102,16 +102,12 @@ class ThemeManager(BaseManager):
         days: int,
     ) -> List[Dict]:
         """获取最近N天的排名数据"""
-        # 获取最近的交易日
-        all_dates = await mongo_manager.find_many(
-            "sector_ranking",
-            {"ranking_type": "industry_top"},
-            projection={"trade_date": 1, "_id": 0},
+        unique_dates = await self._get_recent_ranking_dates(
+            mongo_manager,
+            ranking_type="industry_top",
+            trade_date=trade_date,
+            days=days,
         )
-        unique_dates = sorted(
-            list(set(d.get("trade_date") for d in all_dates if d.get("trade_date") and d.get("trade_date") <= trade_date)),
-            reverse=True
-        )[:days]
         
         if not unique_dates:
             return []
@@ -127,6 +123,27 @@ class ThemeManager(BaseManager):
         )
         
         return rankings
+
+    async def _get_recent_ranking_dates(
+        self,
+        mongo_manager,
+        ranking_type: str,
+        trade_date: str,
+        days: int,
+    ) -> List[str]:
+        """在数据库端按日期去重取最近 N 天，避免 Web 进程全表拉取 sector_ranking。"""
+        rows = await mongo_manager.aggregate(
+            "sector_ranking",
+            [
+                {"$match": {"ranking_type": ranking_type, "trade_date": {"$lte": trade_date}}},
+                {"$group": {"_id": "$trade_date"}},
+                {"$sort": {"_id": -1}},
+                {"$limit": days},
+                {"$project": {"trade_date": "$_id", "_id": 0}},
+            ],
+            limit=days,
+        )
+        return [str(row.get("trade_date") or "") for row in rows if row.get("trade_date")]
     
     async def _get_limit_board_data(
         self,
@@ -381,16 +398,12 @@ class ThemeManager(BaseManager):
         - [异动]: 评分 < 50 但 今日涨幅 > 4%
         - [退潮]: 评分曾高但近期连续3日排名下滑
         """
-        # 1. 获取最近20天的排名数据
-        all_dates = await mongo_manager.find_many(
-            "sector_ranking",
-            {"ranking_type": "industry_top"},
-            projection={"trade_date": 1, "_id": 0},
+        unique_dates = await self._get_recent_ranking_dates(
+            mongo_manager,
+            ranking_type="industry_top",
+            trade_date=trade_date,
+            days=lookback_days,
         )
-        unique_dates = sorted(
-            list(set(d.get("trade_date") for d in all_dates if d.get("trade_date") and d.get("trade_date") <= trade_date)),
-            reverse=True
-        )[:lookback_days]
         
         if not unique_dates:
             return {"sectors": [], "main_themes": [], "anomalies": [], "fading": []}

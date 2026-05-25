@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -64,6 +65,11 @@ SCHEDULE_SLOT_INTERVALS = {
     "intraday_30m": 30 * 60,
 }
 _SCHEDULER_TASK: Optional[asyncio.Task] = None
+try:
+    _MAX_CONCURRENT_RUNS = max(1, int(os.environ.get("STRATEGY_V2_MAX_CONCURRENT_RUNS", "1")))
+except ValueError:
+    _MAX_CONCURRENT_RUNS = 1
+_RUN_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_RUNS)
 
 
 class StrategyV2RunCancelled(Exception):
@@ -618,6 +624,8 @@ async def _mark_stale_running_runs(
         RUN_COLLECTION,
         query,
         projection={"_id": 0, "run_id": 1, "task_id": 1, "user_id": 1, "started_at": 1, "progress_current": 1, "progress_total": 1},
+        sort=[("started_at", 1)],
+        limit=200,
     )
     now = _utc_now()
     for run in running_runs:
@@ -1351,6 +1359,11 @@ async def _create_temp_stock_pool(
 
 
 async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
+    async with _RUN_SEMAPHORE:
+        await _execute_strategy_v2_run_inner(run_id, user_id)
+
+
+async def _execute_strategy_v2_run_inner(run_id: str, user_id: str) -> None:
     now = _utc_now()
     task_id = ""
     try:
