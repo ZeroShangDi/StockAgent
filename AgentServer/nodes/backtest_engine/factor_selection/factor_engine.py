@@ -18,6 +18,10 @@ from .factor_library import FactorLibrary, FactorDefinition
 
 logger = logging.getLogger(__name__)
 
+MAX_FACTOR_STOCKS = 1200
+MAX_FACTOR_LOOKBACK_DAYS = 120
+MAX_FACTOR_QUERY_ROWS = 300000
+
 
 class FactorEngine:
     """
@@ -52,7 +56,8 @@ class FactorEngine:
         if not stocks:
             return pd.DataFrame()
         
-        stocks_list = list(stocks)
+        stocks_list = sorted(stocks)[:MAX_FACTOR_STOCKS]
+        lookback_days = min(max(lookback_days, 1), MAX_FACTOR_LOOKBACK_DAYS)
         logger.info(f"Computing factors for {len(stocks_list)} stocks on {trade_date}")
         
         # 1. 收集所需数据
@@ -143,9 +148,10 @@ class FactorEngine:
             },
             projection={
                 "ts_code": 1, "trade_date": 1, 
-                "open": 1, "high": 1, "low": 1, "close": 1, 
+                "open": 1, "high": 1, "low": 1, "close": 1,
                 "vol": 1, "amount": 1,
             },
+            limit=MAX_FACTOR_QUERY_ROWS,
         )
         
         # 按股票分组
@@ -182,6 +188,7 @@ class FactorEngine:
                 "turnover_rate": 1, "turnover_rate_f": 1, "volume_ratio": 1,
                 "total_mv": 1, "circ_mv": 1,
             },
+            limit=MAX_FACTOR_QUERY_ROWS,
         )
         
         # 按股票分组
@@ -212,6 +219,8 @@ class FactorEngine:
                 "grossprofit_margin": 1,
                 "revenue_yoy": 1, "netprofit_yoy": 1,
             },
+            sort=[("end_date", -1)],
+            limit=min(len(stocks) * 8, MAX_FACTOR_QUERY_ROWS),
         )
         
         # 每只股票取最新的一条

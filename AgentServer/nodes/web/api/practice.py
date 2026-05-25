@@ -30,6 +30,7 @@ DEFAULT_INITIAL_CAPITAL = 100000.0
 DEFAULT_INIT_BARS = 80
 DEFAULT_FUTURE_BARS = 120
 MIN_TOTAL_BARS = 180
+MAX_ACTIVE_SESSIONS_TO_CLOSE = 20
 PRACTICE_STRATEGY_EVALUATORS = {
     "double_cannon": evaluate_double_cannon_from_candles,
     "turtle_trading": evaluate_turtle_trading_from_candles,
@@ -520,6 +521,7 @@ async def start_practice_session(
         "kline_practice_sessions",
         {"user_id": user_id, "status": "active"},
         sort=[("created_at", -1)],
+        limit=MAX_ACTIVE_SESSIONS_TO_CLOSE,
     )
     for active_session in active_sessions:
         await _complete_session(active_session)

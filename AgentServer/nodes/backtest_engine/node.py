@@ -433,7 +433,9 @@ class BacktestNode(BaseNode):
                 "ts_code": ts_code,
                 "trade_date": {"$gte": start_date, "$lte": end_date},
             },
+            projection={"_id": 0, "trade_date": 1, "open": 1, "high": 1, "low": 1, "close": 1, "vol": 1},
             sort=[("trade_date", 1)],
+            limit=3000,
         )
         
         if not records:

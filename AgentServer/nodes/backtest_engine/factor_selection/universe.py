@@ -17,6 +17,8 @@ from common.enums import UniverseType, ExcludeRule
 
 logger = logging.getLogger(__name__)
 
+MAX_UNIVERSE_STOCKS = 6000
+
 
 class UniverseManager:
     """
@@ -78,6 +80,7 @@ class UniverseManager:
             "stock_daily",
             {"trade_date": trade_date},
             projection={"ts_code": 1},
+            limit=MAX_UNIVERSE_STOCKS,
         )
         return {doc["ts_code"] for doc in result}
     
@@ -116,6 +119,7 @@ class UniverseManager:
             "stock_basic",
             {"name": {"$regex": "ST", "$options": "i"}},
             projection={"ts_code": 1},
+            limit=MAX_UNIVERSE_STOCKS,
         )
         return {doc["ts_code"] for doc in result}
     
@@ -130,6 +134,7 @@ class UniverseManager:
             "stock_basic",
             {"list_date": {"$gt": cutoff_date}},
             projection={"ts_code": 1},
+            limit=MAX_UNIVERSE_STOCKS,
         )
         return {doc["ts_code"] for doc in result}
     
@@ -140,6 +145,7 @@ class UniverseManager:
             "limit_list",
             {"trade_date": trade_date, "limit": "U"},  # U = 涨停
             projection={"ts_code": 1, "open": 1, "low": 1, "close": 1},
+            limit=MAX_UNIVERSE_STOCKS,
         )
         
         # 筛选一字板：open == low == close (涨停价)
@@ -158,6 +164,7 @@ class UniverseManager:
             "limit_list",
             {"trade_date": trade_date, "limit": "D"},  # D = 跌停
             projection={"ts_code": 1},
+            limit=MAX_UNIVERSE_STOCKS,
         )
         return {doc["ts_code"] for doc in result}
     

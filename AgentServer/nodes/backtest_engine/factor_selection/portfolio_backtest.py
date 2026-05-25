@@ -23,6 +23,9 @@ from .factor_engine import FactorEngine
 
 logger = logging.getLogger(__name__)
 
+MAX_PORTFOLIO_PRICE_STOCKS = 6000
+MAX_BENCHMARK_ROWS = 3000
+
 
 @dataclass
 class RebalanceRecord:
@@ -292,11 +295,13 @@ class PortfolioBacktester:
         """获取股票价格"""
         if not stocks:
             return {}
-        
+        stock_list = sorted(stocks)[:MAX_PORTFOLIO_PRICE_STOCKS]
+
         result = await mongo_manager.find_many(
             "stock_daily",
-            {"ts_code": {"$in": list(stocks)}, "trade_date": trade_date},
+            {"ts_code": {"$in": stock_list}, "trade_date": trade_date},
             projection={"ts_code": 1, "close": 1},
+            limit=len(stock_list),
         )
         
         return {doc["ts_code"]: doc["close"] for doc in result if doc.get("close")}
@@ -407,6 +412,7 @@ class PortfolioBacktester:
                 "trade_date": {"$gte": start_date, "$lte": end_date},
             },
             projection={"trade_date": 1, "close": 1},
+            limit=MAX_BENCHMARK_ROWS,
         )
         
         if not result:
@@ -426,11 +432,13 @@ class PortfolioBacktester:
         """获取股票名称映射"""
         if not ts_codes:
             return {}
-        
+        ts_codes = ts_codes[:MAX_PORTFOLIO_PRICE_STOCKS]
+
         result = await mongo_manager.find_many(
             "stock_basic",
             {"ts_code": {"$in": ts_codes}},
             projection={"ts_code": 1, "name": 1},
+            limit=len(ts_codes),
         )
         return {doc["ts_code"]: doc.get("name", doc["ts_code"]) for doc in result}
     

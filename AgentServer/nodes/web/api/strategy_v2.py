@@ -49,6 +49,9 @@ RUN_STALE_AFTER_SECONDS = 30 * 60
 ACTIVE_RUN_STATUSES = {"running"}
 SCHEDULER_POLL_SECONDS = 30
 SCHEDULE_SLOT_GRACE_SECONDS = 10 * 60
+MAX_TASK_LIST_ITEMS = 500
+MAX_RUN_RESULT_ITEMS = 6000
+MAX_TARGET_STOCKS = 6000
 MARKET_TIMEZONE = ZoneInfo("Asia/Shanghai")
 SCHEDULE_SLOT_TIMES = {
     "pre_market_0900": (9, 0),
@@ -131,6 +134,7 @@ async def list_strategy_v2_tasks(user_id: str = Depends(get_current_user_id)) ->
         {"user_id": user_id},
         sort=[("updated_at", -1)],
         projection={"_id": 0},
+        limit=MAX_TASK_LIST_ITEMS,
     )
     return {"items": items}
 
@@ -230,6 +234,7 @@ async def list_strategy_v2_run_items(
         {"run_id": run_id, "user_id": user_id},
         projection={"_id": 0},
         sort=[("signal", -1), ("score", -1), ("entity_key", 1)],
+        limit=MAX_RUN_RESULT_ITEMS,
     )
     return {"items": items}
 
@@ -1246,11 +1251,13 @@ async def _resolve_task_targets(task: Dict[str, Any]) -> List[Dict[str, Any]]:
         ts_codes = [str(item).upper() for item in scope.get("ts_codes") or [] if item]
         if not ts_codes:
             return []
+        ts_codes = ts_codes[:MAX_TARGET_STOCKS]
         return await mongo_manager.find_many(
             "stock_basic",
             {"ts_code": {"$in": ts_codes}},
             projection=projection,
             sort=[("ts_code", 1)],
+            limit=MAX_TARGET_STOCKS,
         )
 
     if scope_type == "stock_pool":
@@ -1265,11 +1272,13 @@ async def _resolve_task_targets(task: Dict[str, Any]) -> List[Dict[str, Any]]:
         ts_codes = [str(item.get("ts_code") or "").upper() for item in (pool or {}).get("stocks", []) if item.get("ts_code")]
         if not ts_codes:
             return []
+        ts_codes = ts_codes[:MAX_TARGET_STOCKS]
         return await mongo_manager.find_many(
             "stock_basic",
             {"ts_code": {"$in": ts_codes}},
             projection=projection,
             sort=[("ts_code", 1)],
+            limit=MAX_TARGET_STOCKS,
         )
 
     if scope_type == "watchlist":
@@ -1281,11 +1290,13 @@ async def _resolve_task_targets(task: Dict[str, Any]) -> List[Dict[str, Any]]:
         ts_codes = [str(item).upper() for item in (user or {}).get("watchlist", []) if item]
         if not ts_codes:
             return []
+        ts_codes = ts_codes[:MAX_TARGET_STOCKS]
         return await mongo_manager.find_many(
             "stock_basic",
             {"ts_code": {"$in": ts_codes}},
             projection=projection,
             sort=[("ts_code", 1)],
+            limit=MAX_TARGET_STOCKS,
         )
 
     if scope_type == "all_market":
@@ -1295,12 +1306,13 @@ async def _resolve_task_targets(task: Dict[str, Any]) -> List[Dict[str, Any]]:
         if filters.get("exclude_st", True):
             query["name"] = {"$not": re.compile("ST", re.IGNORECASE)}
         max_count = int(params.get("max_stock_count") or 0)
+        target_limit = min(max_count, MAX_TARGET_STOCKS) if max_count > 0 else MAX_TARGET_STOCKS
         return await mongo_manager.find_many(
             "stock_basic",
             query,
             projection=projection,
             sort=[("ts_code", 1)],
-            limit=max_count,
+            limit=target_limit,
         )
 
     return []
