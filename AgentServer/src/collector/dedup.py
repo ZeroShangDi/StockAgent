@@ -718,13 +718,15 @@ class QuickDeduplicator:
                     
                     # 添加到指纹缓存
                     self._fingerprint_cache.add(fp_hash)
+                    if len(self._fingerprint_cache) > self.MEMORY_CACHE_MAX:
+                        self._trim_cache()
             
             # 通过所有层，加入待检查列表
             result.to_check.append(item)
             
             # 更新内存缓存
             self._title_hash_cache.add(item.title_hash)
-            
+
             # 缓存容量控制
             if len(self._title_hash_cache) > self.MEMORY_CACHE_MAX:
                 self._trim_cache()
@@ -797,7 +799,9 @@ class QuickDeduplicator:
             
             # 同步更新内存缓存
             self._title_hash_cache.add(item.title_hash)
-        
+            if len(self._title_hash_cache) > self.MEMORY_CACHE_MAX:
+                self._trim_cache()
+
         return marked
     
     async def batch_mark_seen(
@@ -853,7 +857,9 @@ class QuickDeduplicator:
                 
                 # 同步更新内存缓存
                 self._title_hash_cache.add(item.title_hash)
-            
+                if len(self._title_hash_cache) > self.MEMORY_CACHE_MAX:
+                    self._trim_cache()
+
             await pipe.execute()
             
             self.logger.debug(f"[{trace_id}] Batch marked {count} items as seen (TTL by priority)")

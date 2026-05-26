@@ -6,6 +6,7 @@ unified -1/0/1 strategy contract without changing the legacy picker API.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Protocol
@@ -16,10 +17,21 @@ from src.analysis.stock_picker import stock_picker_service
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        return max(minimum, default)
+
+
 MAX_STRATEGY_KLINE_ROWS = 260
 MAX_DOUBLE_CANNON_LOOKBACK = 120
 MAX_STRATEGY_MA_WINDOW = 120
 MAX_TURTLE_WINDOW = 120
+MAX_ONE_LINE_PICKER_CACHE_ENTRIES = _env_int("STRATEGY_V2_ONE_LINE_CACHE_MAX_ENTRIES", 64)
+MAX_ONE_LINE_PICKER_CACHE_TTL_DAYS = _env_int("STRATEGY_V2_ONE_LINE_CACHE_MAX_TTL_DAYS", 2)
 
 
 @dataclass(frozen=True)
@@ -115,7 +127,7 @@ class OneLineStockPickerStrategy:
         entry = await self._get_candidates(
             user_id=context.user_id,
             query_text=query_text,
-            ttl_days=int(params.get("cache_ttl_days") or 1),
+            ttl_days=_bounded_int(params.get("cache_ttl_days"), 1, 1, MAX_ONE_LINE_PICKER_CACHE_TTL_DAYS),
             now=context.now,
         )
         matched = (ts_code and ts_code in entry.ts_codes) or (code and code in entry.codes)
@@ -171,11 +183,20 @@ class OneLineStockPickerStrategy:
             total=int(result.get("total") or len(codes) or len(ts_codes)),
         )
         self._cache[cache_key] = entry
+        self._prune_cache(current)
         return entry
 
     def _prune_expired(self, now: datetime) -> None:
         expired_keys = [key for key, entry in self._cache.items() if entry.expires_at <= now]
         for key in expired_keys:
+            self._cache.pop(key, None)
+
+    def _prune_cache(self, now: datetime) -> None:
+        self._prune_expired(now)
+        overflow = len(self._cache) - MAX_ONE_LINE_PICKER_CACHE_ENTRIES
+        if overflow <= 0:
+            return
+        for key in list(self._cache.keys())[:overflow]:
             self._cache.pop(key, None)
 
     @staticmethod
