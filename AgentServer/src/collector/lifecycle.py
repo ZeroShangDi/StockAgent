@@ -284,7 +284,7 @@ class NewsLifecycleManager:
         result.total_processed += delete_by_priority
         
         # 4. 清理过期事件
-        events_deleted = await self._delete_old_events(trace_id)
+        events_deleted = await self._delete_old_events(trace_id, batch_size=batch_size)
         if events_deleted > 0:
             self.logger.debug(f"[{trace_id}] Deleted {events_deleted} old events")
         
@@ -329,10 +329,21 @@ class NewsLifecycleManager:
             }
             
             try:
-                # 批量更新：删除大字段，标记为 WARM
-                modified_count = await mongo.update_many(
+                to_compress = await mongo.find_many(
                     "news",
                     query,
+                    projection={"_id": 1},
+                    limit=batch_size,
+                )
+                ids_to_compress = [doc["_id"] for doc in to_compress]
+
+                if not ids_to_compress:
+                    continue
+
+                # 批量更新：删除大字段，标记为 WARM。按 ID 分批避免一次性更新过多历史新闻。
+                modified_count = await mongo.update_many(
+                    "news",
+                    {"_id": {"$in": ids_to_compress}},
                     {
                         "$unset": {
                             "content": "",
@@ -415,7 +426,7 @@ class NewsLifecycleManager:
                 self.logger.error(f"[{trace_id}] Delete error for {category}: {e}")
         
         # 同步删除过期的 news_events
-        events_deleted = await self._delete_old_events(trace_id)
+        events_deleted = await self._delete_old_events(trace_id, batch_size=batch_size)
         if events_deleted > 0:
             self.logger.debug(f"[{trace_id}] Deleted {events_deleted} old events")
         
@@ -443,6 +454,7 @@ class NewsLifecycleManager:
     async def _delete_old_events(
         self,
         trace_id: Optional[str] = None,
+        batch_size: int = 500,
     ) -> int:
         """删除过期的事件"""
         from src.config import config_manager
@@ -455,9 +467,9 @@ class NewsLifecycleManager:
         low_value_retention = config_manager.get("collector.lifecycle.low_value_events_retention_days", 7)
         
         try:
-            # 删除过期的正常事件
+            # 删除过期的正常事件。先按批取 ID，避免一次性 delete_many 清理大历史窗口。
             cutoff = datetime.utcnow() - timedelta(days=events_retention)
-            count = await mongo.delete_many(
+            old_events = await mongo.find_many(
                 "news_events",
                 {
                     "last_update_time": {"$lt": cutoff},
@@ -465,19 +477,33 @@ class NewsLifecycleManager:
                         {"is_low_value": {"$exists": False}},
                         {"is_low_value": False},
                     ],
-                }
+                },
+                projection={"_id": 1},
+                limit=batch_size,
             )
+            old_event_ids = [doc["_id"] for doc in old_events]
+            count = await mongo.delete_many(
+                "news_events",
+                {"_id": {"$in": old_event_ids}},
+            ) if old_event_ids else 0
             deleted_count += count
-            
-            # 低价值事件更快删除
+
+            # 低价值事件更快删除，同样按批处理。
             low_value_cutoff = datetime.utcnow() - timedelta(days=low_value_retention)
-            low_count = await mongo.delete_many(
+            low_value_events = await mongo.find_many(
                 "news_events",
                 {
                     "filtered_at": {"$lt": low_value_cutoff},
                     "is_low_value": True,
-                }
+                },
+                projection={"_id": 1},
+                limit=batch_size,
             )
+            low_value_event_ids = [doc["_id"] for doc in low_value_events]
+            low_count = await mongo.delete_many(
+                "news_events",
+                {"_id": {"$in": low_value_event_ids}},
+            ) if low_value_event_ids else 0
             deleted_count += low_count
             
             if low_count > 0:
