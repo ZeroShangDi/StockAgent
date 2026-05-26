@@ -39,6 +39,7 @@ class MongoManager(BaseManager):
         self._aggregate_default_limit = self._get_timeout_ms("MONGO_AGGREGATE_DEFAULT_LIMIT", 10000)
         self._aggregate_batch_size = self._get_timeout_ms("MONGO_AGGREGATE_BATCH_SIZE", 1000)
         self._aggregate_max_time_ms = self._get_timeout_ms("MONGO_AGGREGATE_MAX_TIME_MS", 30000)
+        self._index_create_timeout_seconds = max(1, self._config.index_create_timeout_seconds)
 
     def _get_timeout_ms(self, env_key: str, default_ms: int) -> int:
         value = os.getenv(env_key)
@@ -82,8 +83,10 @@ class MongoManager(BaseManager):
         ping_timeout = max(connect_timeout_ms, server_selection_timeout_ms, socket_timeout_ms) / 1000.0 + 0.5
         await asyncio.wait_for(self._client.admin.command("ping"), timeout=ping_timeout)
         
-        # 创建索引
-        await self._ensure_indexes()
+        if self._config.ensure_indexes:
+            await self._ensure_indexes()
+        else:
+            self.logger.info("MongoDB index ensuring skipped by MONGO_ENSURE_INDEXES=false")
         
         self._initialized = True
         self.logger.info(f"MongoDB connected, database: {self._config.database} ✓")
@@ -121,7 +124,16 @@ class MongoManager(BaseManager):
         """
         collection = self._db[collection_name]
         try:
-            await collection.create_indexes(indexes)
+            await asyncio.wait_for(
+                collection.create_indexes(indexes),
+                timeout=self._index_create_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                "Create indexes for %s timed out after %ss, skipping this collection",
+                collection_name,
+                self._index_create_timeout_seconds,
+            )
         except OperationFailure as e:
             if e.code == 86:  # IndexKeySpecsConflict
                 self.logger.warning(f"Index conflict in {collection_name}, recreating...")
@@ -133,11 +145,24 @@ class MongoManager(BaseManager):
                             idx_name = "_".join(f"{k}_{v}" for k, v in keys.items())
                     if idx_name:
                         try:
-                            await collection.drop_index(idx_name)
+                            await asyncio.wait_for(
+                                collection.drop_index(idx_name),
+                                timeout=self._index_create_timeout_seconds,
+                            )
                             self.logger.info(f"Dropped conflicting index: {idx_name}")
-                        except OperationFailure:
+                        except (OperationFailure, asyncio.TimeoutError):
                             pass
-                await collection.create_indexes(indexes)
+                try:
+                    await asyncio.wait_for(
+                        collection.create_indexes(indexes),
+                        timeout=self._index_create_timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    self.logger.warning(
+                        "Recreate indexes for %s timed out after %ss, skipping this collection",
+                        collection_name,
+                        self._index_create_timeout_seconds,
+                    )
             else:
                 raise
     
@@ -165,18 +190,42 @@ class MongoManager(BaseManager):
         
         index_model = IndexModel(keys, unique=unique, **kwargs)
         try:
-            result = await collection.create_indexes([index_model])
+            result = await asyncio.wait_for(
+                collection.create_indexes([index_model]),
+                timeout=self._index_create_timeout_seconds,
+            )
             return result[0] if result else ""
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                "Create index for %s timed out after %ss",
+                collection_name,
+                self._index_create_timeout_seconds,
+            )
+            return ""
         except OperationFailure as e:
             if e.code == 86:  # IndexKeySpecsConflict
                 idx_name = "_".join(f"{k}_{v}" for k, v in keys)
                 try:
-                    await collection.drop_index(idx_name)
+                    await asyncio.wait_for(
+                        collection.drop_index(idx_name),
+                        timeout=self._index_create_timeout_seconds,
+                    )
                     self.logger.info(f"Dropped conflicting index: {idx_name}")
-                except OperationFailure:
+                except (OperationFailure, asyncio.TimeoutError):
                     pass
-                result = await collection.create_indexes([index_model])
-                return result[0] if result else ""
+                try:
+                    result = await asyncio.wait_for(
+                        collection.create_indexes([index_model]),
+                        timeout=self._index_create_timeout_seconds,
+                    )
+                    return result[0] if result else ""
+                except asyncio.TimeoutError:
+                    self.logger.warning(
+                        "Recreate index for %s timed out after %ss",
+                        collection_name,
+                        self._index_create_timeout_seconds,
+                    )
+                    return ""
             else:
                 raise
 

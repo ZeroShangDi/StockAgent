@@ -124,6 +124,8 @@ DEBUG=false
 WEB_RELOAD=false
 WEB_WORKERS=1
 MONGO_MAX_POOL_SIZE=20
+MONGO_ENSURE_INDEXES=true
+MONGO_INDEX_CREATE_TIMEOUT_SECONDS=30
 REDIS_MAX_CONNECTIONS=30
 SYNC_PROFILE=conservative
 SYNC_RUN_INITIAL_SYNC=false
@@ -135,6 +137,8 @@ LLM_MAX_CONCURRENT_REQUESTS=3
 ```
 
 如暂时不使用 RAG / 向量检索，优先不要启动 Milvus 相关服务；4c8g 单机上更推荐先保证 Web、DataSync、Listener、MongoDB、Redis 稳定运行。
+
+如果数据库已经完成过索引初始化，并且服务器重启时 MongoDB 压力较高，可以临时设置 `MONGO_ENSURE_INDEXES=false`，避免多个节点启动时重复检查索引；首次部署或新增索引后再打开运行一次。
 
 ## 服务端口
 

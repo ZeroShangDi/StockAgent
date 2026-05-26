@@ -80,6 +80,8 @@ class MongoSettings(BaseSettings):
     database: str = "stock_agent"
     auth_source: str = "admin"
     max_pool_size: int = 50
+    ensure_indexes: bool = True
+    index_create_timeout_seconds: int = 30
     
     @property
     def url(self) -> str:
