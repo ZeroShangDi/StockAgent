@@ -81,6 +81,65 @@ class BaseNewsCollector:
             if item.content and item.content != item.title:
                 content_preview = item.content[:80] + "..." if len(item.content) > 80 else item.content
                 self.logger.debug(f"    └─ {content_preview}")
+
+    def _resolve_source_limits(self, limit_per_source: int) -> tuple[int, int]:
+        """解析新闻源采集上限，避免手动入口绕过服务器保守配置。"""
+        try:
+            from core.settings import settings
+
+            max_concurrency = settings.data_sync.multi_source_news_max_concurrency
+            max_limit = settings.data_sync.multi_source_news_limit_per_source
+        except Exception:
+            max_concurrency = 2
+            max_limit = 50
+
+        safe_limit = max(1, min(int(limit_per_source or max_limit), max_limit))
+        safe_concurrency = max(1, int(max_concurrency or 1))
+        return safe_limit, safe_concurrency
+
+    async def _collect_sources(
+        self,
+        source_ids: List[str],
+        since: Optional[datetime],
+        limit_per_source: int,
+        save_to_db: bool,
+        trace_id: Optional[str],
+    ) -> List[Any]:
+        """按配置限制并发采集多个新闻源。"""
+        if not source_ids:
+            return []
+
+        safe_limit, max_concurrency = self._resolve_source_limits(limit_per_source)
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        for source_id in source_ids:
+            queue.put_nowait(source_id)
+
+        results: List[Any] = []
+
+        async def worker() -> None:
+            while True:
+                try:
+                    source_id = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    results.append(
+                        await self.collect_source(
+                            source_id=source_id,
+                            since=since,
+                            limit=safe_limit,
+                            save_to_db=save_to_db,
+                            trace_id=trace_id,
+                        )
+                    )
+                except Exception as exc:
+                    results.append(exc)
+                finally:
+                    queue.task_done()
+
+        worker_count = min(max_concurrency, len(source_ids))
+        await asyncio.gather(*(worker() for _ in range(worker_count)))
+        return results
     
     async def collect_all(
         self,
@@ -97,17 +156,13 @@ class BaseNewsCollector:
         if since_hours:
             since = datetime.utcnow() - timedelta(hours=since_hours)
         
-        tasks = []
-        for source_id in self.SOURCE_CLASSES.keys():
-            tasks.append(self.collect_source(
-                source_id=source_id,
-                since=since,
-                limit=limit_per_source,
-                save_to_db=save_to_db,
-                trace_id=trace_id,
-            ))
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await self._collect_sources(
+            source_ids=list(self.SOURCE_CLASSES.keys()),
+            since=since,
+            limit_per_source=limit_per_source,
+            save_to_db=save_to_db,
+            trace_id=trace_id,
+        )
         
         final_result = CollectResult()
         for result in results:
@@ -258,23 +313,24 @@ class BaseNewsCollector:
             result.errors.append(f"Unknown group: {group}")
             return result
         
-        self.logger.info(f"[{trace_id}] Collecting group '{group}': {source_ids}")
+        enabled_source_ids = [source_id for source_id in source_ids if source_id in self.SOURCE_CLASSES]
+        skipped_source_ids = [source_id for source_id in source_ids if source_id not in self.SOURCE_CLASSES]
+        if skipped_source_ids:
+            self.logger.debug(f"[{trace_id}] Group '{group}' skipped disabled sources: {skipped_source_ids}")
+
+        self.logger.info(f"[{trace_id}] Collecting group '{group}': {enabled_source_ids}")
         
         # 优先使用 since 参数，其次使用 since_hours 计算
         if since is None and since_hours:
             since = datetime.utcnow() - timedelta(hours=since_hours)
         
-        tasks = []
-        for source_id in source_ids:
-            tasks.append(self.collect_source(
-                source_id=source_id,
-                since=since,
-                limit=limit_per_source,
-                save_to_db=save_to_db,
-                trace_id=trace_id,
-            ))
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await self._collect_sources(
+            source_ids=enabled_source_ids,
+            since=since,
+            limit_per_source=limit_per_source,
+            save_to_db=save_to_db,
+            trace_id=trace_id,
+        )
         
         final_result = CollectResult(source=group)
         for result in results:

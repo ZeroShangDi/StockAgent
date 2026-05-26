@@ -426,7 +426,9 @@ class DataSyncSettings(BaseSettings):
     
     # 多源新闻采集检查时间 (默认: 每分钟检查，内部按分组差异化调度)
     multi_source_news_schedule: Optional[str] = None
-    
+    multi_source_news_max_concurrency: int = 2
+    multi_source_news_limit_per_source: int = 50
+
     # 事件聚类时间 (默认: 每 30 分钟，LLM 深度去重)
     event_clustering_schedule: Optional[str] = None
 
