@@ -401,6 +401,7 @@ class DataSyncSettings(BaseSettings):
     
     # 每日复盘数据采集时间 (默认: 每个交易日 18:05)
     review_data_schedule: Optional[str] = None
+    review_data_max_rows_per_collection: int = 10000
     
     # 同花顺板块数据采集时间 (默认: 每周六凌晨 2:00)
     ths_sector_schedule: Optional[str] = None

@@ -147,21 +147,28 @@ class ReviewDataCollector(BaseCollector):
         # 动态调用 data_source_manager 的方法
         api_func = getattr(data_source_manager, api_method)
         data, _ = await api_func(trade_date=trade_date)
-        
+
         if not data:
             return 0
-        
-        db = mongo_manager.db
-        collection = db[collection_name]
-        
+
+        max_rows = max(1, settings.data_sync.review_data_max_rows_per_collection)
+        if len(data) > max_rows:
+            self.logger.warning(
+                "Review data %s returned %s rows, truncating to %s",
+                collection_name,
+                len(data),
+                max_rows,
+            )
+            data = data[:max_rows]
+
         # 删除当天旧数据并插入新数据
-        await collection.delete_many({"trade_date": trade_date})
-        
+        await mongo_manager.delete_many(collection_name, {"trade_date": trade_date})
+
         for item in data:
             item["collected_at"] = datetime.utcnow()
-        
-        await collection.insert_many(data)
-        
+
+        await mongo_manager.insert_many(collection_name, data)
+
         return len(data)
     
     async def _ensure_indexes(self) -> None:
