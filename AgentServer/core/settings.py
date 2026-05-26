@@ -417,6 +417,7 @@ class DataSyncSettings(BaseSettings):
 
     # 市场统计缓存时间 (默认: 每个交易日 18:20)
     market_statistics_cache_schedule: Optional[str] = None
+    market_statistics_cache_periods: str = "1w,1m,3m"
 
     # 新闻采集时间 (默认: 每 2 小时)
     news_schedule: Optional[str] = None

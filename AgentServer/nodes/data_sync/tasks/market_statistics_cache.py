@@ -31,6 +31,15 @@ class MarketStatisticsCacheTask(BaseTask):
     def schedule(self) -> str:
         return getattr(settings.data_sync, "market_statistics_cache_schedule", None) or self.default_schedule
 
+    def _configured_periods(self) -> tuple[str, ...]:
+        configured = getattr(settings.data_sync, "market_statistics_cache_periods", "1w,1m,3m")
+        periods = [
+            item.strip()
+            for item in str(configured or "").split(",")
+            if item.strip() in self.PERIODS
+        ]
+        return tuple(dict.fromkeys(periods)) or ("1w", "1m", "3m")
+
     async def execute(self) -> Dict[str, Any]:
         latest_trade_date, _ = await data_source_manager.get_latest_trade_date()
         if not latest_trade_date:
@@ -47,7 +56,8 @@ class MarketStatisticsCacheTask(BaseTask):
         )
         built += 1
 
-        for period in self.PERIODS:
+        periods = self._configured_periods()
+        for period in periods:
             leader_cycle_payload = await _build_statistics_leader_cycle_payload(period)
             await set_cached_market_statistics(
                 "leader_cycle",
@@ -69,5 +79,6 @@ class MarketStatisticsCacheTask(BaseTask):
         return {
             "count": built,
             "trade_date": latest_trade_date,
+            "periods": list(periods),
             "message": f"Precomputed market statistics cache for {latest_trade_date}",
         }

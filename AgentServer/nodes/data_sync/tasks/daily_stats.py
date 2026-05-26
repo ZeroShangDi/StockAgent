@@ -124,9 +124,14 @@ class DailyStatsTask(BaseTask):
         if not trade_dates:
             return {"backfilled": 0, "missing": []}
         
-        # 获取已计算的日期
-        existing = await mongo_manager.db["daily_stats"].distinct("trade_date")
-        existing_set = set(existing)
+        # 只检查本次回补窗口，避免历史数据增长后每次任务都扫描全量 daily_stats。
+        existing_docs = await mongo_manager.find_many(
+            "daily_stats",
+            {"trade_date": {"$gte": start_str, "$lte": end_str}},
+            projection={"trade_date": 1, "_id": 0},
+            limit=max(len(trade_dates) * 2, 1),
+        )
+        existing_set = {str(doc.get("trade_date")) for doc in existing_docs if doc.get("trade_date")}
         
         # 找出缺失的日期
         missing_dates = [d for d in trade_dates if d not in existing_set]
