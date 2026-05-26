@@ -23,6 +23,7 @@ from core.protocols import (
     TaskStatus,
 )
 from core.managers import redis_manager, mongo_manager
+from core.managers.redis_manager import RedisQueueFullError
 from .auth import get_current_user_id
 
 
@@ -269,7 +270,15 @@ async def create_task(
     })
     
     # 派发任务
-    await dispatch_task(task)
+    try:
+        await dispatch_task(task)
+    except RedisQueueFullError as exc:
+        await mongo_manager.update_one(
+            "tasks",
+            {"task_id": task.task_id, "user_id": user_id},
+            {"status": TaskStatus.FAILED.value, "error": str(exc)},
+        )
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     
     return CreateTaskResponse(
         task_id=task.task_id,

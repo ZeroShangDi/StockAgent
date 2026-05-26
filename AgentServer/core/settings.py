@@ -48,6 +48,7 @@ class RedisSettings(BaseSettings):
     password: Optional[SecretStr] = None
     db: int = 0
     max_connections: int = 100  # 连接池大小
+    max_task_queue_length: int = 1000
     
     # 队列名称
     task_queue: str = "agent:tasks"
@@ -80,6 +81,7 @@ class MongoSettings(BaseSettings):
     database: str = "stock_agent"
     auth_source: str = "admin"
     max_pool_size: int = 50
+    insert_many_batch_size: int = 1000
     ensure_indexes: bool = True
     index_create_timeout_seconds: int = 30
     

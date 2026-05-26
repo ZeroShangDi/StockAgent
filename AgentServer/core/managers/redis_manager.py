@@ -24,6 +24,10 @@ from core.base import BaseManager
 from ..settings import settings
 
 
+class RedisQueueFullError(RuntimeError):
+    """Raised when a Redis-backed task queue reaches the configured length limit."""
+
+
 class DistributedLock:
     """
     分布式锁
@@ -283,6 +287,17 @@ class RedisManager(BaseManager):
         """
         self._ensure_initialized()
         queue = queue or self._config.task_queue
+        max_length = self._config.max_task_queue_length
+        if max_length and max_length > 0:
+            queue_length = await self._client.llen(queue)
+            if queue_length >= max_length:
+                self.logger.warning(
+                    "Redis task queue %s is full: %s/%s",
+                    queue,
+                    queue_length,
+                    max_length,
+                )
+                raise RedisQueueFullError("任务队列已满，请稍后重试")
         await self._client.lpush(queue, json.dumps(task_data))
     
     async def dequeue_task(

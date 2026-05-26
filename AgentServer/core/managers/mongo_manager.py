@@ -501,11 +501,18 @@ class MongoManager(BaseManager):
     async def insert_many(self, collection: str, documents: List[dict]) -> List[str]:
         """批量插入"""
         self._ensure_initialized()
+        if not documents:
+            return []
         now = datetime.utcnow()
-        for doc in documents:
-            doc["created_at"] = now
-        result = await self._db[collection].insert_many(documents)
-        return [str(id) for id in result.inserted_ids]
+        inserted_ids: List[str] = []
+        batch_size = max(1, self._config.insert_many_batch_size)
+        for start in range(0, len(documents), batch_size):
+            batch = documents[start:start + batch_size]
+            for doc in batch:
+                doc["created_at"] = now
+            result = await self._db[collection].insert_many(batch)
+            inserted_ids.extend(str(inserted_id) for inserted_id in result.inserted_ids)
+        return inserted_ids
     
     async def find_one(
         self,
