@@ -5,7 +5,8 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app/AgentServer:/app/DataSync \
+    PYTHONPATH=/app/DataSync \
+    DATASYNC_IN_DOCKER=1 \
     DATASYNC_RUNTIME_DIR=/app/DataSync \
     DATASYNC_DATA_DIR=/app/DataSync/data \
     OBS_LOG_DIR=/app/DataSync/logs \
@@ -19,15 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY AgentServer/requirements.txt /tmp/requirements.txt
+COPY requirements.txt /tmp/requirements.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /tmp/requirements.txt \
     -i https://pypi.tuna.tsinghua.edu.cn/simple \
     --trusted-host pypi.tuna.tsinghua.edu.cn
 
-COPY AgentServer/ /app/AgentServer/
-COPY DataSync/ /app/DataSync/
+COPY . /app/DataSync/
 
 WORKDIR /app/DataSync
 

@@ -6,6 +6,9 @@ import { api } from '../client'
 import type {
   AutomationOverviewResponse,
   SystemCozePluginStatusResponse,
+  SystemDataSyncBackfillJobAction,
+  SystemDataSyncBackfillJob,
+  SystemDataSyncStatusPanel,
   SystemManualSyncTask,
   SystemStatusOverview,
   SystemStatusReport,
@@ -40,6 +43,27 @@ export const systemApi = {
 
   getAutomationOverview(): Promise<AutomationOverviewResponse> {
     return api.get('/system/automations')
+  },
+
+  getDataSyncStatus(): Promise<SystemDataSyncStatusPanel> {
+    return api.get('/system/datasync/status')
+  },
+
+  enqueueDataSyncBackfillJob(dataset: string, tradeDate: string, priority = 100): Promise<SystemDataSyncBackfillJob> {
+    return api.post('/system/datasync/backfill-jobs', {
+      dataset,
+      trade_date: tradeDate,
+      priority,
+    })
+  },
+
+  operateDataSyncBackfillJob(
+    jobId: string,
+    action: SystemDataSyncBackfillJobAction,
+  ): Promise<SystemDataSyncBackfillJob> {
+    return api.patch(`/system/datasync/backfill-jobs/${jobId}/action`, {
+      action,
+    })
   },
 
   startManualGapFillSync(lookbackDays = 3): Promise<SystemManualSyncTask> {

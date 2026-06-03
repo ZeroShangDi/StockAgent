@@ -1,0 +1,540 @@
+success: true
+profile: conservative
+count: 12
+core_ready_marker: market_core_ready
+core_ready_datasets:
+- stock_daily
+- index_daily
+- daily_basic
+- moneyflow_industry
+- moneyflow_concept
+- limit_list
+- daily_stats
+- market_statistics_cache
+core_recoverable_datasets:
+- daily_basic
+- daily_stats
+- index_daily
+- limit_list
+- market_statistics_cache
+- moneyflow_concept
+- moneyflow_industry
+- stock_daily
+source_chain_catalog:
+  get_stock_basic:
+  - akshare
+  - baostock
+  - coze
+  - tushare
+  get_daily.single:
+  - coze
+  - akshare
+  - baostock
+  - tushare
+  get_daily.full_market:
+  - tushare
+  - baostock
+  - akshare
+  - coze
+  get_daily_basic.single:
+  - coze
+  - akshare
+  - baostock
+  - tushare
+  get_daily_basic.full_market:
+  - tushare
+  - baostock
+  - akshare
+  - coze
+  get_index_daily:
+  - tushare
+  - baostock
+  - akshare
+  get_latest_trade_date:
+  - tushare
+  - baostock
+  - akshare
+  - coze
+  get_trade_calendar:
+  - tushare
+  - baostock
+  - akshare
+  - coze
+  get_limit_list:
+  - tushare
+  - akshare
+  get_moneyflow_industry:
+  - tushare
+  - akshare
+  get_moneyflow_concept:
+  - tushare
+  - akshare
+  get_realtime_quotes:
+  - coze
+  - tushare
+  - akshare
+  - baostock
+  get_realtime_index_quotes:
+  - coze
+  - akshare
+  - tushare
+  get_financial_indicator:
+  - coze
+  - akshare
+  - baostock
+  - tushare
+  get_financial_data:
+  - coze
+  - akshare
+  - baostock
+  - tushare
+  get_kline:
+  - coze
+  - akshare
+  - baostock
+  - tushare
+  get_index_basic:
+  - tushare
+  - akshare
+  - baostock
+  coze_market_indicator_workflow:
+  - coze
+capabilities:
+- name: stock_basic
+  description: 采集股票基础信息和估值指标
+  dataset_name: stock_basic
+  resource_class: core
+  default_schedule: 0 9 * * 1-5
+  effective_schedule: 0 18 * * 1-5
+  target_collections:
+  - stock_basic
+  dependencies:
+  - daily_basic:latest_optional
+  source_chain_keys:
+  - get_stock_basic
+  - get_daily_basic.full_market
+  source_chains:
+    get_stock_basic:
+    - akshare
+    - baostock
+    - coze
+    - tushare
+    get_daily_basic.full_market:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+  supports_recover_trade_date: false
+  supports_backfill: false
+  recoverability:
+    mode: best_effort
+    can_recover_trade_date: false
+    can_backfill: false
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 可重新运行获取最新结果，但历史定向补缺能力有限。
+  quality_checks:
+  - required_fields:ts_code,name,list_status
+  - dedupe_key:ts_code
+  run_at_startup: true
+- name: stock_daily
+  description: 采集股票日线数据
+  dataset_name: stock_daily
+  resource_class: core
+  default_schedule: 30 15 * * 1-5
+  effective_schedule: 5 18 * * 1-5
+  target_collections:
+  - stock_daily
+  dependencies:
+  - stock_basic
+  - trade_calendar
+  source_chain_keys:
+  - get_latest_trade_date
+  - get_daily.full_market
+  - get_daily.single
+  source_chains:
+    get_latest_trade_date:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    get_daily.full_market:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    get_daily.single:
+    - coze
+    - akshare
+    - baostock
+    - tushare
+  supports_recover_trade_date: true
+  supports_backfill: true
+  recoverability:
+    mode: full
+    can_recover_trade_date: true
+    can_backfill: true
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 支持按交易日或历史窗口进行可靠补缺。
+  quality_checks:
+  - required_fields:ts_code,trade_date,open,high,low,close
+  - dedupe_key:ts_code,trade_date
+  run_at_startup: true
+- name: daily_basic
+  description: 采集股票每日指标数据（PE/PB/换手率/市值等）
+  dataset_name: daily_basic
+  resource_class: core
+  default_schedule: 0 16 * * 1-5
+  effective_schedule: 0 16 * * 1-5
+  target_collections:
+  - daily_basic
+  dependencies:
+  - stock_basic
+  - trade_calendar
+  source_chain_keys:
+  - get_latest_trade_date
+  - get_daily_basic.full_market
+  - get_daily_basic.single
+  source_chains:
+    get_latest_trade_date:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    get_daily_basic.full_market:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    get_daily_basic.single:
+    - coze
+    - akshare
+    - baostock
+    - tushare
+  supports_recover_trade_date: true
+  supports_backfill: true
+  recoverability:
+    mode: full
+    can_recover_trade_date: true
+    can_backfill: true
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 支持按交易日或历史窗口进行可靠补缺。
+  quality_checks:
+  - required_fields:ts_code,trade_date
+  - dedupe_key:ts_code,trade_date
+  - numeric_normalization
+  run_at_startup: true
+- name: index_basic
+  description: 采集指数基础信息
+  dataset_name: index_basic
+  resource_class: core
+  default_schedule: 0 9 * * 1-5
+  effective_schedule: 5 18 * * 1-5
+  target_collections:
+  - index_basic
+  dependencies: []
+  source_chain_keys:
+  - get_index_basic
+  source_chains:
+    get_index_basic:
+    - tushare
+    - akshare
+    - baostock
+  supports_recover_trade_date: false
+  supports_backfill: false
+  recoverability:
+    mode: best_effort
+    can_recover_trade_date: false
+    can_backfill: false
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 可重新运行获取最新结果，但历史定向补缺能力有限。
+  quality_checks:
+  - required_fields:ts_code,name
+  - dedupe_key:ts_code
+  run_at_startup: true
+- name: index_daily
+  description: 采集指数日线数据
+  dataset_name: index_daily
+  resource_class: core
+  default_schedule: 35 15 * * 1-5
+  effective_schedule: 5 18 * * 1-5
+  target_collections:
+  - index_daily
+  dependencies:
+  - index_basic
+  - trade_calendar
+  source_chain_keys:
+  - get_latest_trade_date
+  - get_index_daily
+  source_chains:
+    get_latest_trade_date:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    get_index_daily:
+    - tushare
+    - baostock
+    - akshare
+  supports_recover_trade_date: true
+  supports_backfill: true
+  recoverability:
+    mode: full
+    can_recover_trade_date: true
+    can_backfill: true
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 支持按交易日或历史窗口进行可靠补缺。
+  quality_checks:
+  - required_fields:ts_code,trade_date,open,high,low,close
+  - dedupe_key:ts_code,trade_date
+  run_at_startup: true
+- name: moneyflow_industry
+  description: 采集行业资金流向数据
+  dataset_name: moneyflow_industry
+  resource_class: core
+  default_schedule: 0 16 * * 1-5
+  effective_schedule: 5 18 * * 1-5
+  target_collections:
+  - moneyflow_industry
+  dependencies:
+  - trade_calendar
+  source_chain_keys:
+  - get_latest_trade_date
+  - get_moneyflow_industry
+  source_chains:
+    get_latest_trade_date:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    get_moneyflow_industry:
+    - tushare
+    - akshare
+  supports_recover_trade_date: true
+  supports_backfill: true
+  recoverability:
+    mode: full
+    can_recover_trade_date: true
+    can_backfill: true
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 支持按交易日或历史窗口进行可靠补缺。
+  quality_checks:
+  - required_fields:ts_code,trade_date
+  - dedupe_key:ts_code,trade_date
+  run_at_startup: true
+- name: moneyflow_concept
+  description: 采集概念板块资金流向数据
+  dataset_name: moneyflow_concept
+  resource_class: core
+  default_schedule: 5 16 * * 1-5
+  effective_schedule: 5 18 * * 1-5
+  target_collections:
+  - moneyflow_concept
+  dependencies:
+  - trade_calendar
+  source_chain_keys:
+  - get_latest_trade_date
+  - get_moneyflow_concept
+  source_chains:
+    get_latest_trade_date:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    get_moneyflow_concept:
+    - tushare
+    - akshare
+  supports_recover_trade_date: true
+  supports_backfill: true
+  recoverability:
+    mode: full
+    can_recover_trade_date: true
+    can_backfill: true
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 支持按交易日或历史窗口进行可靠补缺。
+  quality_checks:
+  - required_fields:ts_code,trade_date
+  - dedupe_key:ts_code,trade_date
+  run_at_startup: true
+- name: limit_list
+  description: 采集涨跌停统计数据
+  dataset_name: limit_list
+  resource_class: core
+  default_schedule: 10 16 * * 1-5
+  effective_schedule: 5 18 * * 1-5
+  target_collections:
+  - limit_list
+  dependencies:
+  - trade_calendar
+  source_chain_keys:
+  - get_latest_trade_date
+  - get_limit_list
+  source_chains:
+    get_latest_trade_date:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    get_limit_list:
+    - tushare
+    - akshare
+  supports_recover_trade_date: true
+  supports_backfill: true
+  recoverability:
+    mode: full
+    can_recover_trade_date: true
+    can_backfill: true
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 支持按交易日或历史窗口进行可靠补缺。
+  quality_checks:
+  - required_fields:ts_code,trade_date
+  - dedupe_key:ts_code,trade_date
+  run_at_startup: true
+- name: stock_relations
+  description: 构建股票与行业/板块/概念/涨停来源之间的关联关系
+  dataset_name: stock_relations
+  resource_class: core
+  default_schedule: 20 16 * * 1-5
+  effective_schedule: 20 16 * * 1-5
+  target_collections:
+  - stock_relations
+  dependencies:
+  - stock_basic
+  - moneyflow_industry
+  - moneyflow_concept
+  - limit_list
+  source_chain_keys: []
+  source_chains: {}
+  supports_recover_trade_date: false
+  supports_backfill: false
+  recoverability:
+    mode: best_effort
+    can_recover_trade_date: false
+    can_backfill: false
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 可重新运行获取最新结果，但历史定向补缺能力有限。
+  quality_checks:
+  - required_fields:ts_code,relation_type,relation_name
+  - dedupe_key:ts_code,relation_type,relation_name
+  run_at_startup: true
+- name: daily_stats
+  description: 计算每日统计数据
+  dataset_name: daily_stats
+  resource_class: core
+  default_schedule: 30 16 * * 1-5
+  effective_schedule: 10 18 * * 1-5
+  target_collections:
+  - daily_stats
+  - sector_ranking
+  - market_analysis
+  dependencies:
+  - stock_daily
+  - moneyflow_industry
+  - moneyflow_concept
+  - limit_list
+  source_chain_keys:
+  - get_latest_trade_date
+  - get_trade_calendar
+  source_chains:
+    get_latest_trade_date:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    get_trade_calendar:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+  supports_recover_trade_date: true
+  supports_backfill: true
+  recoverability:
+    mode: full
+    can_recover_trade_date: true
+    can_backfill: true
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 支持按交易日或历史窗口进行可靠补缺。
+  quality_checks:
+  - required_fields:trade_date
+  - derived_dataset
+  run_at_startup: true
+- name: market_statistics_cache
+  description: 预聚合市场统计缓存
+  dataset_name: market_statistics_cache
+  resource_class: core
+  default_schedule: 35 16 * * 1-5
+  effective_schedule: 35 16 * * 1-5
+  target_collections:
+  - market_statistics_cache
+  dependencies:
+  - daily_stats
+  - limit_list
+  - stock_daily
+  source_chain_keys:
+  - get_latest_trade_date
+  source_chains:
+    get_latest_trade_date:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+  supports_recover_trade_date: true
+  supports_backfill: false
+  recoverability:
+    mode: full
+    can_recover_trade_date: true
+    can_backfill: false
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 支持按交易日或历史窗口进行可靠补缺。
+  quality_checks:
+  - expected_cache_entries:9
+  - derived_dataset
+  run_at_startup: false
+- name: market_weather
+  description: 同步最新市场晴雨表
+  dataset_name: market_weather
+  resource_class: core
+  default_schedule: 50 18 * * 1-5
+  effective_schedule: 50 18 * * 1-5
+  target_collections:
+  - market_weather_daily
+  dependencies:
+  - coze_market_indicator_workflow
+  source_chain_keys:
+  - get_latest_trade_date
+  - coze_market_indicator_workflow
+  source_chains:
+    get_latest_trade_date:
+    - tushare
+    - baostock
+    - akshare
+    - coze
+    coze_market_indicator_workflow:
+    - coze
+  supports_recover_trade_date: true
+  supports_backfill: false
+  recoverability:
+    mode: full
+    can_recover_trade_date: true
+    can_backfill: false
+    can_rerun: true
+    severity_on_missing: warning
+    reason: 支持按交易日或历史窗口进行可靠补缺。
+  quality_checks:
+  - required_fields:trade_date,indicator,signal
+  - dedupe_key:trade_date
+  run_at_startup: false
+schema_version: '1.0'
+catalog_type: datasync_capabilities
+generated_at: '2026-06-03T05:57:05.301451+00:00'
+generated_by: DataSync/src/datasync_capabilities.py

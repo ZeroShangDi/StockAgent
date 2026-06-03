@@ -1,0 +1,8 @@
+.env
+.env.docker
+data/
+logs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

@@ -1,0 +1,832 @@
+"""
+全局配置管理
+
+所有 Manager 在初始化时必须从此处读取配置。
+使用 Pydantic Settings 实现环境变量自动绑定。
+
+环境变量命名规则:
+  - Redis: REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, ...
+  - MongoDB: MONGO_HOST, MONGO_PORT, MONGO_USERNAME, ...
+  - Milvus: MILVUS_HOST, MILVUS_PORT, ...
+  - Tushare: TUSHARE_TOKEN, TUSHARE_RATE_LIMIT, ...
+  - LLM: LLM_PROVIDER, LLM_API_KEY, LLM_MODEL_NAME, ...
+  - Node: NODE_TYPE, NODE_ID, ...
+  - 通用: DEBUG, JWT_SECRET, ...
+
+使用方式:
+  from core.settings import settings
+
+  redis_url = settings.redis.url
+  mongo_db = settings.mongo.database
+"""
+
+import os
+from functools import lru_cache
+from pathlib import Path
+from typing import Optional, Literal
+from pydantic import AliasChoices, Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DATASYNC_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_ENV_FILE = str(DATASYNC_ROOT / ".env")
+
+
+def _running_inside_container() -> bool:
+    return Path("/.dockerenv").exists() or os.environ.get("DATASYNC_IN_DOCKER") == "1"
+
+
+def normalize_local_service_host(host: str, service: str) -> str:
+    """
+    在本机直跑 DataSync 时，将 Docker compose 风格主机名收敛回 localhost。
+
+    这样即使不是通过 DataSync/main.py 入口启动，manager 级初始化也不会被
+    `redis` / `mongodb` / `milvus` 这类容器内地址绊住。
+    """
+    if _running_inside_container():
+        return host
+
+    normalized_host = str(host or "").strip()
+    normalized_lower = normalized_host.lower()
+    docker_host_map = {
+        "redis": {"redis"},
+        "mongo": {"mongodb", "mongo"},
+        "milvus": {"milvus"},
+    }
+    docker_hosts = docker_host_map.get(service, set())
+    if normalized_lower in docker_hosts:
+        return "localhost"
+    return normalized_host
+
+
+# ==================== 子配置类 ====================
+# 每个子配置类独立读取对应前缀的环境变量
+
+
+class RedisSettings(BaseSettings):
+    """Redis 配置
+
+    环境变量: REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_DB, ...
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="REDIS_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    host: str = "localhost"
+    port: int = 6379
+    password: Optional[SecretStr] = None
+    db: int = 0
+    max_connections: int = 30  # 连接池大小，4C8G 服务器默认保守
+
+    # 队列名称
+    task_queue: str = "agent:tasks"
+    result_channel_prefix: str = "agent:results"
+    node_registry_prefix: str = "agent:nodes"
+
+    @property
+    def url(self) -> str:
+        pwd = self.password.get_secret_value() if self.password else None
+        auth = f":{pwd}@" if pwd else ""
+        return f"redis://{auth}{self.host}:{self.port}/{self.db}"
+
+
+class MongoSettings(BaseSettings):
+    """MongoDB 配置
+
+    环境变量: MONGO_HOST, MONGO_PORT, MONGO_USERNAME, MONGO_PASSWORD, ...
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="MONGO_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    host: str = "localhost"
+    port: int = 27017
+    username: Optional[str] = None
+    password: Optional[SecretStr] = None
+    database: str = "stock_agent"
+    auth_source: str = "admin"
+    max_pool_size: int = 20
+    ensure_indexes: bool = True
+    index_startup_scope: str = "core"
+    index_create_timeout_seconds: int = 10
+
+    @property
+    def url(self) -> str:
+        if self.username and self.password:
+            pwd = self.password.get_secret_value()
+            return f"mongodb://{self.username}:{pwd}@{self.host}:{self.port}/{self.database}?authSource={self.auth_source}"
+        return f"mongodb://{self.host}:{self.port}/{self.database}"
+
+
+class MongoMirrorSettings(BaseSettings):
+    """MongoDB 镜像目标配置。
+
+    环境变量: MONGO_MIRROR_ENABLED, MONGO_MIRROR_HOST, MONGO_MIRROR_PORT, ...
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="MONGO_MIRROR_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 27017
+    username: Optional[str] = None
+    password: Optional[SecretStr] = None
+    database: str = "stock_agent_remote"
+    auth_source: str = "admin"
+    max_pool_size: int = 20
+
+    @property
+    def url(self) -> str:
+        if self.username and self.password:
+            pwd = self.password.get_secret_value()
+            return f"mongodb://{self.username}:{pwd}@{self.host}:{self.port}/{self.database}?authSource={self.auth_source}"
+        return f"mongodb://{self.host}:{self.port}/{self.database}"
+
+
+class MilvusSettings(BaseSettings):
+    """Milvus 向量数据库配置
+
+    环境变量: MILVUS_HOST, MILVUS_PORT, MILVUS_USER, MILVUS_PASSWORD, ...
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="MILVUS_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    uri: Optional[str] = None
+    host: str = "localhost"
+    port: int = 19530
+    user: Optional[str] = None
+    password: Optional[SecretStr] = None
+
+    # Collections
+    research_reports_collection: str = "research_reports"
+    market_snippets_collection: str = "market_snippets"
+
+    # 向量维度 (与 embedding model 对应)
+    embedding_dim: int = 1024
+
+
+class TushareSettings(BaseSettings):
+    """Tushare 数据源配置
+
+    环境变量: TUSHARE_TOKEN, TUSHARE_RATE_LIMIT, TUSHARE_BATCH_SIZE
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="TUSHARE_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # Token (必须配置)
+    token: SecretStr = Field(
+        default=SecretStr(""),
+        description="Tushare Pro API Token"
+    )
+
+    # 频率限制 (每分钟请求数)
+    rate_limit: int = 200
+    # 批量请求大小
+    batch_size: int = 100
+
+    @property
+    def is_configured(self) -> bool:
+        """检查是否已配置 Token"""
+        return bool(self.token.get_secret_value())
+
+
+class CozeSettings(BaseSettings):
+    """Coze 工作流数据源配置
+
+    环境变量: COZE_API_TOKEN, COZE_WORKFLOW_ID, COZE_SPACE_ID, COZE_API_BASE, ...
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="COZE_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    api_token: SecretStr = Field(
+        default=SecretStr(""),
+        description="Coze PAT / API Token",
+    )
+    api_base: str = "https://api.coze.cn"
+    workflow_id: str = "7635993821533487155"
+    space_id: str = "7492401860964810793"
+    market_indicator_workflow_id: str = "7587701552685629494"
+    stock_picker_workflow_id: str = "7579577947649277987"
+    app_id: Optional[str] = None
+    bot_id: Optional[str] = None
+    timeout: float = 30.0
+    max_retries: int = 2
+    retry_backoff_seconds: float = 0.5
+    retry_backoff_max_seconds: float = 5.0
+
+    @property
+    def is_configured(self) -> bool:
+        """检查是否已配置 Coze 工作流访问参数"""
+        return bool(self.api_token.get_secret_value()) and bool(self.workflow_id)
+
+
+class LLMSettings(BaseSettings):
+    """LLM 模型配置
+
+    环境变量: LLM_PROVIDER, LLM_API_KEY, LLM_API_BASE, LLM_MODEL_NAME, ...
+
+    模型路由:
+    - fast_model: 简单任务 (分类、提取)
+    - balanced_model: 一般任务 (摘要、问答)
+    - quality_model: 复杂任务 (分析、报告)
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="LLM_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # 主模型提供商: openai, dashscope (阿里), zhipu, ollama, deepseek
+    provider: Literal["openai", "dashscope", "zhipu", "ollama", "deepseek"] = "dashscope"
+
+    # API 配置
+    api_key: Optional[SecretStr] = None
+    api_base: Optional[str] = None
+
+    # 主模型名称
+    model_name: str = "qwen-plus"
+    embedding_model: str = "text-embedding-v3"
+
+    # 模型路由 (可选，不配置则使用主模型)
+    fast_model: Optional[str] = None       # 简单任务用的模型
+    balanced_model: Optional[str] = None   # 一般任务用的模型
+    quality_model: Optional[str] = None    # 复杂任务用的模型
+
+    # Embedding 单独配置 (可选，如果 provider 不支持 embedding)
+    embedding_provider: Optional[Literal["openai", "dashscope", "zhipu", "ollama"]] = None
+    embedding_api_key: Optional[SecretStr] = None
+    embedding_api_base: Optional[str] = None
+
+    # 备用 Provider 配置 (用于多模型路由)
+    openai_api_key: Optional[SecretStr] = None
+    openai_api_base: Optional[str] = None
+    zhipu_api_key: Optional[SecretStr] = None
+    dashscope_api_key: Optional[SecretStr] = None
+    ollama_api_base: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+    # 模型参数
+    temperature: float = 0.7
+    max_tokens: int = 4096
+
+    # 并发限制
+    max_concurrent_requests: int = 10
+
+    # 缓存配置
+    cache_enabled: bool = True
+    cache_use_redis: bool = False
+    cache_chat_ttl: int = 3600       # Chat 缓存 TTL (秒)
+    cache_embedding_ttl: int = 86400  # Embedding 缓存 TTL (秒)
+
+    @property
+    def is_configured(self) -> bool:
+        """检查是否已配置 API Key"""
+        return self.api_key is not None and bool(self.api_key.get_secret_value())
+
+
+class ObservabilitySettings(BaseSettings):
+    """可观测性配置
+
+    环境变量: OBS_LOKI_URL, OBS_LOKI_ENABLED, OBS_PHOENIX_ENABLED, ...
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="OBS_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # Loki 日志
+    loki_url: Optional[str] = None
+    loki_enabled: bool = False
+
+    # Arize Phoenix 追踪
+    phoenix_enabled: bool = False
+    phoenix_project: str = "stock-agent"
+
+    # 日志级别
+    log_level: str = "INFO"
+
+    # 日志文件配置
+    log_to_file: bool = True  # 是否输出到文件
+    log_dir: str = "logs"  # 日志目录
+    log_max_size_mb: int = 50  # 单个日志文件最大大小 (MB)
+    log_backup_count: int = 10  # 保留的日志文件数量
+    log_sample_limit: int = 5  # 单批日志最多输出的坏数据样本数
+    log_max_value_chars: int = 500  # 单个结构化日志字段最大字符数
+
+
+class NodeSettings(BaseSettings):
+    """节点配置
+
+    环境变量: NODE_TYPE, NODE_ID, NODE_HEARTBEAT_INTERVAL, NODE_TTL
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # 节点类型: web, data_sync, mcp, inference, listener
+    node_type: Literal["web", "data_sync", "mcp", "inference", "listener"] = Field(
+        default="data_sync",
+        alias="NODE_TYPE",
+    )
+
+    # 节点 ID (自动生成或指定)
+    node_id: Optional[str] = Field(default=None, alias="NODE_ID")
+
+    # 心跳间隔 (秒)
+    heartbeat_interval: int = Field(default=10, alias="NODE_HEARTBEAT_INTERVAL")
+
+    # 节点过期时间 (秒)
+    node_ttl: int = Field(default=30, alias="NODE_TTL")
+
+
+class RPCSettings(BaseSettings):
+    """RPC 配置
+
+    环境变量: RPC_WEB_PORT, RPC_INFERENCE_PORT, RPC_LISTENER_PORT, RPC_DATA_SYNC_PORT
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="RPC_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # 各节点 RPC 端口
+    web_port: int = 50051
+    inference_port: int = 50052
+    listener_port: int = 50053
+    data_sync_port: int = 50054
+    mcp_port: int = 50055
+    backtest_port: int = 50056
+
+    # RPC 超时 (秒)
+    timeout: float = 10.0
+
+    # 重试次数
+    max_retries: int = 3
+
+
+class DataSyncSettings(BaseSettings):
+    """数据同步配置
+
+    环境变量: SYNC_PROFILE, SYNC_ENABLED_JOBS, SYNC_DISABLED_JOBS,
+             SYNC_STOCK_BASIC_SCHEDULE, SYNC_STOCK_DAILY_SCHEDULE,
+             SYNC_INDEX_BASIC_SCHEDULE, SYNC_INDEX_DAILY_SCHEDULE,
+             SYNC_REVIEW_DATA_SCHEDULE, SYNC_THS_SECTOR_SCHEDULE,
+             SYNC_NEWS_SCHEDULE, SYNC_MULTI_SOURCE_NEWS_SCHEDULE
+
+    使用 cron 表达式格式: 分 时 日 月 周
+    示例:
+      - "0 9 * * 1-5"   每个工作日 9:00
+      - "30 15 * * 1-5" 每个工作日 15:30
+      - "0 */2 * * *"   每 2 小时
+      - "*/10 * * * *"  每 10 分钟
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="SYNC_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # 运行档位：conservative=只注册核心市场链路，full=注册全部内置任务，custom=只注册 enabled_jobs
+    profile: Literal["conservative", "full", "custom"] = "conservative"
+
+    # 逗号分隔任务名白名单/黑名单；白名单存在时优先于 profile
+    enabled_jobs: Optional[str] = None
+    disabled_jobs: Optional[str] = None
+
+    # 是否在节点启动后立即跑一遍同步。服务器默认关闭，避免 DEBUG=true 时全任务启动风暴。
+    run_initial_sync: bool = False
+
+    # DataSync 节点级执行保护。具体执行约束会在后续 P0 任务继续接入。
+    max_running_jobs: int = 1
+    max_parallel_collect_concurrency: int = 2
+    job_timeout_seconds: int = 1200
+    lock_timeout_seconds: int = 1200
+    scheduler_misfire_grace_seconds: int = 300
+
+    # 首次运行保护：默认禁止自动全历史回补，只补最近交易日或少量窗口。
+    prevent_initial_history_sync: bool = True
+    initial_backfill_days: int = 5
+
+    # 历史补缺/重型任务闲时窗口。兼容 DATASYNC_* 与 SYNC_* 两类环境变量名。
+    backfill_window_start: str = Field(
+        default="00:00",
+        validation_alias=AliasChoices("DATASYNC_BACKFILL_WINDOW_START", "SYNC_BACKFILL_WINDOW_START"),
+    )
+    backfill_window_end: str = Field(
+        default="08:00",
+        validation_alias=AliasChoices("DATASYNC_BACKFILL_WINDOW_END", "SYNC_BACKFILL_WINDOW_END"),
+    )
+    backfill_queue_schedule: Optional[str] = "*/30 * * * *"
+    backfill_jobs_per_round: int = 2
+    backfill_max_attempts: int = 3
+    backfill_max_jobs_per_night: int = Field(
+        default=24,
+        validation_alias=AliasChoices("DATASYNC_BACKFILL_MAX_JOBS_PER_NIGHT", "SYNC_BACKFILL_MAX_JOBS_PER_NIGHT"),
+    )
+    backfill_max_external_requests_per_night: int = Field(
+        default=300,
+        validation_alias=AliasChoices(
+            "DATASYNC_BACKFILL_MAX_EXTERNAL_REQUESTS_PER_NIGHT",
+            "SYNC_BACKFILL_MAX_EXTERNAL_REQUESTS_PER_NIGHT",
+        ),
+    )
+    backfill_consecutive_failure_limit: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "DATASYNC_BACKFILL_CONSECUTIVE_FAILURE_LIMIT",
+            "SYNC_BACKFILL_CONSECUTIVE_FAILURE_LIMIT",
+        ),
+    )
+
+    # 股票基础信息采集时间 (默认: 每个交易日 9:00)
+    stock_basic_schedule: Optional[str] = None
+
+    # 股票日线数据采集时间 (默认: 每个交易日 15:30)
+    stock_daily_schedule: Optional[str] = None
+
+    # 每日基础指标采集时间 (默认: 每个交易日 16:00)
+    daily_basic_schedule: Optional[str] = None
+
+    # 是否只同步重点股票（自选股 + 监听股），适用于 Coze 单股模式
+    focus_stocks_only: bool = False
+
+    # 重点股票最大同步数量（去重后截断）
+    focus_stocks_max_count: int = 200
+
+    # 数据源回退链路覆盖，格式：
+    # get_daily.full_market=tushare,baostock,akshare;get_stock_basic=akshare,baostock,coze,tushare
+    source_chain_overrides: Optional[str] = None
+    source_rate_limits: str = "tushare=200/m,akshare=60/m,baostock=60/m,coze=30/m"
+    source_rate_limit_cooldown_seconds: int = 60
+
+    # 单次校验最多写入死信集合的坏记录样本数量，避免异常接口返回时 DLQ 反向打爆 Mongo。
+    dead_letter_max_records_per_batch: int = 20
+
+    # 统一幂等批量写入批次大小，避免一次 bulk_write 塞入过大列表。
+    bulk_upsert_batch_size: int = 1000
+    bulk_upsert_min_batch_size: int = 100
+    bulk_upsert_max_batch_size: int = 1000
+    bulk_upsert_slow_batch_ms: int = 1500
+    bulk_upsert_stable_batches_to_grow: int = 3
+
+    # 指数基础信息采集时间 (默认: 每个交易日 9:00)
+    index_basic_schedule: Optional[str] = None
+
+    # 指数日线数据采集时间 (默认: 每个交易日 15:35)
+    index_daily_schedule: Optional[str] = None
+
+    # 行业资金流向采集时间 (默认: 每个交易日 16:00)
+    moneyflow_industry_schedule: Optional[str] = None
+
+    # 概念板块资金流向采集时间 (默认: 每个交易日 16:05)
+    moneyflow_concept_schedule: Optional[str] = None
+
+    # 涨跌停数据采集时间 (默认: 每个交易日 16:10)
+    limit_list_schedule: Optional[str] = None
+
+    # 每日统计数据计算时间 (默认: 每个交易日 18:10)
+    daily_stats_schedule: Optional[str] = None
+
+    # 每日复盘数据采集时间 (默认: 每个交易日 19:30)
+    review_data_schedule: Optional[str] = None
+    review_data_max_rows_per_collection: int = 10000
+
+    # 同花顺板块数据采集时间 (默认: 每周六凌晨 2:00)
+    ths_sector_schedule: Optional[str] = None
+
+    # 股票关联关系构建时间 (默认: 每个交易日 16:20)
+    stock_relations_schedule: Optional[str] = None
+
+    # 市场统计缓存时间 (默认: 每个交易日 16:35)
+    market_statistics_cache_schedule: Optional[str] = None
+    market_statistics_cache_periods: str = "1w,1m,3m"
+
+    # 股票晴雨表时间与并发，依赖 Coze 市场指标工作流，默认收盘后低并发执行。
+    market_weather_schedule: Optional[str] = None
+    market_weather_max_concurrent: int = 2
+
+    # 核心链路缺口恢复检查时间 (默认由代码兜底，每 20 分钟检查一次)
+    core_gap_recovery_schedule: Optional[str] = None
+
+    # 核心链路自动恢复时默认检查的最近交易日窗口
+    recent_core_gap_recovery_days: int = 3
+
+    # 启动后是否自动检查并恢复最新核心链路缺口
+    run_core_gap_recovery_on_startup: bool = True
+
+    # 当天核心数据 SLA 时间窗：开始观察、期望 ready、失败告警。
+    core_ready_check_after_local_time: str = "15:30"
+    core_ready_expected_after_local_time: str = "16:10"
+    core_ready_fail_after_local_time: str = "17:00"
+    # 兼容旧配置名；如果未配置 expected_after，会回退读取这个值。
+    core_ready_after_local_time: str = "16:10"
+
+    # 新闻采集时间 (默认: 每 2 小时)
+    news_schedule: Optional[str] = None
+
+    # 热点新闻采集时间与并发，默认关闭且偏保守，避免高频外部请求挤占核心同步。
+    hot_news_schedule: Optional[str] = None
+    hot_news_enabled: bool = False
+    hot_news_source_allowlist: str = "cls,xueqiu,wallstreetcn"
+    hot_news_max_sources_per_round: int = 3
+    hot_news_max_items_per_source: int = 20
+    hot_news_max_concurrency: int = 3
+    hot_news_http_timeout_seconds: float = 10.0
+    hot_news_total_timeout_seconds: float = 30.0
+
+    # 多源新闻采集检查时间 (默认: 每分钟检查，内部按分组差异化调度)
+    multi_source_news_schedule: Optional[str] = None
+    multi_source_news_max_concurrency: int = 2
+    multi_source_news_limit_per_source: int = 50
+
+    # 事件聚类时间 (默认: 每 30 分钟，LLM 深度去重)
+    event_clustering_schedule: Optional[str] = None
+
+    # 事件聚类批量与 LLM 并发，默认偏保守，避免新闻任务挤占主业务资源。
+    event_clustering_batch_size: int = 30
+    event_clustering_max_concurrent: int = 3
+
+    # 数据生命周期管理时间 (默认: 每天凌晨 3:00)
+    news_lifecycle_schedule: Optional[str] = None
+
+    # 财务数据采集时间 (默认: 每月 1 日 09:00)
+    fina_indicator_schedule: Optional[str] = None
+
+
+class WebSettings(BaseSettings):
+    """Web 服务配置
+
+    环境变量: WEB_HOST, WEB_PORT, WEB_WORKERS
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="WEB_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    host: str = "0.0.0.0"
+    port: int = 8000
+    workers: int = 1
+    reload: bool = False
+
+
+class ListenerSettings(BaseSettings):
+    """Listener 节点配置
+
+    环境变量: LISTENER_POLL_INTERVAL, LISTENER_LIMIT_FETCH_TIME, ...
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="LISTENER_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # 轮询间隔 (秒)
+    poll_interval: int = 60
+
+    # 每日涨跌停数据获取时间 (格式: HH:MM)
+    limit_fetch_time: str = "09:15"
+
+    # 交易时间配置 (格式: HH:MM-HH:MM)
+    morning_session: str = "09:30-11:30"
+    afternoon_session: str = "13:00-15:00"
+
+    # 是否在非交易时间静默
+    silent_outside_trading: bool = True
+
+
+class NotificationSettings(BaseSettings):
+    """通知配置
+
+    环境变量: NOTIFY_WECOM_WEBHOOK, NOTIFY_ENABLED, ...
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="NOTIFY_",
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # 企业微信 Webhook URL
+    wecom_webhook: Optional[str] = None
+
+    # 是否启用通知
+    enabled: bool = True
+
+    # 消息发送间隔 (秒，防止刷屏)
+    min_interval: int = 10
+
+    @property
+    def is_configured(self) -> bool:
+        """检查是否已配置 Webhook"""
+        return bool(self.wecom_webhook)
+
+
+# ==================== 主配置类 ====================
+
+
+class Settings(BaseSettings):
+    """
+    主配置类
+
+    从 .env 文件或环境变量读取配置。
+
+    使用示例:
+        from core.settings import settings
+
+        # 访问配置
+        debug = settings.debug
+        redis_host = settings.redis.host
+        tushare_token = settings.tushare.token.get_secret_value()
+    """
+    model_config = SettingsConfigDict(
+        env_file=DEFAULT_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # 应用基础配置
+    app_name: str = "StockAgent"
+    debug: bool = Field(default=False, alias="DEBUG")
+
+    # JWT 配置
+    jwt_secret: SecretStr = Field(
+        default=SecretStr("change-me-in-production"),
+        alias="JWT_SECRET"
+    )
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    jwt_expire_minutes: int = Field(default=60 * 24, alias="JWT_EXPIRE_MINUTES")  # 24 小时
+
+    # 子配置 - 每个子配置独立从环境变量读取
+    @property
+    def redis(self) -> RedisSettings:
+        return _get_redis_settings()
+
+    @property
+    def mongo(self) -> MongoSettings:
+        return _get_mongo_settings()
+
+    @property
+    def mongo_mirror(self) -> MongoMirrorSettings:
+        return _get_mongo_mirror_settings()
+
+    @property
+    def milvus(self) -> MilvusSettings:
+        return _get_milvus_settings()
+
+    @property
+    def tushare(self) -> TushareSettings:
+        return _get_tushare_settings()
+
+    @property
+    def llm(self) -> LLMSettings:
+        return _get_llm_settings()
+
+    @property
+    def coze(self) -> CozeSettings:
+        return _get_coze_settings()
+
+    @property
+    def observability(self) -> ObservabilitySettings:
+        return _get_obs_settings()
+
+    @property
+    def node(self) -> NodeSettings:
+        return _get_node_settings()
+
+    @property
+    def web(self) -> WebSettings:
+        return _get_web_settings()
+
+    @property
+    def data_sync(self) -> DataSyncSettings:
+        return _get_data_sync_settings()
+
+    @property
+    def listener(self) -> ListenerSettings:
+        return _get_listener_settings()
+
+    @property
+    def notification(self) -> NotificationSettings:
+        return _get_notification_settings()
+
+    @property
+    def rpc(self) -> RPCSettings:
+        return _get_rpc_settings()
+
+
+# ==================== 缓存的子配置获取函数 ====================
+
+
+@lru_cache()
+def _get_redis_settings() -> RedisSettings:
+    return RedisSettings()
+
+
+@lru_cache()
+def _get_mongo_settings() -> MongoSettings:
+    return MongoSettings()
+
+
+@lru_cache()
+def _get_mongo_mirror_settings() -> MongoMirrorSettings:
+    return MongoMirrorSettings()
+
+
+@lru_cache()
+def _get_milvus_settings() -> MilvusSettings:
+    return MilvusSettings()
+
+
+@lru_cache()
+def _get_tushare_settings() -> TushareSettings:
+    return TushareSettings()
+
+
+@lru_cache()
+def _get_llm_settings() -> LLMSettings:
+    return LLMSettings()
+
+
+@lru_cache()
+def _get_coze_settings() -> CozeSettings:
+    return CozeSettings()
+
+
+@lru_cache()
+def _get_obs_settings() -> ObservabilitySettings:
+    return ObservabilitySettings()
+
+
+@lru_cache()
+def _get_node_settings() -> NodeSettings:
+    return NodeSettings()
+
+
+@lru_cache()
+def _get_web_settings() -> WebSettings:
+    return WebSettings()
+
+
+@lru_cache()
+def _get_data_sync_settings() -> DataSyncSettings:
+    return DataSyncSettings()
+
+
+@lru_cache()
+def _get_listener_settings() -> ListenerSettings:
+    return ListenerSettings()
+
+
+@lru_cache()
+def _get_notification_settings() -> NotificationSettings:
+    return NotificationSettings()
+
+
+@lru_cache()
+def _get_rpc_settings() -> RPCSettings:
+    return RPCSettings()
+
+
+@lru_cache()
+def get_settings() -> Settings:
+    """获取全局配置单例"""
+    return Settings()
+
+
+# ==================== 全局配置实例 ====================
+
+settings = get_settings()

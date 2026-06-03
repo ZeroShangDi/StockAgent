@@ -1,1 +1,32 @@
--r ../AgentServer/requirements.txt
+# ==================== Core ====================
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# ==================== Database ====================
+redis>=5.0.0
+motor>=3.3.0
+pymongo>=4.6.0
+pymilvus[lite]>=2.3.0
+
+# ==================== Scheduling & RPC ====================
+apscheduler>=3.10.0
+grpcio>=1.60.0
+protobuf>=5.29.0
+
+# ==================== Data & HTTP ====================
+tushare>=1.4.0
+pandas>=2.1.0
+numpy>=1.26.0
+httpx>=0.26.0
+tenacity>=8.2.0
+akshare
+baostock
+
+# ==================== LLM ====================
+openai>=1.10.0
+
+# ==================== Config & Logging ====================
+jinja2>=3.1.0
+pyyaml>=6.0.0
+python-logging-loki>=0.3.1

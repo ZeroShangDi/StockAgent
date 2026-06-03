@@ -545,6 +545,8 @@ P2 数据可以降频、暂停或手动触发：
 
 优先级：`P1`
 
+当前进度：已完成首个可运行闭环。`UnifiedHttpClient` 已覆盖 GET/POST、超时、重试退避、`Retry-After`、429/503/5xx 分类和非法 JSON 分类；当前先接入 Coze 工作流源，并把结构化错误写入 DataSourceManager 调用统计。第三方库封装源暂不强行改写。
+
 目标：
 
 为外部接口请求提供统一超时、重试、退避、限流、Header、错误分类能力，避免各采集器各写一套。
@@ -579,6 +581,8 @@ P2 数据可以降频、暂停或手动触发：
 ### DS-P1-08：统一数据源回退策略
 
 优先级：`P1`
+
+当前进度：已完成首个可运行闭环。DataSourceManager 已按能力和调用形态定义 source chain，支持 `SYNC_SOURCE_CHAIN_OVERRIDES` 覆盖；调用统计会记录实际链路、已尝试来源和 fallback from/to；当所有可尝试来源均报错时会抛出链路错误，避免把源端故障伪装成空数据。
 
 目标：
 
@@ -615,6 +619,8 @@ P2 数据可以降频、暂停或手动触发：
 
 优先级：`P1`
 
+当前进度：已完成首个可运行闭环。BaseCollector 的 `_write_buffer` 入口已接入核心集合轻量校验，覆盖 `stock_daily`、`daily_basic`、`index_daily`、`limit_list`、`moneyflow_industry`、`moneyflow_concept`；会校验必填字段、标准化日期、转换数值字段，并记录被丢弃坏记录样本。后续 DS-P1-10 再把坏记录样本落到死信集合。
+
 目标：
 
 核心采集器写库前必须经过基础校验，避免字段缺失、类型异常、日期异常污染数据库。
@@ -648,6 +654,8 @@ P2 数据可以降频、暂停或手动触发：
 ### DS-P1-10：建立死信/脏数据记录集合
 
 优先级：`P1`
+
+当前进度：已完成首个可运行闭环。MongoManager 已新增 `datasync_dead_letters` 索引和 `record_dead_letters` 方法；BaseCollector 校验失败样本会 best-effort 写入死信集合，单批默认最多 20 条；ops summary 会返回 `recent_dead_letters` 并在核心采集器出现近期死信时生成告警。
 
 目标：
 
@@ -686,6 +694,8 @@ P2 数据可以降频、暂停或手动触发：
 
 优先级：`P1`
 
+当前进度：已完成首个可运行闭环。MongoManager 新增 `bulk_upsert_batched`，旧 `bulk_upsert` 保持兼容并委托新入口；新入口强制 `key_fields`、按 `SYNC_BULK_UPSERT_BATCH_SIZE` 控制批次、返回 `matched/modified/upserted/inserted/failed/batch_errors`，批次失败会抛出 `BulkUpsertBatchError`。BaseCollector 的 `_write_buffer` 已切到新入口，并把 `write_results` 挂回任务结果，供 job execution details 记录。
+
 目标：
 
 所有核心采集器使用统一 upsert/bulk 写入方式，保证重复拉取不会重复记录，同时控制批量大小。
@@ -718,6 +728,8 @@ P2 数据可以降频、暂停或手动触发：
 
 优先级：`P1`
 
+状态：`已完成基础契约`
+
 目标：
 
 支持任务中断后从安全位置恢复，尤其是历史补缺和多股票扫描类任务。
@@ -749,6 +761,14 @@ P2 数据可以降频、暂停或手动触发：
 - checkpoint 可通过 CLI 查看。
 - checkpoint 不影响幂等写入。
 
+落地说明：
+
+- 已新增 `datasync_checkpoints` 集合索引和 `MongoManager` 读写方法。
+- 已新增 `BaseCollector` checkpoint helper，后续采集器可逐个接入。
+- `stock_daily` 已接入按交易日增量续跑和按股票代码/日期窗口历史续跑。
+- 已新增 `DataSync/main.py --recent-checkpoints` 运维查看入口。
+- 已补充 checkpoint 管理与 `stock_daily` 续跑单元测试。
+
 禁止事项：
 
 - 不依赖本地文件作为唯一状态。
@@ -758,6 +778,8 @@ P2 数据可以降频、暂停或手动触发：
 ### DS-P1-13：定义闲时任务窗口
 
 优先级：`P1`
+
+状态：`已完成基础闸门`
 
 目标：
 
@@ -782,6 +804,14 @@ P2 数据可以降频、暂停或手动触发：
 - 闲时窗口内可自动补最近历史缺口。
 - skipped 有清晰原因。
 
+落地说明：
+
+- 已新增 `SYNC_BACKFILL_WINDOW_START/END`，并兼容 `DATASYNC_BACKFILL_WINDOW_START/END`。
+- Docker 编排已透传默认 `00:00-08:00`，旧服务器 `.env.docker` 缺省时仍使用保守默认值。
+- `DataSyncNode` 已在运行入口拦截 `heavy` 任务和显式 `backfill/history` 触发，窗口外返回 `backfill_window_closed` 并记录执行明细。
+- CLI 定向恢复新增 `--force`，用于人工确认后绕过闲时窗口；当天核心缺口恢复不受该闸门限制。
+- 已补充窗口判断、heavy 任务 skip 和 force 绕过测试。
+
 禁止事项：
 
 - 不阻止当天核心缺口恢复。
@@ -789,6 +819,8 @@ P2 数据可以降频、暂停或手动触发：
 ### DS-P1-14：建立历史补缺任务队列
 
 优先级：`P1`
+
+状态：`已完成基础队列`
 
 目标：
 
@@ -823,6 +855,19 @@ P2 数据可以降频、暂停或手动触发：
 - 可以创建一个最近 4 天补缺任务。
 - 闲时 worker 能消费任务。
 - 失败不会无限快速重试。
+
+落地说明：
+
+- 已新增 `datasync_backfill_jobs` 集合索引。
+- 已新增补缺任务创建、列表、领取、完成、失败、暂停、恢复方法。
+- 已新增 `BackfillQueueService`，队列消费时复用任务自身 `recover_trade_date`，不绕过采集器校验。
+- 已新增内部 `backfill_queue_worker`，默认每 30 分钟在闲时窗口内最多消费 2 个任务。
+- 已新增 CLI：
+  - `--enqueue-backfill-job --job-name <dataset> --trade-date <YYYYMMDD>`
+  - `--recent-backfill-jobs`
+  - `--run-backfill-queue-once`
+- 失败任务会按 `SYNC_BACKFILL_MAX_ATTEMPTS` 限制重试次数，耗尽后进入 `failed`。
+- 已补充队列状态流转、服务消费和保守默认测试。
 
 禁止事项：
 
@@ -860,6 +905,14 @@ P2 数据可以降频、暂停或手动触发：
 - 最近 4 天缺口可以自动逐项修复。
 - 不支持的任务列表为空或有明确说明。
 
+当前进度：
+
+- 8 个核心数据集均已接入统一 `recover_trade_date` 契约。
+- 恢复前统一调用交易日历校验，非法日期和非交易日会显式跳过，交易日历源异常会显式失败并进入可重试路径。
+- 恢复结果统一返回 `success`、`count`、`trade_date`、`source`、`sources`、`warnings`、`failed_items` 等字段。
+- `daily_basic`、`moneyflow_industry`、`moneyflow_concept`、`limit_list` 的定向恢复会保留实际数据源信息，方便排查源端回退。
+- 已补充 `test_recovery_contract.py`，覆盖交易日校验、来源汇总、告警生成和核心恢复方法契约。
+
 禁止事项：
 
 - 不让某个恢复方法偷偷跑长区间。
@@ -891,6 +944,15 @@ P2 数据可以降频、暂停或手动触发：
 - 历史补缺达到预算会停止。
 - 停止原因可观测。
 - 第二天可继续。
+
+当前进度：
+
+- 已新增每晚最大补缺任务数、每晚最大外部请求数、连续失败熔断配置。
+- 补缺队列消费改为逐个领取任务，运行前检查预算，运行后记录当日预算用量，避免一次性领取过多任务后无法中途刹车。
+- 预算状态写入 `datasync_backfill_budgets`，包含 `jobs_consumed`、`external_requests`、`success_count`、`failure_count`、`consecutive_failures`。
+- 达到预算或连续失败上限时返回 `stopped_reason`，并写入 `backfill_queue_budget_stopped` 运维事件。
+- `ops summary` 会展示最近 3 天补缺预算状态，便于确认当晚为什么停止以及第二天是否恢复。
+- 已补充队列预算与保守默认测试，覆盖任务预算耗尽和连续失败熔断。
 
 禁止事项：
 
@@ -927,6 +989,14 @@ P2 数据可以降频、暂停或手动触发：
 - Mongo 不可用时 health 失败。
 - 核心数据缺失时 ready 失败但 health 可成功。
 
+当前进度：
+
+- 已新增 `python DataSync/main.py --health`，只校验配置加载、Redis ping、Mongo ping 和主/镜像库状态，不读取核心大集合。
+- 已新增 `python DataSync/main.py --ready`，只读取最新 `market_core_ready` marker 和近期核心失败任务，不初始化外部数据源。
+- `ready` 将 `ready/degraded` 视为可用状态；marker 缺失或近期核心任务失败时返回非 0。
+- 独立 DataSync Docker Compose 已将 `data-sync` healthcheck 切换为 `python main.py --health`。
+- 已补充 `test_probe_commands.py`，覆盖 health/ready 探针结果判断。
+
 禁止事项：
 
 - healthcheck 不做重型查询。
@@ -959,6 +1029,21 @@ P2 数据可以降频、暂停或手动触发：
 - `--ops-summary --require-recent-window-ready` 能作为监控命令。
 - 输出 JSON 结构稳定。
 - 文档给出服务器常用命令。
+
+当前进度：
+
+- `ops-summary` 已新增顶层 `operational_status`，取值为 `healthy/degraded/critical`。
+- `ops-summary` 已新增稳定的 `probe_checks`，包含主库健康、最新核心数据就绪、最近窗口就绪、未解决失败、未解决告警、核心数据源退化、核心慢任务、补缺队列可运行等布尔检查。
+- 已新增 `backfill_queue_status`，输出队列状态计数、最近少量任务样本、最近预算、预算上限和熔断状态。
+- CLI 严格模式已优先复用 `probe_checks`，`--ops-summary --require-recent-window-ready` 可作为监控命令。
+- 已补充 `test_ops_summary.py`，覆盖总探针健康/退化/严重状态判断和 backfill 队列检查。
+
+服务器常用命令：
+
+- `docker compose -f DataSync/docker-compose.yml exec data-sync python main.py --ops-summary`
+- `docker compose -f DataSync/docker-compose.yml exec data-sync python main.py --ops-summary --require-recent-window-ready`
+- `docker compose -f DataSync/docker-compose.yml exec data-sync python main.py --ops-summary --require-no-recent-failures --require-no-warning-events`
+- `docker compose -f DataSync/docker-compose.yml exec data-sync python main.py --ops-summary --require-no-core-data-source-degradation --require-no-core-runtime-outliers`
 
 禁止事项：
 
@@ -995,6 +1080,13 @@ P2 数据可以降频、暂停或手动触发：
 
 - 不推荐直接开放 Mongo 端口。
 
+当前进度：
+
+- 已新增 `docs/DATASYNC_OPERATIONS.md` 作为生产补数操作手册。
+- 手册覆盖 Docker Compose、独立 DataSync Compose、本地三种命令前缀。
+- 手册覆盖最近 1-5 个交易日核心数据安全补缺、单任务单交易日定向补缺、夜间补缺队列、完成确认、失败排查和白天禁用命令。
+- 明确禁止通过开放 MongoDB 端口、手动改库伪造 ready、白天跑大窗口或无限制放大补缺预算来处理生产缺数。
+
 ### DS-P2-04：统一 Docker 部署收口
 
 优先级：`P2`
@@ -1026,10 +1118,19 @@ P2 数据可以降频、暂停或手动触发：
 - `docker compose config` 通过。
 - 简化部署栈有 DataSync 保守配置。
 - 缺少可选变量时仍能启动。
+- Docker 示例默认不把 Mongo/Redis 暴露到公网。
+- DataSync、Mongo、Redis 都有保守资源边界。
 
 禁止事项：
 
 - 不把本地 `.env` 提交。
+
+当前进度：
+
+- 已将根目录简化 Compose、full Compose、独立 DataSync Compose 的 Mongo/Redis 端口映射默认绑定到 `127.0.0.1`。
+- 已拆分 `MONGO_PUBLISHED_PORT` / `REDIS_PUBLISHED_PORT` 与容器内连接使用的 `MONGO_PORT` / `REDIS_PORT`，避免改宿主机端口后应用误连容器内错误端口。
+- 已为独立 DataSync Compose 补充 `data-sync`、`mongodb`、`redis` 的保守资源边界，并为 full Compose 的 `data-sync` 补齐 CPU 上限。
+- 已将根目录 `.env.docker.example` 补齐补缺窗口、补缺预算、ready 时间窗、死信、批量 upsert 和热点新闻保护项。
 
 ### DS-P2-05：旧 AgentServer DataSync 替换边界评估
 
@@ -1062,6 +1163,13 @@ P2 数据可以降频、暂停或手动触发：
 禁止事项：
 
 - 不直接删除旧代码。
+
+当前进度：
+
+- 已新增 `docs/DATASYNC_MIGRATION_PLAN.md`。
+- 已完成旧 `AgentServer/nodes/data_sync` 与独立 `DataSync/nodes/data_sync` 的任务注册、能力和集合边界对照。
+- 当前结论是独立 DataSync 可以灰度接管核心行情链路，`market_weather` 股票晴雨表任务已迁移到独立 DataSync；正式下线旧链路前仍需生产灰度验证。
+- 已给出影子验证、核心链路切换、股票晴雨表验证、旧链路下线四阶段灰度方案。
 
 ## 9. P2 任务：可维护与扩展
 
@@ -1103,6 +1211,13 @@ P2 数据可以降频、暂停或手动触发：
 
 - 不要求所有旧任务一次性完美补齐，先核心。
 
+当前进度：
+
+- 已在 `ScheduledJob` 增加统一 `capability_manifest()` 静态能力声明出口。
+- 已为保守档核心任务补齐数据集、目标集合、依赖、资源等级、恢复能力和质量规则声明。
+- `DataSyncNode.get_capability_manifest()` 可按当前 profile 生成任务能力清单，并通过 RPC `get_data_capabilities` 暴露。
+- 已补 `DataSync/tests/test_capability_manifest.py`，覆盖任务级声明、保守档核心能力清单、full 档注册能力和 RPC 出口。
+
 ### DS-P2-07：生成机器可读数据能力目录
 
 优先级：`P2`
@@ -1138,6 +1253,14 @@ P2 数据可以降频、暂停或手动触发：
 
 - 不把运行状态写进静态能力目录。
 
+当前进度：
+
+- 已新增 [datasync_capabilities.yaml](/Users/shangjunhao/Project/StockAgent/DataSync/config/datasync_capabilities.yaml)，记录当前 conservative 档 12 个核心能力。
+- 已新增 `DataSync/src/datasync_capabilities.py`，支持构建和写入 YAML/JSON 能力目录。
+- `DataSync/main.py` 已支持 `--data-capabilities` 和 `--write-data-capabilities`。
+- 能力目录包含能力名、目标集合、默认/生效调度、依赖、是否核心、是否可恢复、资源等级、质量规则和默认数据源链路。
+- 已补 `DataSync/tests/test_datasync_capabilities_catalog.py`，覆盖目录构建、YAML/JSON 写入和已生成配置文件一致性。
+
 ### DS-P2-08：索引与集合初始化收敛
 
 优先级：`P2`
@@ -1169,6 +1292,15 @@ P2 数据可以降频、暂停或手动触发：
 禁止事项：
 
 - 不在交易时段自动跑全量索引重建。
+
+当前进度：
+
+- DataSync `MongoManager` 已支持 `MONGO_INDEX_STARTUP_SCOPE=core/all/none`，默认 `core`，启动只检查核心集合索引。
+- DataSync 索引创建增加单集合超时和已存在索引跳过，避免每次启动重复 createIndexes。
+- DataSync `--health` / `--ready` 探针已跳过索引检查，避免 Docker 高频探活反复触发索引维护。
+- DataSync CLI 已新增 `--ensure-indexes`、`--index-scope`、`--index-collections`，可在闲时手动补齐全量或指定集合索引。
+- AgentServer `MongoManager` 已支持启动索引范围配置，默认同样使用 core 范围，避免 Web 重启时集中检查所有业务集合。
+- 已补 `DataSync/tests/test_mongo_index_scope.py`，覆盖默认配置、core 范围跳过非核心集合、已存在索引不重复创建。
 
 ### DS-P2-09：日志结构化与采样
 
@@ -1202,6 +1334,8 @@ P2 数据可以降频、暂停或手动触发：
 
 - 不把完整外部响应无限打日志。
 
+当前进度：已完成首版结构化与采样收敛。`DataSyncNode` 的任务开始、成功、失败、跳过和超时都会输出稳定事件名，并带上 `job`、`trigger`、`resource_class`、`target_trade_date`、`source`、`attempt`、`duration_ms` 等排障字段；采集器校验丢弃记录时只按 `OBS_LOG_SAMPLE_LIMIT` 输出压缩样本，详细坏数据仍进入 `datasync_dead_letters` 或 job details；日志字段通过 `sanitize_log_value` 截断，避免完整外部响应刷爆 Docker 日志。文件轮转仍由 `OBS_LOG_MAX_SIZE_MB` 与 `OBS_LOG_BACKUP_COUNT` 控制。
+
 ## 10. P3 任务：增强能力
 
 ### DS-P3-01：动态批次大小调整
@@ -1222,6 +1356,8 @@ P2 数据可以降频、暂停或手动触发：
 - 写入变慢时自动缩小批次。
 - 写入稳定时不无限扩大。
 
+当前进度：已完成首版动态批次闭环。`bulk_upsert_batched` 会从 `SYNC_BULK_UPSERT_BATCH_SIZE` 起步，并受 `SYNC_BULK_UPSERT_MAX_BATCH_SIZE` 硬上限约束；单批写入耗时超过 `SYNC_BULK_UPSERT_SLOW_BATCH_MS` 时自动缩小到不低于 `SYNC_BULK_UPSERT_MIN_BATCH_SIZE`，连续稳定批次达到 `SYNC_BULK_UPSERT_STABLE_BATCHES_TO_GROW` 后只恢复到本次请求上限，不会无限扩大。返回值新增 `batch_size_history` 与 `adaptive_batching`，采集器会把它们带入 `write_results`，方便从任务详情确认是否发生过降载。
+
 ### DS-P3-02：更细的外部限流令牌桶
 
 优先级：`P3`
@@ -1239,6 +1375,8 @@ P2 数据可以降频、暂停或手动触发：
 
 - Tushare、AKShare、Baostock、Coze 可分别限流。
 - 429 后能按源进入冷却。
+
+当前进度：已完成首版源级限流和冷却。`DataSourceManager` 会按 `SYNC_SOURCE_RATE_LIMITS` 为 `tushare/akshare/baostock/coze` 分别创建令牌桶，调用适配器前先获取源级预算；可控 HTTP 源返回 429 时，会按 `Retry-After` 或 `SYNC_SOURCE_RATE_LIMIT_COOLDOWN_SECONDS` 进入源级冷却，冷却期间跳过该源并继续回退到其他可用源。`get_call_stats_summary()` 顶层会返回 `source_rate_limits`，同时单源统计记录 `source_cooling_down`、剩余冷却时间和最近冷却截止时间。
 
 ### DS-P3-03：Web 数据能力状态页
 
@@ -1261,6 +1399,8 @@ P2 数据可以降频、暂停或手动触发：
 - 能看到最近失败任务。
 - 能手动触发安全补缺。
 
+当前进度：已完成首版 Web 数据能力状态面板。AgentServer 新增 `GET /api/v1/system/datasync/status`，轻量汇总核心 ready marker、机器可读能力目录、最近 7 天失败任务和补缺队列少量摘要；系统“能力状态”页已展示核心交易日、ready/缺失数量、缺失数据集、最近失败、补缺队列，并复用现有安全补最近 3 个交易日核心数据入口。已补充 mock 单测覆盖面板汇总契约。
+
 ### DS-P3-04：不可后补数据白名单
 
 优先级：`P3`
@@ -1278,6 +1418,204 @@ P2 数据可以降频、暂停或手动触发：
 
 - 能力目录中标记 `recoverability`。
 - 不可后补数据失败时 ops event 为 warning/critical。
+
+当前进度：已完成首版可恢复性声明。所有 `ScheduledJob.capability_manifest()` 会输出稳定 `recoverability` 对象，包含 `mode(full/best_effort/none)`、是否支持交易日恢复、是否支持 backfill、是否可重跑、缺失告警级别和原因；核心完整性检查会在顶层和单个数据集状态中输出 `recoverability`。`hot_news` 明确标记为 `mode=none`、`severity_on_missing=warning`，`stock_news` 标记为 `best_effort/warning`；任务失败执行记录会写入 recoverability，不可后补或强时效任务失败时会写入 warning/critical 级 ops event。
+
+### DS-P3-05：Web 可恢复性展示
+
+优先级：`P3`
+
+目标：
+
+在系统能力状态页展示数据能力的可恢复性，避免只看到“缺失”却不知道是“可补”“尽力补”还是“不可还原”。
+
+建议文件范围：
+
+- `AgentServer/nodes/web/api/system_sync.py`
+- `frontend/src/views/system/SystemStatusView.vue`
+- `frontend/src/api/types.ts`
+
+验收标准：
+
+- DataSync 状态接口输出 `recoverability_summary`。
+- 缺失数据集能显示可恢复性模式。
+- 最近失败任务能显示对应能力的可恢复性。
+
+当前进度：已完成首版。`GET /api/v1/system/datasync/status` 会返回 `recoverability_summary`，包含能力模式计数、不可完整后补能力和缺失数据集恢复模式；系统“能力状态”页展示不可完整后补/尽力补数量，并在缺失数据集、最近失败任务中标注 `可补/尽力补/不可还原`。
+
+### DS-P3-06：Web 补缺入队闭环
+
+优先级：`P3`
+
+目标：
+
+把系统能力状态页看到的缺失数据集安全加入 DataSync 夜间补缺队列，形成“发现缺口 -> 入队 -> 查看队列”的轻量闭环；Web 不直接消费队列，避免手动操作绕过 4C8G 资源预算。
+
+建议文件范围：
+
+- `AgentServer/nodes/web/api/system.py`
+- `AgentServer/nodes/web/api/system_sync.py`
+- `frontend/src/views/system/SystemStatusView.vue`
+- `frontend/src/api/modules/system.ts`
+- `frontend/src/api/types.ts`
+
+验收标准：
+
+- Web API 支持按 `dataset + trade_date` 创建 `datasync_backfill_jobs`。
+- 仅允许能力目录中可补或尽力补的数据集入队，不可还原数据拒绝入队。
+- 同一数据集和交易日重复入队返回既有任务，不制造重复任务。
+- 系统能力状态页能在缺失数据集旁触发入队，并刷新补缺队列摘要。
+
+当前进度：已完成首版。新增 `POST /api/v1/system/datasync/backfill-jobs`，按能力目录校验可恢复性后通过 Mongo upsert 写入 `datasync_backfill_jobs`；系统“能力状态”页在缺失数据集旁展示“加入补缺队列”按钮，只对 `full/best_effort` 数据开放，入队后刷新队列状态。队列状态统计已对齐 DataSync 实际状态 `pending/running/failed/paused/done`。
+
+### DS-P3-07：Web 补缺队列人工操作与审计
+
+优先级：`P3`
+
+目标：
+
+让系统能力状态页能够安全管理补缺队列中的异常任务，支持暂停待执行任务、恢复暂停任务、重试失败任务，并把人工操作写入运维事件；不允许 Web 强制中断正在运行的任务。
+
+建议文件范围：
+
+- `AgentServer/nodes/web/api/system.py`
+- `AgentServer/nodes/web/api/system_sync.py`
+- `frontend/src/views/system/SystemStatusView.vue`
+- `frontend/src/api/modules/system.ts`
+- `frontend/src/api/types.ts`
+
+验收标准：
+
+- `pending/failed` 补缺任务可以暂停为 `paused`。
+- `paused` 补缺任务可以恢复为 `pending`。
+- `failed` 补缺任务可以重试为 `pending`，并重置 attempts 和错误字段。
+- `running/done` 任务不允许由 Web 直接改状态。
+- 每次人工操作写入 `ops_events`，保留操作者、任务、交易日、前后状态和动作。
+
+当前进度：已完成首版。新增 `PATCH /api/v1/system/datasync/backfill-jobs/{job_id}/action`，支持 `pause/resume/retry` 三个动作并写入 `backfill_queue_manual_action` 运维事件；系统“能力状态”页的补缺队列列表会按任务状态显示“暂停/恢复/重试”按钮，操作后自动刷新队列摘要。
+
+### DS-P3-08：Web 运维事件展示
+
+优先级：`P3`
+
+目标：
+
+把 DataSync 近期运维事件接入系统能力状态页，让补缺队列人工操作、不可后补告警、核心恢复事件可以在页面上追踪，减少只能查日志或上服务器查 Mongo 的情况。
+
+建议文件范围：
+
+- `AgentServer/nodes/web/api/system_sync.py`
+- `frontend/src/views/system/SystemStatusView.vue`
+- `frontend/src/api/types.ts`
+
+验收标准：
+
+- `GET /api/v1/system/datasync/status` 返回最近少量 `ops_events`。
+- 查询必须有时间窗口和数量上限，不能让状态页造成无界读取。
+- 页面展示事件类型、级别、来源、时间、消息和关键 details。
+- 补缺队列人工操作可以在运维事件中看到动作、前后状态和操作者。
+
+当前进度：已完成首版。状态接口读取最近 72 小时最多 5 条 `datasync/web` 运维事件并输出 `recent_ops_events`；系统“能力状态”页新增“运维事件”卡片，展示事件级别、来源、时间、消息和补缺队列相关 details。
+
+### DS-P3-09：Docker Compose 安全默认值回归测试
+
+优先级：`P3`
+
+目标：
+
+把 DataSync 部署层的 4C8G 保守默认值纳入自动化测试，避免后续修改 `docker-compose.yml`、`docker-compose.full.yml` 或独立 `DataSync/docker-compose.yml` 时，悄悄放开初始同步、任务并发、热点新闻或资源限制。
+
+建议文件范围：
+
+- `DataSync/tests/test_docker_compose_safety.py`
+- `docker-compose.yml`
+- `docker-compose.full.yml`
+- `DataSync/docker-compose.yml`
+
+验收标准：
+
+- 根 compose 与 full compose 的 `data-sync` 服务必须保持 `SYNC_PROFILE=conservative`、禁止初始同步、任务并发为 1、采集并发为 2、禁止首次历史全量回补。
+- 根 compose 与 full compose 的 `data-sync` 服务必须保留 0.75 CPU、512M 内存的保守资源限制。
+- 根 compose 与 full compose 的 `data-sync` 服务必须默认关闭热点新闻，并限制补缺队列每轮任务数、每晚任务数和外部请求预算。
+- 独立 `DataSync/docker-compose.yml` 必须关闭共享环境文件回退，并保留 `python main.py --health` 健康检查。
+- 不把独立 DataSync 的 `--health` 直接混入根 compose 的旧 `AgentServer main.py --node-type data_sync` 启动链路，避免入口不一致导致容器误失败。
+
+当前进度：已完成。新增 `DataSync/tests/test_docker_compose_safety.py`，覆盖根 compose、full compose 和独立 DataSync compose 的关键安全默认值；DataSync 全量测试已纳入该测试并通过。
+
+### DS-P3-10：UTC 时间戳时区感知化
+
+优先级：`P3`
+
+目标：
+
+统一替换独立 DataSync 中的 `datetime.utcnow()`，改为 Python 推荐的 `datetime.now(UTC)`，消除 Python 3.13 下的弃用警告，并避免未来 Python 版本升级时把时间戳写入、运行记录、ready marker、checkpoint、补缺队列和运维摘要暴露在兼容性风险里。
+
+建议文件范围：
+
+- `DataSync/core/`
+- `DataSync/nodes/data_sync/`
+- `DataSync/src/`
+- `DataSync/main.py`
+
+验收标准：
+
+- `DataSync/` 下不再存在 `datetime.utcnow()`。
+- DataSync 所有 Python 文件可编译通过。
+- DataSync 全量单元测试通过。
+- `DataSync/main.py --check` 通过。
+- 不改变原有“UTC 时间”业务语义，只从 naive UTC datetime 调整为 timezone-aware UTC datetime。
+
+当前进度：已完成。已将 DataSync 范围内的 `datetime.utcnow()` 全部替换为 `datetime.now(UTC)` 并补齐 `UTC` 导入；DataSync 全量编译和 `100` 个单元测试通过，`--check` 通过。Pydantic V2 class-based `Config` 警告已在 `DS-P3-11` 处理，当前严格警告模式也可通过。
+
+### DS-P3-11：Pydantic V2 协议模型迁移
+
+优先级：`P3`
+
+目标：
+
+把独立 DataSync 中仍使用 Pydantic V1 风格 `class Config` 的协议模型迁移为 Pydantic V2 推荐的 `ConfigDict`，避免未来 Pydantic V3 升级时模型导入失败；同时修复迁移过程中容易出现的时间默认值冻结风险。
+
+建议文件范围：
+
+- `DataSync/core/protocols.py`
+- `DataSync/src/collector/types.py`
+- `DataSync/tests/test_pydantic_v2_protocols.py`
+
+验收标准：
+
+- DataSync 范围内不再存在 Pydantic 模型 `class Config`。
+- `StockAnalysisState`、`NewsItem` 等原先允许额外字段的模型继续允许额外字段。
+- datetime `default_factory` 必须在每次实例化时执行，不能在模块导入时冻结。
+- DataSync 全量编译通过。
+- DataSync 全量单元测试通过。
+- `PYTHONWARNINGS=error::DeprecationWarning` 下 DataSync 全量测试通过。
+
+当前进度：已完成。`StockAnalysisState` 和 `NewsItem` 已改用 `ConfigDict(extra="allow")`，协议模型时间字段已改为 `lambda: datetime.now(UTC)`；新增 `DataSync/tests/test_pydantic_v2_protocols.py` 覆盖额外字段兼容和时间默认值逐实例刷新；严格警告模式下 DataSync 全量 `102` 个测试通过。
+
+### DS-P3-12：统一提交范围审查
+
+优先级：`P3`
+
+目标：
+
+在 DataSync 重构进入统一提交前，对当前工作区改动做一次范围审查，明确哪些文件属于 DataSync 重构交付，哪些文件默认排除或需要单独确认，避免最终提交混入生成文件、个人工具配置或其他模块遗留改动。
+
+建议文件范围：
+
+- `docs/DATASYNC_UNIFIED_COMMIT_SCOPE_REVIEW.md`
+- `docs/DATASYNC_REFACTOR_TASK_BREAKDOWN.md`
+- `docs/datasync-task-timeline.md`
+- `docs/CHANGELOG.md`
+
+验收标准：
+
+- 明确列出建议纳入统一提交的独立 DataSync、AgentServer 配套、前端系统状态页、Docker 配置和文档范围。
+- 明确列出建议排除或单独确认的文件。
+- 明确不应提交的运行生成物。
+- 给出统一提交前建议验证命令。
+- 本任务只做范围审查和文档收口，不提交代码。
+
+当前进度：已完成。新增 `docs/DATASYNC_UNIFIED_COMMIT_SCOPE_REVIEW.md`，建议统一提交纳入 DataSync 主体、AgentServer 配套接口、系统状态页、Docker 保守配置和 DataSync 文档；默认排除 `frontend/src/components.d.ts` 和 `CLAUDE.md`，并记录运行生成物继续保持忽略。统一提交前建议执行 DataSync 全量测试、Web 系统同步测试、`main.py --check`、`--audit-self-contained`、前端构建和 `git diff --check`。
 
 ## 11. 推荐执行顺序
 
@@ -1329,6 +1667,13 @@ P2 数据可以降频、暂停或手动触发：
 2. `DS-P2-07`
 3. `DS-P2-08`
 4. `DS-P2-09`
+
+第七轮，最终收口：
+
+1. `DS-P3-09`
+2. `DS-P3-10`
+3. `DS-P3-11`
+4. `DS-P3-12`
 
 ## 12. 15 分钟 heartbeat 执行建议
 

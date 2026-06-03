@@ -5,8 +5,11 @@ import { Refresh } from '@element-plus/icons-vue'
 import { systemApi } from '@/api'
 import type {
   SystemCozePluginStatusResponse,
+  SystemDataSyncBackfillJob,
+  SystemDataSyncBackfillJobAction,
   SystemDataSourceMatrix,
   SystemDataSourceMatrixRow,
+  SystemDataSyncStatusPanel,
   SystemDatasetStatus,
   SystemManualSyncTask,
   SystemStatusItem,
@@ -20,7 +23,11 @@ const overviewLoading = ref(true)
 const refreshing = ref(false)
 const cozeRefreshing = ref(false)
 const manualSyncLoading = ref(false)
+const datasyncLoading = ref(false)
+const backfillJobLoading = ref<Record<string, boolean>>({})
+const backfillJobActionLoading = ref<Record<string, boolean>>({})
 const manualSyncTask = ref<SystemManualSyncTask | null>(null)
+const datasyncStatus = ref<SystemDataSyncStatusPanel | null>(null)
 const overview = ref<SystemStatusOverview | null>(null)
 const cozePlugins = ref<SystemCozePluginStatusResponse | null>(null)
 let manualSyncPollTimer: number | null = null
@@ -109,11 +116,24 @@ async function loadCozePlugins(forceRefresh = false) {
   }
 }
 
+async function loadDataSyncStatus() {
+  datasyncLoading.value = true
+  try {
+    datasyncStatus.value = await systemApi.getDataSyncStatus()
+  } catch (error) {
+    console.error('加载 DataSync 状态失败', error)
+    ElMessage.error('加载 DataSync 状态失败')
+  } finally {
+    datasyncLoading.value = false
+  }
+}
+
 async function loadStatus(forceRefresh = false) {
   refreshing.value = true
   await Promise.all([
     loadOverview(forceRefresh),
     loadCozePlugins(forceRefresh),
+    loadDataSyncStatus(),
     ...sections.value.map((section) => loadSection(section.key, forceRefresh)),
   ])
   refreshing.value = false
@@ -145,6 +165,200 @@ function getTaskStatusType(status?: string | null): 'info' | 'warning' | 'succes
     case 'failed':
     default:
       return 'danger'
+  }
+}
+
+function getReadinessStatusLabel(status?: string | null): string {
+  switch (status) {
+    case 'ready':
+      return '核心就绪'
+    case 'degraded':
+      return '降级可用'
+    case 'building':
+      return '生成中'
+    case 'waiting_window':
+      return '等待窗口'
+    case 'missing':
+      return '未生成'
+    case 'failed':
+      return '失败'
+    default:
+      return status || '未知'
+  }
+}
+
+function getReadinessStatusType(status?: string | null): 'info' | 'warning' | 'success' | 'danger' {
+  switch (status) {
+    case 'ready':
+      return 'success'
+    case 'degraded':
+    case 'building':
+    case 'waiting_window':
+      return 'warning'
+    case 'missing':
+      return 'info'
+    case 'failed':
+    default:
+      return 'danger'
+  }
+}
+
+function getRecoverabilityLabel(mode?: string | null): string {
+  switch (mode) {
+    case 'full':
+      return '可补'
+    case 'best_effort':
+      return '尽力补'
+    case 'none':
+      return '不可还原'
+    default:
+      return '未知'
+  }
+}
+
+function getRecoverabilityTagType(mode?: string | null): 'success' | 'warning' | 'danger' | 'info' {
+  switch (mode) {
+    case 'full':
+      return 'success'
+    case 'best_effort':
+      return 'warning'
+    case 'none':
+      return 'danger'
+    default:
+      return 'info'
+  }
+}
+
+function canEnqueueBackfill(mode?: string | null): boolean {
+  return mode === 'full' || mode === 'best_effort'
+}
+
+function getBackfillLoadingKey(dataset: string): string {
+  const tradeDate = datasyncStatus.value?.core_status.trade_date || 'unknown'
+  return `${dataset}:${tradeDate}`
+}
+
+async function enqueueMissingDatasetBackfill(dataset: string) {
+  const tradeDate = datasyncStatus.value?.core_status.trade_date
+  if (!tradeDate) {
+    ElMessage.warning('当前没有可用于补缺的核心交易日')
+    return
+  }
+
+  const loadingKey = getBackfillLoadingKey(dataset)
+  backfillJobLoading.value = {
+    ...backfillJobLoading.value,
+    [loadingKey]: true,
+  }
+  try {
+    const job = await systemApi.enqueueDataSyncBackfillJob(dataset, tradeDate)
+    ElMessage.success(job.already_exists ? '补缺任务已在队列中' : '已加入夜间补缺队列')
+    await loadDataSyncStatus()
+  } catch (error) {
+    console.error('创建 DataSync 补缺任务失败', error)
+    ElMessage.error('创建补缺任务失败')
+  } finally {
+    backfillJobLoading.value = {
+      ...backfillJobLoading.value,
+      [loadingKey]: false,
+    }
+  }
+}
+
+function getBackfillJobStatusLabel(status?: string | null): string {
+  switch (status) {
+    case 'pending':
+      return '待处理'
+    case 'running':
+      return '执行中'
+    case 'failed':
+      return '失败'
+    case 'paused':
+      return '已暂停'
+    case 'done':
+      return '已完成'
+    default:
+      return status || '未知'
+  }
+}
+
+function getBackfillJobActions(job: SystemDataSyncBackfillJob): SystemDataSyncBackfillJobAction[] {
+  switch (job.status) {
+    case 'pending':
+      return ['pause']
+    case 'failed':
+      return ['retry', 'pause']
+    case 'paused':
+      return ['resume']
+    default:
+      return []
+  }
+}
+
+function getBackfillJobActionLabel(action: SystemDataSyncBackfillJobAction): string {
+  switch (action) {
+    case 'pause':
+      return '暂停'
+    case 'resume':
+      return '恢复'
+    case 'retry':
+      return '重试'
+  }
+}
+
+function getOpsSeverityType(severity?: string | null): 'info' | 'warning' | 'success' | 'danger' {
+  switch (severity) {
+    case 'critical':
+    case 'error':
+      return 'danger'
+    case 'warning':
+      return 'warning'
+    case 'info':
+      return 'info'
+    default:
+      return 'info'
+  }
+}
+
+function getOpsSeverityLabel(severity?: string | null): string {
+  switch (severity) {
+    case 'critical':
+      return '严重'
+    case 'error':
+      return '错误'
+    case 'warning':
+      return '告警'
+    case 'info':
+      return '信息'
+    default:
+      return severity || '未知'
+  }
+}
+
+function getOpsDetailValue(details: Record<string, unknown> | undefined, key: string): string {
+  const value = details?.[key]
+  return value === null || value === undefined || value === '' ? '' : String(value)
+}
+
+async function operateBackfillJob(job: SystemDataSyncBackfillJob, action: SystemDataSyncBackfillJobAction) {
+  if (!job.job_id) return
+  const loadingKey = `${job.job_id}:${action}`
+  backfillJobActionLoading.value = {
+    ...backfillJobActionLoading.value,
+    [loadingKey]: true,
+  }
+  try {
+    await systemApi.operateDataSyncBackfillJob(job.job_id, action)
+    ElMessage.success(`补缺任务已${getBackfillJobActionLabel(action)}`)
+    await loadDataSyncStatus()
+  } catch (error) {
+    console.error('操作 DataSync 补缺任务失败', error)
+    ElMessage.error('操作补缺任务失败')
+  } finally {
+    backfillJobActionLoading.value = {
+      ...backfillJobActionLoading.value,
+      [loadingKey]: false,
+    }
   }
 }
 
@@ -342,6 +556,229 @@ onBeforeUnmount(() => {
       <p v-if="manualSyncTask.error_message" class="manual-sync-error">
         {{ manualSyncTask.error_message }}
       </p>
+    </section>
+
+    <section v-if="datasyncStatus" class="datasync-card card">
+      <div class="datasync-header">
+        <div>
+          <p class="eyebrow">DataSync</p>
+          <h2>数据能力状态</h2>
+          <p class="datasync-copy">
+            以独立 DataSync 的能力目录、核心 ready marker、任务失败记录和补缺队列为准。
+          </p>
+        </div>
+        <div class="datasync-actions">
+          <el-tag
+            :type="getReadinessStatusType(datasyncStatus.core_status.status)"
+            effect="dark"
+            round
+          >
+            {{ getReadinessStatusLabel(datasyncStatus.core_status.status) }}
+          </el-tag>
+          <button class="refresh-btn ghost" @click="loadDataSyncStatus">
+            <el-icon><Refresh /></el-icon>
+            {{ datasyncLoading ? '刷新中...' : '刷新 DataSync' }}
+          </button>
+        </div>
+      </div>
+
+      <div class="datasync-metrics">
+        <div class="datasync-metric">
+          <span>核心交易日</span>
+          <strong>{{ datasyncStatus.core_status.trade_date || '暂无' }}</strong>
+        </div>
+        <div class="datasync-metric">
+          <span>已就绪 / 应就绪</span>
+          <strong>
+            {{ datasyncStatus.core_status.ready_datasets.length }} /
+            {{ datasyncStatus.core_status.expected_datasets.length }}
+          </strong>
+        </div>
+        <div class="datasync-metric">
+          <span>缺失数据集</span>
+          <strong>{{ datasyncStatus.core_status.missing_datasets.length }}</strong>
+        </div>
+        <div class="datasync-metric">
+          <span>不可完整后补</span>
+          <strong>
+            {{ datasyncStatus.recoverability_summary.mode_counts.none || 0 }}
+            <small v-if="datasyncStatus.recoverability_summary.mode_counts.best_effort">
+              / {{ datasyncStatus.recoverability_summary.mode_counts.best_effort }} 尽力补
+            </small>
+          </strong>
+        </div>
+        <div class="datasync-metric">
+          <span>补缺队列</span>
+          <strong>
+            {{ datasyncStatus.backfill_queue.pending_total }} 待处理
+            <small v-if="datasyncStatus.backfill_queue.failed_total">
+              / {{ datasyncStatus.backfill_queue.failed_total }} 失败
+            </small>
+          </strong>
+        </div>
+      </div>
+
+      <div class="datasync-content">
+        <div class="datasync-panel">
+          <div class="datasync-panel-title">
+            <h3>缺失与告警</h3>
+            <span>{{ datasyncStatus.capability_catalog.count }} 项能力</span>
+          </div>
+          <div v-if="datasyncStatus.core_status.missing_datasets.length" class="dataset-tags">
+            <el-tag
+              v-for="dataset in datasyncStatus.core_status.missing_datasets"
+              :key="dataset"
+              type="warning"
+              effect="plain"
+              round
+            >
+              {{ dataset }}
+            </el-tag>
+          </div>
+          <p v-else class="datasync-empty">当前核心数据集没有缺失项。</p>
+          <div
+            v-if="datasyncStatus.recoverability_summary.missing_datasets.length"
+            class="recoverability-list"
+          >
+            <div
+              v-for="item in datasyncStatus.recoverability_summary.missing_datasets"
+              :key="item.dataset"
+              class="recoverability-row"
+            >
+              <div class="recoverability-main">
+                <span>{{ item.dataset }}</span>
+                <el-tag :type="getRecoverabilityTagType(item.mode)" effect="plain" round size="small">
+                  {{ getRecoverabilityLabel(item.mode) }}
+                </el-tag>
+              </div>
+              <button
+                class="mini-action-btn"
+                :disabled="
+                  !canEnqueueBackfill(item.mode) ||
+                  !datasyncStatus.core_status.trade_date ||
+                  backfillJobLoading[getBackfillLoadingKey(item.dataset)]
+                "
+                @click="enqueueMissingDatasetBackfill(item.dataset)"
+              >
+                {{
+                  backfillJobLoading[getBackfillLoadingKey(item.dataset)]
+                    ? '入队中...'
+                    : canEnqueueBackfill(item.mode)
+                      ? '加入补缺队列'
+                      : '不可入队'
+                }}
+              </button>
+            </div>
+          </div>
+          <p v-if="!datasyncStatus.capability_catalog.success" class="datasync-warning">
+            能力目录读取失败：{{ datasyncStatus.capability_catalog.error || '未知错误' }}
+          </p>
+        </div>
+
+        <div class="datasync-panel">
+          <div class="datasync-panel-title">
+            <h3>最近失败任务</h3>
+            <span>{{ datasyncStatus.recent_failures.length }} 条</span>
+          </div>
+          <div v-if="datasyncStatus.recent_failures.length" class="compact-list">
+            <div
+              v-for="failure in datasyncStatus.recent_failures"
+              :key="`${failure.job_name}-${failure.started_at}`"
+              class="compact-row"
+            >
+              <strong>{{ failure.job_name || '未知任务' }}</strong>
+              <span>
+                {{ failure.target_trade_date || '无交易日' }}
+                <template v-if="failure.recoverability?.mode">
+                  · {{ getRecoverabilityLabel(failure.recoverability.mode) }}
+                </template>
+              </span>
+              <p>{{ failure.error || '未记录错误详情' }}</p>
+            </div>
+          </div>
+          <p v-else class="datasync-empty">最近 7 天没有失败任务。</p>
+        </div>
+
+        <div class="datasync-panel">
+          <div class="datasync-panel-title">
+            <h3>补缺队列</h3>
+            <span>
+              pending {{ datasyncStatus.backfill_queue.status_counts.pending || 0 }}
+              · running {{ datasyncStatus.backfill_queue.status_counts.running || 0 }}
+              · done {{ datasyncStatus.backfill_queue.status_counts.done || 0 }}
+            </span>
+          </div>
+          <div v-if="datasyncStatus.backfill_queue.recent_jobs.length" class="compact-list">
+            <div
+              v-for="job in datasyncStatus.backfill_queue.recent_jobs"
+              :key="job.job_id || `${job.dataset}-${job.target_trade_date}`"
+              class="compact-row"
+            >
+              <strong>{{ job.dataset || '未知数据集' }}</strong>
+              <span>{{ job.target_trade_date || '无交易日' }} · {{ getBackfillJobStatusLabel(job.status) }}</span>
+              <p v-if="job.error">{{ job.error }}</p>
+              <div v-if="getBackfillJobActions(job).length" class="compact-actions">
+                <button
+                  v-for="action in getBackfillJobActions(job)"
+                  :key="action"
+                  class="mini-action-btn"
+                  :disabled="!job.job_id || Boolean(backfillJobActionLoading[`${job.job_id}:${action}`])"
+                  @click="operateBackfillJob(job, action)"
+                >
+                  {{
+                    backfillJobActionLoading[`${job.job_id}:${action}`]
+                      ? '处理中...'
+                      : getBackfillJobActionLabel(action)
+                  }}
+                </button>
+              </div>
+            </div>
+          </div>
+          <p v-else class="datasync-empty">补缺队列暂无任务。</p>
+        </div>
+
+        <div class="datasync-panel">
+          <div class="datasync-panel-title">
+            <h3>运维事件</h3>
+            <span>{{ datasyncStatus.recent_ops_events.length }} 条</span>
+          </div>
+          <div v-if="datasyncStatus.recent_ops_events.length" class="compact-list">
+            <div
+              v-for="event in datasyncStatus.recent_ops_events"
+              :key="event.event_id || `${event.event_type}-${event.created_at}`"
+              class="compact-row"
+            >
+              <strong>{{ event.event_type || '未知事件' }}</strong>
+              <span>
+                <el-tag :type="getOpsSeverityType(event.severity)" effect="plain" round size="small">
+                  {{ getOpsSeverityLabel(event.severity) }}
+                </el-tag>
+                {{ event.source || '未知来源' }}
+                <template v-if="event.created_at">
+                  · {{ new Date(event.created_at).toLocaleString('zh-CN') }}
+                </template>
+              </span>
+              <p v-if="event.message">{{ event.message }}</p>
+              <p v-if="event.details">
+                <template v-if="getOpsDetailValue(event.details, 'dataset')">
+                  {{ getOpsDetailValue(event.details, 'dataset') }}
+                </template>
+                <template v-if="getOpsDetailValue(event.details, 'target_trade_date')">
+                  · {{ getOpsDetailValue(event.details, 'target_trade_date') }}
+                </template>
+                <template v-if="getOpsDetailValue(event.details, 'action')">
+                  · {{ getOpsDetailValue(event.details, 'action') }}
+                </template>
+                <template v-if="getOpsDetailValue(event.details, 'previous_status')">
+                  · {{ getOpsDetailValue(event.details, 'previous_status') }}
+                  -> {{ getOpsDetailValue(event.details, 'next_status') }}
+                </template>
+              </p>
+            </div>
+          </div>
+          <p v-else class="datasync-empty">最近没有 DataSync 运维事件。</p>
+        </div>
+      </div>
     </section>
 
     <section v-if="overview" class="summary-grid">
@@ -698,6 +1135,198 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.datasync-card {
+  padding: 22px;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.05), rgba(14, 165, 164, 0.03));
+}
+
+.datasync-header,
+.datasync-actions,
+.datasync-panel-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.datasync-header h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+}
+
+.datasync-copy,
+.datasync-empty,
+.datasync-warning {
+  margin: 10px 0 0;
+  line-height: 1.7;
+}
+
+.datasync-copy,
+.datasync-empty {
+  color: var(--el-text-color-secondary);
+}
+
+.datasync-warning {
+  color: var(--el-color-warning);
+}
+
+.datasync-actions {
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.datasync-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.datasync-metric {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.datasync-metric span {
+  display: block;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.datasync-metric strong {
+  display: block;
+  margin-top: 8px;
+  color: #0f172a;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.datasync-metric small {
+  color: var(--el-color-danger);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.datasync-content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.datasync-panel {
+  min-width: 0;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.datasync-panel-title h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.datasync-panel-title span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.dataset-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.recoverability-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.recoverability-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.035);
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+}
+
+.recoverability-main {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.recoverability-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-action-btn {
+  flex: 0 0 auto;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mini-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
+}
+
+.compact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.compact-row {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.compact-row strong {
+  display: block;
+  font-size: 14px;
+}
+
+.compact-row span,
+.compact-row p {
+  display: block;
+  margin: 6px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.compact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1004,6 +1633,8 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1100px) {
   .summary-grid,
+  .datasync-metrics,
+  .datasync-content,
   .status-grid,
   .loading-grid {
     grid-template-columns: 1fr;
@@ -1025,6 +1656,12 @@ onBeforeUnmount(() => {
   }
 
   .manual-sync-top {
+    flex-direction: column;
+  }
+
+  .datasync-header,
+  .datasync-actions {
+    align-items: flex-start;
     flex-direction: column;
   }
 

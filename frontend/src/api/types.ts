@@ -1,6 +1,6 @@
 /**
  * API 类型定义
- * 
+ *
  * 与后端 Pydantic 模型严格对应
  * 参考: AgentServer/core/protocols.py
  */
@@ -199,9 +199,9 @@ export interface AgentThoughtMessage {
 }
 
 /** WebSocket 消息联合类型 */
-export type WSMessage = 
-  | TaskProgressMessage 
-  | TaskResultMessage 
+export type WSMessage =
+  | TaskProgressMessage
+  | TaskResultMessage
   | AgentThoughtMessage
   | { type: 'connected'; user_id: string }
   | { type: 'pong' }
@@ -528,6 +528,127 @@ export interface SystemManualSyncTask {
   completed_at?: string | null
   result?: Record<string, unknown> | null
   error_message?: string | null
+}
+
+export interface SystemDataSyncCapability {
+  name: string
+  description?: string | null
+  dataset_name?: string | null
+  resource_class?: string | null
+  effective_schedule?: string | null
+  supports_backfill: boolean
+  supports_recover_trade_date: boolean
+  recoverability?: {
+    mode?: string
+    can_recover_trade_date?: boolean
+    can_backfill?: boolean
+    can_rerun?: boolean
+    severity_on_missing?: string
+    reason?: string
+  }
+  target_collections: string[]
+}
+
+export interface SystemDataSyncCapabilityCatalog {
+  success: boolean
+  profile?: string | null
+  count: number
+  core_ready_marker: string
+  core_ready_datasets: string[]
+  core_recoverable_datasets: string[]
+  capabilities: SystemDataSyncCapability[]
+  error?: string
+  path?: string
+}
+
+export interface SystemDataSyncCoreStatus {
+  trade_date?: string | null
+  status: string
+  usable: boolean
+  expected_datasets: string[]
+  ready_datasets: string[]
+  pending_datasets: string[]
+  missing_datasets: string[]
+  warnings: unknown[]
+}
+
+export interface SystemDataSyncRecoverabilityInfo {
+  mode?: string
+  severity_on_missing?: string | null
+  reason?: string | null
+}
+
+export interface SystemDataSyncRecoverabilitySummary {
+  mode_counts: Record<string, number>
+  warning_or_critical_count: number
+  non_recoverable_capabilities: Array<{
+    name?: string | null
+    dataset_name?: string | null
+    severity_on_missing?: string | null
+    reason?: string | null
+  }>
+  missing_datasets: Array<SystemDataSyncRecoverabilityInfo & { dataset: string }>
+}
+
+export interface SystemDataSyncFailure {
+  job_name?: string | null
+  status?: string | null
+  trigger?: string | null
+  pipeline_name?: string | null
+  target_trade_date?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+  duration_ms?: number | null
+  error?: string | null
+  recoverability?: SystemDataSyncRecoverabilityInfo
+}
+
+export interface SystemDataSyncBackfillJob {
+  job_id?: string | null
+  dataset?: string | null
+  target_trade_date?: string | null
+  status?: string | null
+  priority?: number | null
+  attempts?: number | null
+  max_attempts?: number | null
+  error?: string | null
+  updated_at?: string | null
+  created_at?: string | null
+  already_exists?: boolean
+  recoverability?: SystemDataSyncRecoverabilityInfo
+}
+
+export type SystemDataSyncBackfillJobAction = 'pause' | 'resume' | 'retry'
+
+export interface SystemDataSyncBackfillQueue {
+  status_counts: Record<string, number>
+  pending_total: number
+  running_total: number
+  failed_total: number
+  recent_jobs: SystemDataSyncBackfillJob[]
+}
+
+export interface SystemDataSyncOpsEvent {
+  event_id?: string | null
+  event_type?: string | null
+  severity?: string | null
+  message?: string | null
+  source?: string | null
+  node_id?: string | null
+  created_at?: string | null
+  details?: Record<string, unknown>
+}
+
+export interface SystemDataSyncStatusPanel {
+  generated_at: string
+  core_readiness: Record<string, unknown>
+  core_status: SystemDataSyncCoreStatus
+  capability_catalog: SystemDataSyncCapabilityCatalog
+  recoverability_summary: SystemDataSyncRecoverabilitySummary
+  recent_failures: SystemDataSyncFailure[]
+  backfill_queue: SystemDataSyncBackfillQueue
+  recent_ops_events: SystemDataSyncOpsEvent[]
+  actions: Record<string, unknown>
 }
 
 export interface SystemDataSourceMatrixAdapter {

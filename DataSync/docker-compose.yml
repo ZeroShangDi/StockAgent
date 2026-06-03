@@ -1,17 +1,87 @@
 services:
   data-sync:
     build:
-      context: ..
-      dockerfile: DataSync/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: stock-agent-standalone-data-sync
     command: ["python", "main.py"]
-    env_file:
-      - ../.env.docker
     environment:
       NODE_TYPE: data_sync
       DATASYNC_RUNTIME_DIR: /app/DataSync
       DATASYNC_DATA_DIR: /app/DataSync/data
+      DATASYNC_ALLOW_SHARED_ENV_FALLBACK: "0"
       OBS_LOG_DIR: /app/DataSync/logs
+      REDIS_HOST: "${REDIS_HOST:-redis}"
+      REDIS_PORT: "${REDIS_PORT:-6379}"
+      REDIS_DB: "${REDIS_DB:-0}"
+      REDIS_MAX_CONNECTIONS: "${REDIS_MAX_CONNECTIONS:-30}"
+      MONGO_HOST: "${MONGO_HOST:-mongodb}"
+      MONGO_PORT: "${MONGO_PORT:-27017}"
+      MONGO_DATABASE: "${MONGO_DATABASE:-stock_agent}"
+      MONGO_USERNAME: "${MONGO_USERNAME:-admin}"
+      MONGO_PASSWORD: "${MONGO_PASSWORD:-change-me}"
+      MONGO_AUTH_SOURCE: "${MONGO_AUTH_SOURCE:-admin}"
+      MONGO_MAX_POOL_SIZE: "${MONGO_MAX_POOL_SIZE:-20}"
+      SYNC_PROFILE: "${SYNC_PROFILE:-conservative}"
+      SYNC_ENABLED_JOBS: "${SYNC_ENABLED_JOBS:-}"
+      SYNC_DISABLED_JOBS: "${SYNC_DISABLED_JOBS:-}"
+      SYNC_RUN_INITIAL_SYNC: "${SYNC_RUN_INITIAL_SYNC:-false}"
+      SYNC_MAX_RUNNING_JOBS: "${SYNC_MAX_RUNNING_JOBS:-1}"
+      SYNC_MAX_PARALLEL_COLLECT_CONCURRENCY: "${SYNC_MAX_PARALLEL_COLLECT_CONCURRENCY:-2}"
+      SYNC_JOB_TIMEOUT_SECONDS: "${SYNC_JOB_TIMEOUT_SECONDS:-1200}"
+      SYNC_LOCK_TIMEOUT_SECONDS: "${SYNC_LOCK_TIMEOUT_SECONDS:-1200}"
+      SYNC_SCHEDULER_MISFIRE_GRACE_SECONDS: "${SYNC_SCHEDULER_MISFIRE_GRACE_SECONDS:-300}"
+      SYNC_PREVENT_INITIAL_HISTORY_SYNC: "${SYNC_PREVENT_INITIAL_HISTORY_SYNC:-true}"
+      SYNC_INITIAL_BACKFILL_DAYS: "${SYNC_INITIAL_BACKFILL_DAYS:-5}"
+      SYNC_BACKFILL_WINDOW_START: "${SYNC_BACKFILL_WINDOW_START:-${DATASYNC_BACKFILL_WINDOW_START:-00:00}}"
+      SYNC_BACKFILL_WINDOW_END: "${SYNC_BACKFILL_WINDOW_END:-${DATASYNC_BACKFILL_WINDOW_END:-08:00}}"
+      SYNC_BACKFILL_QUEUE_SCHEDULE: "${SYNC_BACKFILL_QUEUE_SCHEDULE:-*/30 * * * *}"
+      SYNC_BACKFILL_JOBS_PER_ROUND: "${SYNC_BACKFILL_JOBS_PER_ROUND:-2}"
+      SYNC_BACKFILL_MAX_ATTEMPTS: "${SYNC_BACKFILL_MAX_ATTEMPTS:-3}"
+      SYNC_BACKFILL_MAX_JOBS_PER_NIGHT: "${SYNC_BACKFILL_MAX_JOBS_PER_NIGHT:-24}"
+      SYNC_BACKFILL_MAX_EXTERNAL_REQUESTS_PER_NIGHT: "${SYNC_BACKFILL_MAX_EXTERNAL_REQUESTS_PER_NIGHT:-300}"
+      SYNC_BACKFILL_CONSECUTIVE_FAILURE_LIMIT: "${SYNC_BACKFILL_CONSECUTIVE_FAILURE_LIMIT:-3}"
+      SYNC_CORE_GAP_RECOVERY_SCHEDULE: "${SYNC_CORE_GAP_RECOVERY_SCHEDULE:-}"
+      SYNC_RECENT_CORE_GAP_RECOVERY_DAYS: "${SYNC_RECENT_CORE_GAP_RECOVERY_DAYS:-3}"
+      SYNC_RUN_CORE_GAP_RECOVERY_ON_STARTUP: "${SYNC_RUN_CORE_GAP_RECOVERY_ON_STARTUP:-true}"
+      SYNC_CORE_READY_CHECK_AFTER_LOCAL_TIME: "${SYNC_CORE_READY_CHECK_AFTER_LOCAL_TIME:-15:30}"
+      SYNC_CORE_READY_EXPECTED_AFTER_LOCAL_TIME: "${SYNC_CORE_READY_EXPECTED_AFTER_LOCAL_TIME:-16:10}"
+      SYNC_CORE_READY_FAIL_AFTER_LOCAL_TIME: "${SYNC_CORE_READY_FAIL_AFTER_LOCAL_TIME:-17:00}"
+      SYNC_CORE_READY_AFTER_LOCAL_TIME: "${SYNC_CORE_READY_AFTER_LOCAL_TIME:-16:10}"
+      SYNC_REVIEW_DATA_MAX_ROWS_PER_COLLECTION: "${SYNC_REVIEW_DATA_MAX_ROWS_PER_COLLECTION:-10000}"
+      SYNC_MARKET_STATISTICS_CACHE_PERIODS: "${SYNC_MARKET_STATISTICS_CACHE_PERIODS:-1w,1m,3m}"
+      SYNC_MARKET_WEATHER_SCHEDULE: "${SYNC_MARKET_WEATHER_SCHEDULE:-}"
+      SYNC_MARKET_WEATHER_MAX_CONCURRENT: "${SYNC_MARKET_WEATHER_MAX_CONCURRENT:-2}"
+      SYNC_HOT_NEWS_ENABLED: "${SYNC_HOT_NEWS_ENABLED:-false}"
+      SYNC_HOT_NEWS_SOURCE_ALLOWLIST: "${SYNC_HOT_NEWS_SOURCE_ALLOWLIST:-cls,xueqiu,wallstreetcn}"
+      SYNC_HOT_NEWS_MAX_SOURCES_PER_ROUND: "${SYNC_HOT_NEWS_MAX_SOURCES_PER_ROUND:-3}"
+      SYNC_HOT_NEWS_MAX_ITEMS_PER_SOURCE: "${SYNC_HOT_NEWS_MAX_ITEMS_PER_SOURCE:-20}"
+      SYNC_HOT_NEWS_MAX_CONCURRENCY: "${SYNC_HOT_NEWS_MAX_CONCURRENCY:-3}"
+      SYNC_HOT_NEWS_HTTP_TIMEOUT_SECONDS: "${SYNC_HOT_NEWS_HTTP_TIMEOUT_SECONDS:-10}"
+      SYNC_HOT_NEWS_TOTAL_TIMEOUT_SECONDS: "${SYNC_HOT_NEWS_TOTAL_TIMEOUT_SECONDS:-30}"
+      SYNC_MULTI_SOURCE_NEWS_MAX_CONCURRENCY: "${SYNC_MULTI_SOURCE_NEWS_MAX_CONCURRENCY:-2}"
+      SYNC_MULTI_SOURCE_NEWS_LIMIT_PER_SOURCE: "${SYNC_MULTI_SOURCE_NEWS_LIMIT_PER_SOURCE:-50}"
+      SYNC_EVENT_CLUSTERING_BATCH_SIZE: "${SYNC_EVENT_CLUSTERING_BATCH_SIZE:-30}"
+      SYNC_EVENT_CLUSTERING_MAX_CONCURRENT: "${SYNC_EVENT_CLUSTERING_MAX_CONCURRENT:-3}"
+      SYNC_SOURCE_CHAIN_OVERRIDES: "${SYNC_SOURCE_CHAIN_OVERRIDES:-}"
+      SYNC_DEAD_LETTER_MAX_RECORDS_PER_BATCH: "${SYNC_DEAD_LETTER_MAX_RECORDS_PER_BATCH:-20}"
+      SYNC_BULK_UPSERT_BATCH_SIZE: "${SYNC_BULK_UPSERT_BATCH_SIZE:-1000}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_API_BASE: "${LLM_API_BASE:-}"
+      LLM_MODEL_NAME: "${LLM_MODEL_NAME:-deepseek-chat}"
+      LLM_MAX_CONCURRENT_REQUESTS: "${LLM_MAX_CONCURRENT_REQUESTS:-3}"
+      LLM_EMBEDDING_PROVIDER: "${LLM_EMBEDDING_PROVIDER:-dashscope}"
+      LLM_EMBEDDING_API_KEY: "${LLM_EMBEDDING_API_KEY:-}"
+      LLM_EMBEDDING_MODEL: "${LLM_EMBEDDING_MODEL:-text-embedding-v3}"
+      TUSHARE_TOKEN: "${TUSHARE_TOKEN:-}"
+      COZE_API_TOKEN: "${COZE_API_TOKEN:-}"
+      COZE_API_BASE: "${COZE_API_BASE:-https://api.coze.cn}"
+      COZE_WORKFLOW_ID: "${COZE_WORKFLOW_ID:-}"
+      COZE_SPACE_ID: "${COZE_SPACE_ID:-}"
+      COZE_MAX_RETRIES: "${COZE_MAX_RETRIES:-2}"
+      COZE_RETRY_BACKOFF_SECONDS: "${COZE_RETRY_BACKOFF_SECONDS:-0.5}"
+      COZE_RETRY_BACKOFF_MAX_SECONDS: "${COZE_RETRY_BACKOFF_MAX_SECONDS:-5}"
       MILVUS_URI: "${MILVUS_URI:-/app/DataSync/data/milvus_lite.db}"
     depends_on:
       mongodb:
@@ -21,36 +91,54 @@ services:
     volumes:
       - datasync_logs:/app/DataSync/logs
       - datasync_data:/app/DataSync/data
+    healthcheck:
+      test: ["CMD", "python", "main.py", "--health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "${DATA_SYNC_CPUS:-0.75}"
+          memory: "${DATA_SYNC_MEM_LIMIT:-512M}"
+        reservations:
+          memory: 256M
 
   mongodb:
     image: "docker.m.daocloud.io/mongo:7.0"
     container_name: stock-agent-standalone-mongo
     command: ["mongod", "--auth", "--bind_ip_all", "--wiredTigerCacheSizeGB", "1.0"]
-    env_file:
-      - ../.env.docker
     environment:
       MONGO_INITDB_ROOT_USERNAME: "${MONGO_INITDB_ROOT_USERNAME:-admin}"
       MONGO_INITDB_ROOT_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD:-change-me}"
       MONGO_INITDB_DATABASE: "${MONGO_INITDB_DATABASE:-stock_agent}"
     ports:
-      - "${MONGO_PORT:-27017}:27017"
+      - "${MONGO_BIND_HOST:-127.0.0.1}:${MONGO_PUBLISHED_PORT:-${MONGO_PORT:-27017}}:27017"
     volumes:
       - datasync_mongo:/data/db
-      - ../AgentServer/deploy/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+      - ./deploy/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
     healthcheck:
       test: ["CMD", "mongosh", "--host", "localhost", "--username", "${MONGO_INITDB_ROOT_USERNAME:-admin}", "--password", "${MONGO_INITDB_ROOT_PASSWORD:-change-me}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
       interval: 15s
       timeout: 10s
       retries: 8
       start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
 
   redis:
     image: "docker.m.daocloud.io/redis:7.2-alpine"
     container_name: stock-agent-standalone-redis
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_BIND_HOST:-127.0.0.1}:${REDIS_PUBLISHED_PORT:-${REDIS_PORT:-6379}}:6379"
     volumes:
       - datasync_redis:/data
     healthcheck:
@@ -58,6 +146,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
 
 volumes:
   datasync_mongo:
