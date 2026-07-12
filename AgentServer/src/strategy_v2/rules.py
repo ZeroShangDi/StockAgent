@@ -7,7 +7,7 @@ task creation dictionary.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, List
+from typing import Any, Dict, Iterable, List
 
 from common.models.strategy_v2 import (
     StrategyV2ActionType,
@@ -16,6 +16,7 @@ from common.models.strategy_v2 import (
     StrategyV2RuleDictionary,
     StrategyV2ScheduleMode,
     StrategyV2SceneType,
+    StrategyV2TargetScope,
     StrategyV2TargetScopeType,
 )
 
@@ -439,6 +440,19 @@ BUILTIN_STRATEGY_SCENES: dict[str, set[StrategyV2SceneType]] = {
 }
 
 
+# 按调度频率分级限制每任务最大扫描股票数
+MAX_STOCKS_PER_SCHEDULE: Dict[str, int] = {
+    "intraday_1m": 50,
+    "intraday_5m": 200,
+    "intraday_30m": 500,
+}
+# 分段执行参数
+STRATEGY_BATCH_SIZE = 200
+STRATEGY_BATCH_COOLDOWN_SEC = 60
+# all_market 最大股票数
+MAX_ALL_MARKET_STOCKS = 5000
+
+
 def get_strategy_definition(strategy_key: str) -> dict[str, Any] | None:
     for item in BUILTIN_STRATEGY_DEFINITIONS:
         if item["strategy_key"] == strategy_key:
@@ -533,4 +547,28 @@ def validate_task_config(body: StrategyV2CreateTaskRequest) -> list[str]:
         elif action.action_type == StrategyV2ActionType.PAPER_TRADE and scene not in {StrategyV2SceneType.BACKTEST, StrategyV2SceneType.SIM_TRADE}:
             errors.append("模拟成交动作仅支持回测或模拟场景")
 
+    # --- 资源管控：调度频率 × 范围组合校验 ---
+    slot = (body.schedule.slot or "").strip()
+    if slot.startswith("intraday"):
+        if scope == StrategyV2TargetScopeType.ALL_MARKET:
+            errors.append("全市场范围不支持交易时段内定时执行（intraday），请选择盘前/盘后 slot 调度")
+        limit = MAX_STOCKS_PER_SCHEDULE.get(slot)
+        if limit is not None:
+            stock_count = _estimate_stock_count(body.target_scope)
+            if stock_count > limit:
+                errors.append(
+                    f"当前调度频率（{slot}）最多支持 {limit} 支股票，"
+                    f"目标范围约含 {stock_count} 支，请减少股票数量或降低调度频率"
+                )
+
     return errors
+
+
+def _estimate_stock_count(scope: StrategyV2TargetScope) -> int:
+    """估算目标范围的股票数量（用于创建时校验，非精确值）。"""
+    if scope.scope_type == StrategyV2TargetScopeType.CUSTOM_STOCK_LIST:
+        return len(scope.ts_codes or [])
+    if scope.scope_type == StrategyV2TargetScopeType.ALL_MARKET:
+        return MAX_ALL_MARKET_STOCKS
+    # stock_pool / watchlist 数量动态变化，创建时不校验
+    return 0

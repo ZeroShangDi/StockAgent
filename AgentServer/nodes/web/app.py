@@ -17,6 +17,7 @@ from core.managers import (
     redis_manager,
     mongo_manager,
     notification_manager,
+    data_source_manager,
 )
 
 from .api import auth_router, user_router, task_router, stock_router, market_router, subscription_router, backtest_router, report_router, system_router, market_weather_router, stock_picker_router, practice_router, trade_review_router, assistant_router, strategy_v2_router
@@ -84,6 +85,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await redis_manager.initialize()
     await mongo_manager.initialize()
     await notification_manager.initialize()
+    await data_source_manager.initialize()
     await ensure_default_admin_user()
     await start_strategy_v2_scheduler()
 
@@ -94,6 +96,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ========== 关闭 ==========
     await notification_manager.shutdown()
+    await data_source_manager.shutdown()
     await mongo_manager.shutdown()
     await redis_manager.shutdown()
 

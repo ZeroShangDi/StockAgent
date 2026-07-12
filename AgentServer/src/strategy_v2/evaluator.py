@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from core.managers import mongo_manager
+from core.managers import mongo_manager, data_source_manager
 from src.analysis.stock_picker import stock_picker_service
 
 
@@ -545,10 +545,359 @@ class TurtleTradingStrategy:
 turtle_trading_strategy = TurtleTradingStrategy()
 
 
+def _resolve_direction(params: dict[str, Any]) -> str:
+    return str(params.get("direction") or "both").strip().lower()
+
+
+def _direction_accepts_signal(direction: str, signal: int) -> bool:
+    if signal == 0:
+        return True
+    if direction == "both":
+        return True
+    if direction == "up":
+        return signal > 0
+    if direction == "down":
+        return signal < 0
+    return False
+
+
+class PriceChangeStrategy:
+    """涨跌幅阈值：检查当日涨跌幅是否达到指定阈值（优先使用实时行情）。"""
+
+    strategy_key = "price_change"
+
+    async def evaluate(
+        self,
+        context: StrategyV2EvaluationContext,
+        params: dict[str, Any] | None = None,
+    ) -> StrategyV2EvaluationResult:
+        params = params or {}
+        code, ts_code = _extract_stock_codes(context)
+        if not ts_code:
+            return StrategyV2EvaluationResult(signal=0, reason="缺少股票代码")
+
+        threshold = abs(_to_float(params.get("threshold"), 5.0))
+        direction = _resolve_direction(params)
+
+        # Try real-time quotes first, fall back to stock_daily
+        pct_chg: float = 0.0
+        trade_date: str = ""
+        data_source: str = ""
+        close: float = 0.0
+        pre_close: float = 0.0
+
+        quotes, source = await data_source_manager.get_realtime_quotes(ts_codes=[ts_code])
+        quote = (quotes or {}).get(ts_code) or (quotes or {}).get(code) or {}
+        if quote and _to_float(quote.get("close") or quote.get("price")) > 0:
+            data_source = source or "unknown"
+            close = _to_float(quote.get("close") or quote.get("price"))
+            pre_close = _to_float(quote.get("pre_close"))
+            pct_chg = _to_float(quote.get("pct_chg") or quote.get("change_pct"))
+            if pre_close > 0 and close > 0 and pct_chg == 0:
+                pct_chg = (close - pre_close) / pre_close * 100
+            trade_date = str(quote.get("trade_date") or "")
+        else:
+            records = await mongo_manager.find_many(
+                "stock_daily",
+                {"ts_code": ts_code},
+                projection={"_id": 0, "trade_date": 1, "close": 1, "pre_close": 1, "pct_chg": 1},
+                sort=[("trade_date", -1)],
+                limit=1,
+            )
+            if not records:
+                return StrategyV2EvaluationResult(signal=0, reason="未找到股票日线数据")
+            latest = records[0]
+            data_source = "stock_daily"
+            pct_chg = _to_float(latest.get("pct_chg"))
+            close = _to_float(latest.get("close"))
+            pre_close = _to_float(latest.get("pre_close"))
+            trade_date = str(latest.get("trade_date") or "")
+
+        now_ts = context.now.isoformat() if context.now else ""
+        meta = {
+            "data_source": data_source,
+            "timestamp": now_ts,
+            "trade_date": trade_date,
+            "close": close,
+            "pre_close": pre_close,
+            "pct_chg": round(pct_chg, 3),
+            "threshold": threshold,
+            "direction": direction,
+        }
+
+        if abs(pct_chg) < threshold:
+            return StrategyV2EvaluationResult(signal=0, reason=f"涨跌幅 {pct_chg:.2f}% 未达到阈值 {threshold}%", meta=meta)
+
+        signal = 1 if pct_chg > 0 else -1
+        if not _direction_accepts_signal(direction, signal):
+            return StrategyV2EvaluationResult(signal=0, reason=f"涨跌幅方向不符合监控方向设置（{direction}）", meta=meta)
+
+        label = "涨幅" if signal > 0 else "跌幅"
+        return StrategyV2EvaluationResult(
+            signal=signal,
+            reason=f"{label} {abs(pct_chg):.2f}% 达到阈值 {threshold}%",
+            meta=meta,
+        )
+
+
+class IntradayPriceMoveStrategy:
+    """分钟异动：使用实时行情检查日内价格波动幅度。"""
+
+    strategy_key = "intraday_price_move"
+
+    async def evaluate(
+        self,
+        context: StrategyV2EvaluationContext,
+        params: dict[str, Any] | None = None,
+    ) -> StrategyV2EvaluationResult:
+        params = params or {}
+        code, ts_code = _extract_stock_codes(context)
+        if not ts_code:
+            return StrategyV2EvaluationResult(signal=0, reason="缺少股票代码")
+
+        threshold_pct = abs(_to_float(params.get("threshold_pct"), 2.0))
+        interval_minutes = _bounded_int(params.get("interval_minutes"), 5, 1, 240)
+        direction = _resolve_direction(params)
+
+        quotes, source = await data_source_manager.get_realtime_quotes(ts_codes=[ts_code])
+        quote = (quotes or {}).get(ts_code) or (quotes or {}).get(code) or {}
+        if not quote:
+            return StrategyV2EvaluationResult(signal=0, reason="未获取到实时行情")
+
+        close = _to_float(quote.get("close") or quote.get("price"))
+        open_price = _to_float(quote.get("open"))
+        high = _to_float(quote.get("high"))
+        low = _to_float(quote.get("low"))
+        pre_close = _to_float(quote.get("pre_close"))
+        pct_chg = _to_float(quote.get("pct_chg") or quote.get("change_pct"))
+
+        if close <= 0:
+            return StrategyV2EvaluationResult(signal=0, reason="实时行情价格无效")
+
+        if pre_close > 0 and high > 0 and low > 0:
+            intraday_range = (high - low) / pre_close * 100
+        elif open_price > 0 and close > 0:
+            intraday_range = abs(close - open_price) / open_price * 100
+        else:
+            intraday_range = abs(pct_chg)
+
+        now_ts = context.now.isoformat() if context.now else ""
+        meta = {
+            "data_source": source or "unknown",
+            "timestamp": now_ts,
+            "close": close,
+            "open": open_price,
+            "high": high,
+            "low": low,
+            "pre_close": pre_close,
+            "pct_chg": round(pct_chg, 3),
+            "intraday_range_pct": round(intraday_range, 3),
+            "threshold_pct": threshold_pct,
+            "interval_minutes": interval_minutes,
+            "direction": direction,
+        }
+
+        if intraday_range < threshold_pct:
+            return StrategyV2EvaluationResult(
+                signal=0,
+                reason=f"日内振幅 {intraday_range:.2f}% 未达到阈值 {threshold_pct}%",
+                meta=meta,
+            )
+
+        signal = 1 if pct_chg > 0 else -1 if pct_chg < 0 else 0
+        if signal == 0:
+            signal = 1 if close > open_price else -1
+        if not _direction_accepts_signal(direction, signal):
+            return StrategyV2EvaluationResult(signal=0, reason=f"波动方向不符合监控方向设置（{direction}）", meta=meta)
+
+        label = "向上异动" if signal > 0 else "向下异动"
+        return StrategyV2EvaluationResult(
+            signal=signal,
+            reason=f"{label}：日内振幅 {intraday_range:.2f}%，涨跌幅 {pct_chg:.2f}%",
+            meta=meta,
+        )
+
+
+class PositionIntradayPnlStrategy:
+    """盘中持仓盈亏变化：使用实时行情计算当前价相对昨收的波动。"""
+
+    strategy_key = "position_intraday_pnl"
+
+    async def evaluate(
+        self,
+        context: StrategyV2EvaluationContext,
+        params: dict[str, Any] | None = None,
+    ) -> StrategyV2EvaluationResult:
+        params = params or {}
+        code, ts_code = _extract_stock_codes(context)
+        if not ts_code:
+            return StrategyV2EvaluationResult(signal=0, reason="缺少股票代码")
+
+        swing_threshold_pct = abs(_to_float(params.get("swing_threshold_pct"), 2.0))
+        direction = _resolve_direction(params)
+
+        quotes, source = await data_source_manager.get_realtime_quotes(ts_codes=[ts_code])
+        quote = (quotes or {}).get(ts_code) or (quotes or {}).get(code) or {}
+        if not quote:
+            return StrategyV2EvaluationResult(signal=0, reason="未获取到实时行情")
+
+        latest_close = _to_float(quote.get("close") or quote.get("price"))
+        pre_close = _to_float(quote.get("pre_close"))
+        pct_chg = _to_float(quote.get("pct_chg") or quote.get("change_pct"))
+
+        if latest_close <= 0:
+            return StrategyV2EvaluationResult(signal=0, reason="实时行情价格无效")
+
+        swing_pct = ((latest_close - pre_close) / pre_close * 100) if pre_close > 0 else abs(pct_chg)
+
+        # Include position cost info from context stock if available
+        stock = context.stock or {}
+        avg_cost = _to_float(stock.get("avg_cost"))
+        quantity = _to_float(stock.get("quantity"))
+        cost_pnl_pct = ((latest_close - avg_cost) / avg_cost * 100) if avg_cost > 0 and latest_close > 0 else None
+
+        now_ts = context.now.isoformat() if context.now else ""
+        meta = {
+            "data_source": source or "unknown",
+            "timestamp": now_ts,
+            "latest_close": latest_close,
+            "pre_close": pre_close,
+            "pct_chg": round(pct_chg, 3),
+            "swing_pct": round(swing_pct, 3),
+            "swing_threshold_pct": swing_threshold_pct,
+            "direction": direction,
+            "avg_cost": avg_cost,
+            "quantity": quantity,
+            "cost_pnl_pct": round(cost_pnl_pct, 3) if cost_pnl_pct is not None else None,
+        }
+
+        if abs(swing_pct) < swing_threshold_pct:
+            return StrategyV2EvaluationResult(signal=0, reason=f"持仓盈亏波动 {swing_pct:.2f}% 未达到阈值 {swing_threshold_pct}%", meta=meta)
+
+        signal = 1 if swing_pct > 0 else -1
+        if not _direction_accepts_signal(direction, signal):
+            return StrategyV2EvaluationResult(signal=0, reason=f"盈亏波动方向不符合监控方向设置（{direction}）", meta=meta)
+
+        label = "浮盈扩大" if signal > 0 else "浮亏扩大"
+        return StrategyV2EvaluationResult(
+            signal=signal,
+            reason=f"{label}：持仓波动 {abs(swing_pct):.2f}%，触发阈值 {swing_threshold_pct}%",
+            meta=meta,
+        )
+
+
+class Ma5BuyStrategy:
+    """5日线低吸：股价回落至MA5附近后企稳，输出正向信号。"""
+
+    strategy_key = "ma5_buy"
+
+    async def evaluate(
+        self,
+        context: StrategyV2EvaluationContext,
+        params: dict[str, Any] | None = None,
+    ) -> StrategyV2EvaluationResult:
+        params = params or {}
+        _, ts_code = _extract_stock_codes(context)
+        if not ts_code:
+            return StrategyV2EvaluationResult(signal=0, reason="缺少股票代码")
+
+        ma_period = _bounded_int(params.get("ma_period"), 5, 2, MAX_STRATEGY_MA_WINDOW)
+        touch_range = abs(_to_float(params.get("touch_range"), 2.0))
+        stable_periods = _bounded_int(params.get("stable_periods"), 2, 1, 20)
+
+        load_limit = ma_period + stable_periods + 5
+        records = await mongo_manager.find_many(
+            "stock_daily",
+            {"ts_code": ts_code},
+            projection={"_id": 0, "trade_date": 1, "open": 1, "high": 1, "low": 1, "close": 1, "vol": 1},
+            sort=[("trade_date", -1)],
+            limit=load_limit,
+        )
+        if not records or len(records) < ma_period + 1:
+            return StrategyV2EvaluationResult(signal=0, reason="历史 K 线不足，无法计算均线")
+
+        records.sort(key=lambda item: str(item.get("trade_date")))
+        latest = records[-1]
+        latest_close = _to_float(latest.get("close"))
+        latest_low = _to_float(latest.get("low"))
+        if latest_close <= 0:
+            return StrategyV2EvaluationResult(signal=0, reason="最新收盘价无效")
+
+        ma = _moving_average(records, ma_period)
+        if ma is None or ma <= 0:
+            return StrategyV2EvaluationResult(signal=0, reason="无法计算均线")
+
+        deviation_pct = (latest_close - ma) / ma * 100
+        meta = {
+            "latest_trade_date": str(latest.get("trade_date")),
+            "ma_period": ma_period,
+            "ma_value": round(ma, 3),
+            "latest_close": latest_close,
+            "deviation_pct": round(deviation_pct, 3),
+            "touch_range": touch_range,
+            "stable_periods": stable_periods,
+        }
+
+        # Price must be near MA (within touch_range%)
+        if abs(deviation_pct) > touch_range:
+            return StrategyV2EvaluationResult(
+                signal=0,
+                reason=f"收盘价偏离 MA{ma_period} {abs(deviation_pct):.2f}%，超出接触阈值 {touch_range}%",
+                meta=meta,
+            )
+
+        # Check stability: price must stay above MA for stable_periods consecutive days
+        recent = records[-(stable_periods + 1):]
+        stable_count = 0
+        for row in recent:
+            row_close = _to_float(row.get("close"))
+            if row_close <= 0 or ma <= 0:
+                continue
+            if row_close >= ma * (1 - touch_range / 100):
+                stable_count += 1
+
+        meta["stable_count"] = stable_count
+        if stable_count < stable_periods:
+            return StrategyV2EvaluationResult(
+                signal=0,
+                reason=f"近 {stable_periods} 日站稳天数不足（实际 {stable_count} 天）",
+                meta=meta,
+            )
+
+        # Check if latest day broke MA from below (buy signal)
+        prev = records[-2] if len(records) >= 2 else None
+        prev_close = _to_float(prev.get("close")) if prev else 0
+        if prev_close > 0 and prev_close < ma and latest_close >= ma and latest_low <= ma * 1.01:
+            return StrategyV2EvaluationResult(signal=1, reason=f"股价回踩 MA{ma_period} 后企稳反弹，低吸信号触发", meta=meta)
+
+        if deviation_pct >= 0:
+            return StrategyV2EvaluationResult(signal=0, reason=f"股价站上 MA{ma_period} 但无企稳确认信号", meta=meta)
+
+        # Price below MA but within touch_range → potential risk signal
+        if latest_close < ma:
+            return StrategyV2EvaluationResult(
+                signal=-1,
+                reason=f"股价跌破 MA{ma_period}，偏离 {abs(deviation_pct):.2f}%，可能失去支撑",
+                meta=meta,
+            )
+
+        return StrategyV2EvaluationResult(signal=0, reason="未触发明确信号", meta=meta)
+
+
+price_change_strategy = PriceChangeStrategy()
+intraday_price_move_strategy = IntradayPriceMoveStrategy()
+position_intraday_pnl_strategy = PositionIntradayPnlStrategy()
+ma5_buy_strategy = Ma5BuyStrategy()
+
+
 STRATEGY_V2_EVALUATORS = {
     OneLineStockPickerStrategy.strategy_key: one_line_stock_picker_strategy,
     DoubleCannonStrategy.strategy_key: double_cannon_strategy,
     TurtleTradingStrategy.strategy_key: turtle_trading_strategy,
+    PriceChangeStrategy.strategy_key: price_change_strategy,
+    IntradayPriceMoveStrategy.strategy_key: intraday_price_move_strategy,
+    PositionIntradayPnlStrategy.strategy_key: position_intraday_pnl_strategy,
+    Ma5BuyStrategy.strategy_key: ma5_buy_strategy,
 }
 
 

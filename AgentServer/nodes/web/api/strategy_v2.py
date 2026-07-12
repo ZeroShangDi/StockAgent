@@ -24,6 +24,9 @@ from core.managers import mongo_manager, notification_manager
 from core.protocols import StrategyAlert
 from src.strategy_v2.rules import (
     BUILTIN_STRATEGY_DEFINITIONS,
+    MAX_STOCKS_PER_SCHEDULE,
+    STRATEGY_BATCH_SIZE,
+    STRATEGY_BATCH_COOLDOWN_SEC,
     build_rule_dictionary,
     get_strategy_definition,
     validate_task_config,
@@ -45,13 +48,13 @@ RUN_ITEM_COLLECTION = "strategy_v2_task_run_items"
 RUN_LOG_COLLECTION = "strategy_v2_task_run_logs"
 ACTION_AUDIT_COLLECTION = "strategy_v2_action_audits"
 STOCK_POOL_COLLECTION = "stock_pools"
-RUN_STALE_AFTER_SECONDS = 30 * 60
+RUN_STALE_AFTER_SECONDS = 45 * 60
 ACTIVE_RUN_STATUSES = {"running"}
 SCHEDULER_POLL_SECONDS = 30
 SCHEDULE_SLOT_GRACE_SECONDS = 10 * 60
 MAX_TASK_LIST_ITEMS = 500
 MAX_RUN_RESULT_ITEMS = 6000
-MAX_TARGET_STOCKS = 6000
+MAX_TARGET_STOCKS = 5000
 MARKET_TIMEZONE = ZoneInfo("Asia/Shanghai")
 SCHEDULE_SLOT_TIMES = {
     "pre_market_0900": (9, 0),
@@ -69,7 +72,7 @@ SCHEDULE_SLOT_INTERVALS = {
 }
 _SCHEDULER_TASK: Optional[asyncio.Task] = None
 try:
-    _MAX_CONCURRENT_RUNS = max(1, int(os.environ.get("STRATEGY_V2_MAX_CONCURRENT_RUNS", "1")))
+    _MAX_CONCURRENT_RUNS = max(1, int(os.environ.get("STRATEGY_V2_MAX_CONCURRENT_RUNS", "2")))
 except ValueError:
     _MAX_CONCURRENT_RUNS = 1
 _RUN_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_RUNS)
@@ -271,7 +274,7 @@ async def list_strategy_v2_run_action_audits(
     return {"items": items}
 
 
-@router.post("/tasks/{task_id}/runs")
+@router.post("/tasks/{task_id}/runs", status_code=201)
 async def run_strategy_v2_task(
     task_id: str,
     body: Optional[StrategyV2RunRequest] = Body(default=None),
@@ -457,6 +460,7 @@ async def _start_strategy_v2_run(
         raise
 
     asyncio.create_task(_execute_strategy_v2_run(run_id, user_id))
+    run_doc.pop("_id", None)
     return run_doc
 
 
@@ -464,7 +468,39 @@ async def start_strategy_v2_scheduler() -> None:
     global _SCHEDULER_TASK
     if _SCHEDULER_TASK and not _SCHEDULER_TASK.done():
         return
+    # 启动时清理残留的 active_run_id（对应 run 已不再 running）
+    await _cleanup_stale_active_run_ids()
     _SCHEDULER_TASK = asyncio.create_task(_strategy_v2_scheduler_loop())
+
+
+async def _cleanup_stale_active_run_ids() -> None:
+    """清理残留的 active_run_id，防止因服务重启导致任务被卡住。"""
+    tasks = await mongo_manager.find_many(
+        TASK_COLLECTION,
+        {"active_run_id": {"$exists": True, "$ne": None, "$ne": ""}},
+        projection={"_id": 0, "task_id": 1, "active_run_id": 1, "name": 1},
+        limit=100,
+    )
+    cleaned = 0
+    for task in tasks:
+        run_id = task.get("active_run_id")
+        if not run_id:
+            continue
+        run = await mongo_manager.find_one(
+            RUN_COLLECTION,
+            {"run_id": run_id},
+            projection={"_id": 0, "run_status": 1},
+        )
+        if not run or run.get("run_status") != "running":
+            await mongo_manager.update_one(
+                TASK_COLLECTION,
+                {"task_id": task["task_id"]},
+                {"$unset": {"active_run_id": ""}},
+            )
+            cleaned += 1
+            logger.info("Startup cleanup: cleared stale active_run_id=%s from task %s", run_id, task.get("name", task["task_id"]))
+    if cleaned:
+        logger.info("Startup cleanup: cleared %d stale active_run_id(s)", cleaned)
 
 
 async def stop_strategy_v2_scheduler() -> None:
@@ -628,7 +664,7 @@ async def _mark_stale_running_runs(
     running_runs = await mongo_manager.find_many(
         RUN_COLLECTION,
         query,
-        projection={"_id": 0, "run_id": 1, "task_id": 1, "user_id": 1, "started_at": 1, "progress_current": 1, "progress_total": 1},
+        projection={"_id": 0, "run_id": 1, "task_id": 1, "user_id": 1, "started_at": 1, "updated_at": 1, "progress_current": 1, "progress_total": 1},
         sort=[("started_at", 1)],
         limit=200,
     )
@@ -637,8 +673,9 @@ async def _mark_stale_running_runs(
         run_user_id = str(run.get("user_id") or user_id or "")
         if not run_user_id:
             continue
-        started_at = _as_utc_datetime(run.get("started_at"))
-        if not started_at or (now - started_at).total_seconds() < RUN_STALE_AFTER_SECONDS:
+        # Use updated_at (heartbeat) if available, otherwise fall back to started_at
+        last_active = _as_utc_datetime(run.get("updated_at") or run.get("started_at"))
+        if not last_active or (now - last_active).total_seconds() < RUN_STALE_AFTER_SECONDS:
             continue
 
         finished_at = _utc_now()
@@ -1315,6 +1352,18 @@ async def _resolve_task_targets(task: Dict[str, Any]) -> List[Dict[str, Any]]:
             limit=target_limit,
         )
 
+    if scope_type == "trade_account":
+        group_id = scope.get("scope_id") or (scope.get("params") or {}).get("trade_review_group_id")
+        if not group_id:
+            return []
+        positions = await mongo_manager.find_many(
+            "trade_review_positions",
+            {"group_id": group_id, "user_id": task.get("user_id")},
+            projection={"_id": 0, "ts_code": 1, "code": 1, "name": 1, "avg_cost": 1, "quantity": 1, "latest_price": 1},
+            limit=MAX_TARGET_STOCKS,
+        )
+        return positions
+
     return []
 
 
@@ -1372,7 +1421,30 @@ async def _create_temp_stock_pool(
 
 async def _execute_strategy_v2_run(run_id: str, user_id: str) -> None:
     async with _RUN_SEMAPHORE:
+        # 刷新 started_at，避免因等待信号量期间被标记为超时
+        await mongo_manager.update_one(
+            RUN_COLLECTION,
+            {"run_id": run_id, "user_id": user_id},
+            {"$set": {"started_at": _utc_now()}},
+        )
         await _execute_strategy_v2_run_inner(run_id, user_id)
+
+
+def _resolve_batch_size(task: Dict[str, Any], total_targets: int) -> int:
+    """根据任务范围和调度频率决定分段执行批次大小。
+
+    - all_market 且非 intraday → 使用分段（STRATEGY_BATCH_SIZE）
+    - intraday 调度 → 不分段（已在创建时限制上限，数量可控）
+    - 其他 → 不分段
+    """
+    scope = (task.get("target_scope") or {})
+    scope_type = scope.get("scope_type", "")
+    schedule = (task.get("schedule") or {})
+    slot = (schedule.get("slot") or "").strip()
+
+    if scope_type == "all_market" and not slot.startswith("intraday"):
+        return STRATEGY_BATCH_SIZE
+    return max(total_targets, 1)
 
 
 async def _execute_strategy_v2_run_inner(run_id: str, user_id: str) -> None:
@@ -1423,6 +1495,20 @@ async def _execute_strategy_v2_run_inner(run_id: str, user_id: str) -> None:
         )
         targets = await _resolve_task_targets(task)
         await _ensure_run_can_continue(run_id, user_id)
+
+        # 执行时上限保护：intraday 调度截断超出限制的股票
+        schedule = task.get("schedule") or {}
+        slot = (schedule.get("slot") or "").strip()
+        stock_limit = MAX_STOCKS_PER_SCHEDULE.get(slot)
+        if stock_limit is not None and len(targets) > stock_limit:
+            await _append_run_log(
+                run_id, task_id, user_id,
+                level="warning", stage="resolve_targets",
+                message=f"目标股票数 {len(targets)} 超过 {slot} 上限 {stock_limit}，截断至 {stock_limit} 支",
+                meta={"original": len(targets), "capped": stock_limit, "schedule_slot": slot},
+            )
+            targets = targets[:stock_limit]
+
         total_targets = len(targets)
         await _update_run_progress(
             run_id,
@@ -1446,67 +1532,93 @@ async def _execute_strategy_v2_run_inner(run_id: str, user_id: str) -> None:
         action_audit_docs: List[Dict[str, Any]] = []
         positive = neutral = negative = 0
 
-        for index, stock in enumerate(targets, start=1):
-            if index == 1 or index % 25 == 0:
-                await _ensure_run_can_continue(run_id, user_id)
-            identity = _stock_identity(stock)
-            if not identity["ts_code"]:
-                continue
-            try:
-                result = await evaluate_strategy_v2(
-                    str(task.get("strategy_key") or ""),
-                    StrategyV2EvaluationContext(
-                        user_id=user_id,
-                        code=identity["code"],
-                        ts_code=identity["ts_code"],
-                        stock=stock,
-                        now=now,
-                    ),
-                    params=params,
-                )
-                signal = int(result.signal)
-                reason = result.reason
-                meta = result.meta
-            except Exception as exc:
-                signal = 0
-                reason = f"策略评估失败：{exc}"
-                meta = {}
+        # 分段执行：大范围任务分批扫描，批次间冷却避免资源瞬时爆发
+        batch_size = _resolve_batch_size(task, total_targets)
+        batch_cooldown = STRATEGY_BATCH_COOLDOWN_SEC if batch_size < total_targets else 0
+        if batch_size < total_targets:
+            total_batches = (total_targets + batch_size - 1) // batch_size
+            await _append_run_log(
+                run_id, task_id, user_id,
+                level="info", stage="evaluate",
+                message=f"启用分段执行：共 {total_targets} 支股票，分 {total_batches} 批（每批 {batch_size} 支），批次间隔 {batch_cooldown}s",
+                meta={"total_targets": total_targets, "batch_size": batch_size, "total_batches": total_batches},
+            )
 
-            if signal > 0:
-                positive += 1
-            elif signal < 0:
-                negative += 1
-            else:
-                neutral += 1
+        global_index = 0
+        for batch_start in range(0, total_targets, batch_size):
+            batch = targets[batch_start:batch_start + batch_size]
+            for stock in batch:
+                global_index += 1
+                if global_index == 1 or global_index % 25 == 0:
+                    await _ensure_run_can_continue(run_id, user_id)
+                identity = _stock_identity(stock)
+                if not identity["ts_code"]:
+                    continue
+                try:
+                    result = await evaluate_strategy_v2(
+                        str(task.get("strategy_key") or ""),
+                        StrategyV2EvaluationContext(
+                            user_id=user_id,
+                            code=identity["code"],
+                            ts_code=identity["ts_code"],
+                            stock=stock,
+                            now=now,
+                        ),
+                        params=params,
+                    )
+                    signal = int(result.signal)
+                    reason = result.reason
+                    meta = result.meta
+                except Exception as exc:
+                    signal = 0
+                    reason = f"策略评估失败：{exc}"
+                    meta = {}
 
-            item_doc = {
-                "item_id": f"sv2_item_{uuid.uuid4().hex[:12]}",
-                "run_id": run_id,
-                "task_id": task.get("task_id"),
-                "user_id": user_id,
-                "entity_key": identity["ts_code"],
-                "entity_name": identity["name"],
-                "code": identity["code"],
-                "signal": signal,
-                "score": _score_for_signal(signal),
-                "reason": reason,
-                "tags": [str(task.get("strategy_name") or task.get("strategy_key") or "")],
-                "action_result": "待生成动作结果",
-                "state_writeback": signal != 0,
-                "meta": meta,
-                "created_at": now,
-            }
-            if signal == 1:
-                positive_items.append(item_doc)
-            item_docs.append(item_doc)
-            if index == 1 or index == total_targets or index % 25 == 0:
+                if signal > 0:
+                    positive += 1
+                elif signal < 0:
+                    negative += 1
+                else:
+                    neutral += 1
+
+                item_doc = {
+                    "item_id": f"sv2_item_{uuid.uuid4().hex[:12]}",
+                    "run_id": run_id,
+                    "task_id": task.get("task_id"),
+                    "user_id": user_id,
+                    "entity_key": identity["ts_code"],
+                    "entity_name": identity["name"],
+                    "code": identity["code"],
+                    "signal": signal,
+                    "score": _score_for_signal(signal),
+                    "reason": reason,
+                    "tags": [str(task.get("strategy_name") or task.get("strategy_key") or "")],
+                    "action_result": "待生成动作结果",
+                    "state_writeback": signal != 0,
+                    "meta": meta,
+                    "created_at": now,
+                }
+                if signal == 1:
+                    positive_items.append(item_doc)
+                item_docs.append(item_doc)
+                if global_index == 1 or global_index == total_targets or global_index % 25 == 0:
+                    await _update_run_progress(
+                        run_id,
+                        user_id,
+                        current=global_index,
+                        total=total_targets,
+                        label=f"正在评估 {global_index}/{total_targets}",
+                    )
+
+            # 批次间冷却（最后一批不等待）
+            if batch_start + batch_size < total_targets and batch_cooldown > 0:
                 await _update_run_progress(
-                    run_id,
-                    user_id,
-                    current=index,
-                    total=total_targets,
-                    label=f"正在评估 {index}/{total_targets}",
+                    run_id, user_id,
+                    current=global_index, total=total_targets,
+                    label=f"批次完成，{batch_cooldown}s 后继续下一批...",
                 )
+                await asyncio.sleep(batch_cooldown)
+                await _ensure_run_can_continue(run_id, user_id)
 
         await _ensure_run_can_continue(run_id, user_id)
         await _update_run_progress(

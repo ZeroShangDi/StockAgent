@@ -74,10 +74,29 @@ class OneLineStockPickerService:
             "market": market,
         }
 
+    @staticmethod
+    def _infer_ts_code(code: str) -> str:
+        """从纯数字 code 推断 ts_code（A 股规则）。"""
+        code = str(code or "").strip()
+        if not code:
+            return ""
+        if code.startswith(("60", "68")):
+            return f"{code}.SH"
+        if code.startswith(("00", "30")):
+            return f"{code}.SZ"
+        if code.startswith(("8", "4")):
+            return f"{code}.BJ"
+        return code
+
     def _parse_result(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         decoded = self._client.decode_json_like(payload.get("data"))
         if not isinstance(decoded, dict):
             raise RuntimeError("一句话选股返回格式异常")
+        # 新格式：data.message 直接包含股票列表
+        message = decoded.get("message")
+        if isinstance(message, list):
+            return {"data_list": message, "query_condition": str(decoded.get("input") or ""), "headers": list(message[0].keys()) if message else []}
+        # 旧格式兼容：data.result.data_list
         result = self._client.decode_json_like(decoded.get("result"))
         if not isinstance(result, dict):
             raise RuntimeError("一句话选股 result 为空")
@@ -94,6 +113,13 @@ class OneLineStockPickerService:
             if not isinstance(row, dict):
                 continue
             meta = self._build_candidate_meta(row)
+            # 如果 meta 中缺少 ts_code，从 code 推断
+            if not meta.get("ts_code") and meta.get("code"):
+                meta["ts_code"] = self._infer_ts_code(meta["code"])
+            elif not meta.get("ts_code"):
+                raw_code = str(row.get("code") or row.get("股票代码") or "")
+                if raw_code:
+                    meta["ts_code"] = self._infer_ts_code(raw_code)
             enriched = dict(row)
             enriched["__meta"] = meta
             enriched["__row_id"] = idx

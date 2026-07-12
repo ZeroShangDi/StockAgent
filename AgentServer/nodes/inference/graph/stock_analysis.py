@@ -1392,47 +1392,49 @@ class StockAnalysisGraph:
             
             check_result = await check_result_node(state)
             state = state.copy(update=check_result)
-            
-            # Phase 5: 条件分支 - 是否需要补充数据
-            if state.needs_refinement:
-                self.logger.info(f"[analyze_stock] trace_id={trace_id} | Confidence too low, triggering refinement...")
-                
+
+            # Phase 5: 精炼循环 - 当置信度不足时迭代补充数据（最多 MAX_RETRY_COUNT 次）
+            refinement_round = 0
+            while state.needs_refinement:
+                refinement_round += 1
+                self.logger.info(
+                    f"[analyze_stock] trace_id={trace_id} | "
+                    f"Confidence too low ({state.confidence_score.overall if state.confidence_score else 'N/A'}), "
+                    f"refinement round {refinement_round}/{MAX_RETRY_COUNT}..."
+                )
+
+                progress_pct = 65 + refinement_round * 10
                 if progress_callback:
-                    await progress_callback(70, "置信度不足，生成补充查询...")
-                
-                # Query Refinement: 生成查询
+                    await progress_callback(progress_pct, f"置信度不足，补充数据中 (Round {refinement_round+1})...")
+
+                # Query Refinement: 生成补充查询
                 refinement_result = await query_refinement_node(state)
                 state = state.copy(update=refinement_result)
-                
+
                 # MCP Search: 执行工具调用
-                if progress_callback:
-                    await progress_callback(75, "执行 MCP 工具调用...")
-                
                 mcp_result = await mcp_search_node(state)
                 state = state.copy(update=mcp_result)
-                
-                # 增量分析 (Round 2): 重新执行三方分析
-                if progress_callback:
-                    await progress_callback(80, "增量分析中 (Round 2)...")
-                
+
+                # 增量分析: 重新执行三方分析
                 fundamental_result, technical_result, sentiment_result = await asyncio.gather(
                     fundamental_node(state),
                     technical_node(state),
                     sentiment_node(state),
                 )
-                
+
                 state = state.copy(update={
                     **fundamental_result,
                     **technical_result,
                     **sentiment_result,
                 })
-                
+
                 # 重新 Supervisor 评估 (带 MCP 证据和跨轮次记忆)
-                if progress_callback:
-                    await progress_callback(90, "Supervisor 重新评估 (Round 2)...")
-                
                 supervisor_result = await supervisor_node(state)
                 state = state.copy(update=supervisor_result)
+
+                # 重新检查置信度
+                check_result = await check_result_node(state)
+                state = state.copy(update=check_result)
             
             # Phase 6: 构建输出
             if progress_callback:
