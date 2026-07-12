@@ -61,28 +61,42 @@ services:
 
   data-sync:
     build:
-      context: .
-      dockerfile: docker/backend.Dockerfile
+      context: ./DataSync
+      dockerfile: Dockerfile
     container_name: stock-agent-data-sync
-    command: ["python", "main.py", "--node-type", "data_sync"]
+    command: ["python", "main.py"]
     env_file:
       - .env.docker
     environment:
       NODE_TYPE: data_sync
-      MILVUS_URI: "${MILVUS_URI:-./data/milvus_lite.db}"
-      SYNC_PROFILE: "${SYNC_PROFILE:-conservative}"
+      DATASYNC_RUNTIME_DIR: /app/DataSync
+      DATASYNC_DATA_DIR: /app/DataSync/data
+      DATASYNC_ALLOW_SHARED_ENV_FALLBACK: "0"
+      OBS_LOG_DIR: /app/DataSync/logs
+      REDIS_HOST: "${REDIS_HOST:-redis}"
+      REDIS_PORT: "${REDIS_PORT:-6379}"
+      REDIS_DB: "${REDIS_DB:-0}"
+      REDIS_MAX_CONNECTIONS: "${REDIS_MAX_CONNECTIONS:-30}"
+      MONGO_HOST: "${MONGO_HOST:-mongodb}"
+      MONGO_PORT: "${MONGO_PORT:-27017}"
+      MONGO_DATABASE: "${MONGO_DATABASE:-stock_agent}"
+      MONGO_USERNAME: "${MONGO_USERNAME:-admin}"
+      MONGO_PASSWORD: "${MONGO_PASSWORD:-change-me}"
+      MONGO_AUTH_SOURCE: "${MONGO_AUTH_SOURCE:-admin}"
+      MONGO_MAX_POOL_SIZE: "${MONGO_MAX_POOL_SIZE:-20}"
+      SYNC_PROFILE: "${SYNC_PROFILE:-normal}"
       SYNC_ENABLED_JOBS: "${SYNC_ENABLED_JOBS:-}"
       SYNC_DISABLED_JOBS: "${SYNC_DISABLED_JOBS:-}"
       SYNC_RUN_INITIAL_SYNC: "${SYNC_RUN_INITIAL_SYNC:-false}"
-      SYNC_MAX_RUNNING_JOBS: "${SYNC_MAX_RUNNING_JOBS:-1}"
-      SYNC_MAX_PARALLEL_COLLECT_CONCURRENCY: "${SYNC_MAX_PARALLEL_COLLECT_CONCURRENCY:-2}"
+      SYNC_MAX_RUNNING_JOBS: "${SYNC_MAX_RUNNING_JOBS:-2}"
+      SYNC_MAX_PARALLEL_COLLECT_CONCURRENCY: "${SYNC_MAX_PARALLEL_COLLECT_CONCURRENCY:-4}"
       SYNC_JOB_TIMEOUT_SECONDS: "${SYNC_JOB_TIMEOUT_SECONDS:-1200}"
       SYNC_LOCK_TIMEOUT_SECONDS: "${SYNC_LOCK_TIMEOUT_SECONDS:-1200}"
       SYNC_SCHEDULER_MISFIRE_GRACE_SECONDS: "${SYNC_SCHEDULER_MISFIRE_GRACE_SECONDS:-300}"
       SYNC_PREVENT_INITIAL_HISTORY_SYNC: "${SYNC_PREVENT_INITIAL_HISTORY_SYNC:-true}"
       SYNC_INITIAL_BACKFILL_DAYS: "${SYNC_INITIAL_BACKFILL_DAYS:-5}"
-      SYNC_BACKFILL_WINDOW_START: "${SYNC_BACKFILL_WINDOW_START:-${DATASYNC_BACKFILL_WINDOW_START:-00:00}}"
-      SYNC_BACKFILL_WINDOW_END: "${SYNC_BACKFILL_WINDOW_END:-${DATASYNC_BACKFILL_WINDOW_END:-08:00}}"
+      SYNC_BACKFILL_WINDOW_START: "${SYNC_BACKFILL_WINDOW_START:-00:00}"
+      SYNC_BACKFILL_WINDOW_END: "${SYNC_BACKFILL_WINDOW_END:-08:00}"
       SYNC_BACKFILL_QUEUE_SCHEDULE: "${SYNC_BACKFILL_QUEUE_SCHEDULE:-*/30 * * * *}"
       SYNC_BACKFILL_JOBS_PER_ROUND: "${SYNC_BACKFILL_JOBS_PER_ROUND:-2}"
       SYNC_BACKFILL_MAX_ATTEMPTS: "${SYNC_BACKFILL_MAX_ATTEMPTS:-3}"
@@ -98,8 +112,9 @@ services:
       SYNC_CORE_READY_AFTER_LOCAL_TIME: "${SYNC_CORE_READY_AFTER_LOCAL_TIME:-16:10}"
       SYNC_REVIEW_DATA_MAX_ROWS_PER_COLLECTION: "${SYNC_REVIEW_DATA_MAX_ROWS_PER_COLLECTION:-10000}"
       SYNC_MARKET_STATISTICS_CACHE_PERIODS: "${SYNC_MARKET_STATISTICS_CACHE_PERIODS:-1w,1m,3m}"
+      SYNC_MARKET_WEATHER_SCHEDULE: "${SYNC_MARKET_WEATHER_SCHEDULE:-50 18 * * 1-5}"
       SYNC_MARKET_WEATHER_MAX_CONCURRENT: "${SYNC_MARKET_WEATHER_MAX_CONCURRENT:-2}"
-      SYNC_HOT_NEWS_ENABLED: "${SYNC_HOT_NEWS_ENABLED:-false}"
+      SYNC_HOT_NEWS_ENABLED: "${SYNC_HOT_NEWS_ENABLED:-true}"
       SYNC_HOT_NEWS_SOURCE_ALLOWLIST: "${SYNC_HOT_NEWS_SOURCE_ALLOWLIST:-cls,xueqiu,wallstreetcn}"
       SYNC_HOT_NEWS_MAX_SOURCES_PER_ROUND: "${SYNC_HOT_NEWS_MAX_SOURCES_PER_ROUND:-3}"
       SYNC_HOT_NEWS_MAX_ITEMS_PER_SOURCE: "${SYNC_HOT_NEWS_MAX_ITEMS_PER_SOURCE:-20}"
@@ -113,17 +128,31 @@ services:
       SYNC_SOURCE_CHAIN_OVERRIDES: "${SYNC_SOURCE_CHAIN_OVERRIDES:-}"
       SYNC_DEAD_LETTER_MAX_RECORDS_PER_BATCH: "${SYNC_DEAD_LETTER_MAX_RECORDS_PER_BATCH:-20}"
       SYNC_BULK_UPSERT_BATCH_SIZE: "${SYNC_BULK_UPSERT_BATCH_SIZE:-1000}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_API_BASE: "${LLM_API_BASE:-}"
+      LLM_MODEL_NAME: "${LLM_MODEL_NAME:-deepseek-chat}"
+      LLM_MAX_CONCURRENT_REQUESTS: "${LLM_MAX_CONCURRENT_REQUESTS:-3}"
+      LLM_EMBEDDING_PROVIDER: "${LLM_EMBEDDING_PROVIDER:-dashscope}"
+      LLM_EMBEDDING_API_KEY: "${LLM_EMBEDDING_API_KEY:-}"
+      LLM_EMBEDDING_MODEL: "${LLM_EMBEDDING_MODEL:-text-embedding-v3}"
+      TUSHARE_TOKEN: "${TUSHARE_TOKEN:-}"
+      COZE_API_TOKEN: "${COZE_API_TOKEN:-}"
+      COZE_API_BASE: "${COZE_API_BASE:-https://api.coze.cn}"
+      COZE_WORKFLOW_ID: "${COZE_WORKFLOW_ID:-}"
+      COZE_SPACE_ID: "${COZE_SPACE_ID:-}"
       COZE_MAX_RETRIES: "${COZE_MAX_RETRIES:-2}"
       COZE_RETRY_BACKOFF_SECONDS: "${COZE_RETRY_BACKOFF_SECONDS:-0.5}"
       COZE_RETRY_BACKOFF_MAX_SECONDS: "${COZE_RETRY_BACKOFF_MAX_SECONDS:-5}"
+      MILVUS_URI: "${MILVUS_URI:-/app/DataSync/data/milvus_lite.db}"
     depends_on:
       mongodb:
         condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
-      - backend_logs:/app/logs
-      - backend_data:/app/data
+      - datasync_logs:/app/DataSync/logs
+      - datasync_data:/app/DataSync/data
     networks:
       - stock-agent-network
     restart: unless-stopped
@@ -225,6 +254,8 @@ volumes:
   redis_data:
   backend_logs:
   backend_data:
+  datasync_logs:
+  datasync_data:
 
 networks:
   stock-agent-network:

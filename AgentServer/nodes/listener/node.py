@@ -869,7 +869,7 @@ class ListenerNode(BaseNode):
                 
             except Exception as e:
                 self.logger.error(
-                    f"Strategy evaluation error: {e}, "
+                    f"Strategy evaluation error: {type(e).__name__}: {e}, "
                     f"strategy={subscription.strategy_type}"
                 )
         
