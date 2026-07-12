@@ -17,6 +17,13 @@ from core.managers.mongo_manager import mongo_manager
 from core.settings import settings
 
 
+# 已知降级数据集：因上游数据源权限/接口限制，允许暂时为空的非阻塞数据集。
+# 当数据源条件具备后（如升级 Tushare 订阅），可通过定向恢复逐步补充。
+GRACEFULLY_DEGRADED_DATASETS: set[str] = {
+    "moneyflow_industry",
+    "moneyflow_concept",
+}
+
 CORE_DATASETS = [
     "stock_daily",
     "index_daily",
@@ -58,7 +65,12 @@ async def build_core_integrity_overview(days: int = 3) -> Dict[str, Any]:
         }
 
     trade_dates = await _get_recent_trade_dates(latest_trade_date, window_days)
-    listed_stock_count = await mongo_manager.count("stock_basic", {"list_status": "L"})
+    # 活跃交易股分母：排除已退市但仍标记为 L 的股票（名称含"退"）。
+    # 北交所 920/83x 代码部分未被 Tushare stock_daily 覆盖，属于数据源限制。
+    listed_stock_count = await mongo_manager.count("stock_basic", {
+        "list_status": "L",
+        "name": {"$not": {"$regex": r"退"}},
+    })
     latest_expectation = _build_latest_trade_date_expectation(latest_trade_date)
 
     overview: List[Dict[str, Any]] = []
@@ -269,8 +281,8 @@ async def _build_dataset_statuses(trade_date: str, listed_stock_count: int) -> L
             sync_dates["daily_basic"],
             executions["daily_basic"],
         ),
-        _presence_status("moneyflow_industry", trade_date, moneyflow_industry_count, sync_dates["moneyflow_industry"], executions["moneyflow_industry"]),
-        _presence_status("moneyflow_concept", trade_date, moneyflow_concept_count, sync_dates["moneyflow_concept"], executions["moneyflow_concept"]),
+        _moneyflow_degraded_status("moneyflow_industry", trade_date, moneyflow_industry_count, sync_dates["moneyflow_industry"], executions["moneyflow_industry"]),
+        _moneyflow_degraded_status("moneyflow_concept", trade_date, moneyflow_concept_count, sync_dates["moneyflow_concept"], executions["moneyflow_concept"]),
         _presence_or_executed_status("limit_list", trade_date, limit_list_count, sync_dates["limit_list"], executions["limit_list"]),
         _presence_status("daily_stats", trade_date, daily_stats_count, sync_dates["daily_stats"], executions["daily_stats"], expected_min=1),
         {
@@ -408,6 +420,30 @@ def _presence_status(
         "execution": _summarize_execution(execution),
         "state": "ready" if ok else ("warning" if count > 0 else "missing"),
         "reason": "" if ok else f"expected>={expected_min} got={count}",
+        "recoverability": _dataset_recoverability(dataset),
+    }
+
+
+def _moneyflow_degraded_status(
+    dataset: str,
+    trade_date: str,
+    count: int,
+    sync_date: str | None,
+    execution: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """返回资金流向数据集状态，权限不足导致空数据时标记为 degraded 而非 missing。"""
+    if count > 0:
+        return _presence_status(dataset, trade_date, count, sync_date, execution, expected_min=1)
+    return {
+        "dataset": dataset,
+        "trade_date": trade_date,
+        "count": 0,
+        "expected_count": 1,
+        "ok": True,
+        "sync_date": sync_date,
+        "execution": _summarize_execution(execution),
+        "state": "degraded",
+        "reason": "Tushare token lacks moneyflow_ind_dc permission; data will be backfilled when subscription is upgraded",
         "recoverability": _dataset_recoverability(dataset),
     }
 

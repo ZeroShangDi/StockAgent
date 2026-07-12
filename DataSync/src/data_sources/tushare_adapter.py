@@ -642,7 +642,15 @@ class TushareAdapter(AsyncDataSourceAdapter):
 
             return records
         except Exception as e:
-            self.logger.error(f"Failed to get moneyflow_ind_dc (industry): {e}")
+            msg = str(e)
+            if "权限" in msg or "permission" in msg.lower() or "moneyflow_ind_dc" in msg:
+                self.logger.warning(
+                    "moneyflow_ind_dc (industry) skipped: Tushare token lacks permission for this interface. "
+                    "Upgrade Tushare subscription to enable moneyflow data. Error: %s",
+                    e,
+                )
+            else:
+                self.logger.error(f"Failed to get moneyflow_ind_dc (industry): {e}")
             return []
 
     async def get_moneyflow_concept(
@@ -693,7 +701,15 @@ class TushareAdapter(AsyncDataSourceAdapter):
 
             return records
         except Exception as e:
-            self.logger.error(f"Failed to get moneyflow_ind_dc (concept): {e}")
+            msg = str(e)
+            if "权限" in msg or "permission" in msg.lower() or "moneyflow_ind_dc" in msg:
+                self.logger.warning(
+                    "moneyflow_ind_dc (concept) skipped: Tushare token lacks permission for this interface. "
+                    "Upgrade Tushare subscription to enable moneyflow data. Error: %s",
+                    e,
+                )
+            else:
+                self.logger.error(f"Failed to get moneyflow_ind_dc (concept): {e}")
             return []
 
     async def get_moneyflow_hsgt(

@@ -12,7 +12,8 @@ import json
 from datetime import UTC, datetime
 from typing import Any, Dict, Optional
 
-from core.managers import mongo_manager, redis_manager
+from core.managers.mongo_manager import mongo_manager
+from core.managers.redis_manager import redis_manager
 
 
 CACHE_COLLECTION = "market_statistics_cache"

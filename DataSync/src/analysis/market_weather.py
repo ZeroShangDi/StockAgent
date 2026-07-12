@@ -14,7 +14,8 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from core.managers import data_source_manager, mongo_manager
+from core.managers.data_source_manager import data_source_manager
+from core.managers.mongo_manager import mongo_manager
 from core.settings import settings
 
 from .coze_workflow_client import CozeWorkflowClient
@@ -196,7 +197,7 @@ class MarketWeatherService:
         return history
 
     async def get_trade_dates_between(self, start_date: str, end_date: str) -> List[str]:
-        if not await data_source_manager.health_check():
+        if not data_source_manager.is_initialized:
             await data_source_manager.initialize()
         trade_dates, _ = await data_source_manager.get_trade_calendar(
             self._to_trade_date(start_date),
@@ -205,7 +206,7 @@ class MarketWeatherService:
         return trade_dates or []
 
     async def get_recent_trade_dates(self, days: int = 30) -> List[str]:
-        if not await data_source_manager.health_check():
+        if not data_source_manager.is_initialized:
             await data_source_manager.initialize()
         latest_trade_date, _ = await data_source_manager.get_latest_trade_date()
         if not latest_trade_date:
@@ -217,7 +218,7 @@ class MarketWeatherService:
         return trade_dates[-days:]
 
     async def sync_trade_dates(self, trade_dates: List[str], overwrite: bool = False) -> Dict[str, Any]:
-        if not await data_source_manager.health_check():
+        if not data_source_manager.is_initialized:
             await data_source_manager.initialize()
 
         success = 0

@@ -62,7 +62,6 @@ class StockNewsCollector(BaseCollector):
         4. 保存到数据库
         5. 记录同步日期
         """
-        return {"count": 0, "message": "skip"}
         today = datetime.now().strftime("%Y%m%d")
 
         # ==================== 0. 检查是否已同步 ====================
